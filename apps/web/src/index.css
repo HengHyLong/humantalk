@@ -190,7 +190,17 @@ body {
 
 .digital-display-chat-panel { position: absolute; z-index: 20; top: 43%; right: 3%; bottom: 8%; left: 3%; display: flex; min-height: 0; flex-direction: column; gap: 10px; border: 1px solid rgba(159, 228, 255, .4); border-radius: 18px; padding: 15px; background: rgba(7, 111, 188, .16); box-shadow: 0 16px 32px rgba(0, 22, 72, .12); }
 .digital-display-chat-heading { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; color: rgba(230, 249, 255, .8); font-size: 10px; letter-spacing: .16em; }
+.digital-display-chat-state { color: rgba(185, 240, 255, .88); font-size: 9px; letter-spacing: .08em; }
 .digital-display-chat-feed { display: flex; min-height: 0; flex: 1; flex-direction: column; gap: 8px; overflow-y: auto; padding: 2px 3px; scrollbar-width: thin; scrollbar-color: rgba(183, 237, 255, .5) transparent; }
+.digital-display-chat-notice { align-self: stretch; border: 1px solid rgba(255, 218, 144, .28); border-radius: 9px; padding: 7px 9px; color: rgba(255, 240, 199, .9); background: rgba(117, 82, 23, .2); font-size: 10px; line-height: 1.5; }
+.digital-display-navigation-card { align-self: stretch; overflow: hidden; border: 1px solid rgba(168, 235, 255, .38); border-radius: 12px; background: rgba(2, 50, 108, .42); }
+.digital-display-navigation-card img { display: block; width: 100%; max-height: 180px; object-fit: cover; }
+.digital-display-navigation-copy { padding: 9px 10px; color: rgba(239, 251, 255, .94); font-size: 10px; line-height: 1.55; }
+.digital-display-navigation-copy strong { display: block; font-size: 11px; }
+.digital-display-navigation-copy p { margin: 3px 0 0; color: rgba(205, 236, 255, .78); }
+.digital-display-navigation-copy .digital-display-navigation-summary { color: rgba(239, 251, 255, .9); }
+.digital-display-navigation-copy .digital-display-navigation-route { color: rgba(205, 236, 255, .78); }
+.digital-display-navigation-copy ol { margin: 5px 0 0; padding-left: 18px; color: rgba(224, 245, 255, .88); }
 .digital-display-chat-empty { align-self: center; margin: auto 0; color: rgba(245, 253, 255, .92); font-size: clamp(16px, 2.3vw, 23px); font-weight: 500; letter-spacing: .04em; text-align: center; }
 .digital-display-chat-line { display: flex; max-width: 88%; align-items: flex-start; gap: 8px; color: rgba(245, 253, 255, .92); font-size: 12px; line-height: 1.65; }
 .digital-display-chat-line.is-user { align-self: flex-start; }

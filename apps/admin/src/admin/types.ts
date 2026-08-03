@@ -21,8 +21,10 @@ export type PermissionCode =
   | "event:exhibitor"
   | "event:exhibit"
   | "event:venue"
+  | "event:point"
   | "event:route"
   | "event:schedule"
+  | "event:broadcast"
   | "lead:view"
   | "report:interaction"
   | "system:user";
@@ -32,8 +34,10 @@ export type ButtonPermission =
   | "event:exhibitor:write"
   | "event:exhibit:write"
   | "event:venue:write"
+  | "event:point:write"
   | "event:route:write"
   | "event:schedule:write"
+  | "event:broadcast:write"
   | "asset:gif:write"
   | "asset:scene:write"
   | "knowledge:qa:write"
@@ -101,6 +105,7 @@ export type VoiceAsset = {
   id: string;
   backendId?: number;
   provider: string;
+  targetModel?: string | null;
   voiceId: string;
   name: string;
   previewText: string;
@@ -195,7 +200,7 @@ export type Exhibition = {
   id: string;
   name: string;
   code: string;
-  venue: string;
+  mainVenueId: string | null;
   hostUnit: string;
   organizerUnit: string;
   coOrganizerUnits: string;
@@ -204,7 +209,15 @@ export type Exhibition = {
   status: ExhibitionStatus;
   description: string;
   boundAvatarId: string | null;
+  boundModel: string;
+  boundVoiceId: string | null;
+  boundVoiceProvider?: string | null;
+  boundVoiceModel?: string | null;
+  boundSttProvider?: string | null;
+  boundSttModel?: string | null;
+  boundScene: string | null;
   knowledgeBaseIds: string[];
+  lifecycleHistory: Array<{ from: ExhibitionStatus | null; to: ExhibitionStatus; operator: string; time: string }>;
   createdAt: string;
   updatedAt: string;
 };
@@ -253,17 +266,36 @@ export type EventVenue = {
   updatedAt: string;
 };
 
+export type PointType = "entrance" | "booth" | "forum" | "facility" | "service" | "other";
+export type PointStatus = "draft" | "active" | "inactive";
+
+export type EventPoint = {
+  id: string;
+  venueId: string;
+  code: string;
+  name: string;
+  type: PointType;
+  floor: string;
+  x: number;
+  y: number;
+  exhibitorId: string | null;
+  exhibitId: string | null;
+  description: string;
+  status: PointStatus;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type RouteStatus = "draft" | "published" | "offline";
+export type RouteType = "navigation" | "tour" | "emergency";
 
 export type ExhibitionRoute = {
   id: string;
   venueId: string;
-  /** Legacy UI compatibility; new records use venueId as the source of truth. */
-  exhibitionId: string;
   name: string;
-  from: string;
-  to: string;
-  distance: string;
+  type: RouteType;
+  pointIds: string[];
+  directions: string[];
   estimatedMinutes: number;
   description: string;
   status: RouteStatus;
@@ -276,6 +308,8 @@ export type ScheduleStatus = "draft" | "scheduled" | "finished" | "cancelled";
 export type EventSchedule = {
   id: string;
   exhibitionId: string;
+  venueId: string | null;
+  pointId: string | null;
   title: string;
   type: string;
   startAt: string;
@@ -284,6 +318,22 @@ export type EventSchedule = {
   speaker: string;
   description: string;
   status: ScheduleStatus;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type EmergencyBroadcastPriority = "low" | "normal" | "high" | "urgent";
+export type EmergencyBroadcastStatus = "draft" | "active" | "ended";
+
+export type EmergencyBroadcast = {
+  id: string;
+  exhibitionId: string;
+  title: string;
+  content: string;
+  priority: EmergencyBroadcastPriority;
+  targetTerminals: string;
+  effectiveAt: string;
+  status: EmergencyBroadcastStatus;
   createdAt: string;
   updatedAt: string;
 };

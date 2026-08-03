@@ -4,7 +4,7 @@ import { DEFAULT_VOICES, adminApi } from "./api";
 import { canAccess, canUseButton, roleLabel } from "./policy";
 import { openTalkingClient } from "./openTalkingClient";
 import { RealtimeTestWorkspace } from "./RealtimeTestWorkspace";
-import { ExhibitionDetailPage, ExhibitionPage, ExhibitorPage, ExhibitPage, RoutePage, SchedulePage, VenuePage } from "./EventOperationsPages";
+import { BroadcastPage, ExhibitionDetailPage, ExhibitionPage, ExhibitorPage, ExhibitPage, PointPage, RoutePage, SchedulePage, VenuePage } from "./EventOperationsPages";
 import { DocumentCenterPage, KnowledgeBasePage, MemoryCenterPage } from "./KnowledgeCenterPages";
 import {
   EnhancedAvatarPage,
@@ -37,12 +37,22 @@ const MENU_GROUPS: MenuItem[] = [
   { id: "dashboard", label: "首页", path: "/dashboard", permission: "dashboard:view" },
   {
     id: "event", label: "展会运营", children: [
-      { id: "event-exhibition", label: "展会管理", path: "/event/exhibition", permission: "event:exhibition" },
-      { id: "event-exhibitor", label: "展商管理", path: "/event/exhibitor", permission: "event:exhibitor" },
-      { id: "event-exhibit", label: "展品管理", path: "/event/exhibit", permission: "event:exhibit" },
-      { id: "event-venue", label: "场地管理", path: "/event/venue", permission: "event:venue" },
-      { id: "event-route", label: "场地路线", path: "/event/route", permission: "event:route" },
-      { id: "event-schedule", label: "活动排期", path: "/event/schedule", permission: "event:schedule" },
+      { id: "event-core", label: "展会管理", children: [
+        { id: "event-exhibition", label: "展会列表", path: "/event/exhibition", permission: "event:exhibition" },
+      ] },
+      { id: "event-content", label: "参展内容", children: [
+        { id: "event-exhibitor", label: "展商管理", path: "/event/exhibitor", permission: "event:exhibitor" },
+        { id: "event-exhibit", label: "展品管理", path: "/event/exhibit", permission: "event:exhibit" },
+        { id: "event-schedule", label: "活动排期", path: "/event/schedule", permission: "event:schedule" },
+      ] },
+      { id: "event-space", label: "空间导览", children: [
+        { id: "event-venue", label: "场地管理", path: "/event/venue", permission: "event:venue" },
+        { id: "event-point", label: "点位管理", path: "/event/point", permission: "event:point" },
+        { id: "event-route", label: "路线规划", path: "/event/route", permission: "event:route" },
+      ] },
+      { id: "event-live", label: "现场运营", children: [
+        { id: "event-broadcast", label: "应急播报", path: "/event/broadcast", permission: "event:broadcast" },
+      ] },
     ],
   },
   {
@@ -81,8 +91,10 @@ const PAGE_LABELS: Record<string, string> = {
   "/event/exhibitor": "展商管理",
   "/event/exhibit": "展品管理",
   "/event/venue": "场地管理",
+  "/event/point": "点位管理",
   "/event/route": "场地路线",
   "/event/schedule": "活动排期",
+  "/event/broadcast": "应急播报",
   "/asset/avatar": "数字人形象",
   "/asset/gif": "动作素材",
   "/asset/voice": "声音配置",
@@ -97,7 +109,7 @@ const PAGE_LABELS: Record<string, string> = {
   "/interact/test": "实时测试",
 };
 
-const GROUP_LABELS: Record<string, string> = { asset: "数字人中心", knowledge: "知识中心", interact: "交互管理" };
+const GROUP_LABELS: Record<string, string> = { event: "展会运营", asset: "数字人中心", knowledge: "知识中心", interact: "交互管理" };
 
 function useAdminPath(): [AdminPath, (next: string) => void] {
   const [path, setPath] = useState(() => window.location.pathname || "/dashboard");
@@ -152,17 +164,91 @@ function PageHeader({ eyebrow, title, description, actions }: { eyebrow: string;
   return <div className="mb-5 flex flex-wrap items-end justify-between gap-4"><div><p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-cyan-600">{eyebrow}</p><h1 className="mt-1 text-2xl font-semibold tracking-tight text-slate-950">{title}</h1><p className="mt-1 text-sm text-slate-500">{description}</p></div>{actions ? <div className="flex items-center gap-2">{actions}</div> : null}</div>;
 }
 
-function Card({ children, className = "" }: { children: ReactNode; className?: string }) { return <section className={`rounded-2xl border border-slate-200 bg-white shadow-sm ${className}`}>{children}</section>; }
+function Card({ children, className = "" }: { children: ReactNode; className?: string }) {
+  // Cards use the light dashboard surface by default. Normalize the legacy dark modifier
+  // so dashboard content keeps the same black/gray typography as adjacent cards.
+  const normalizedClassName = className.replace("!bg-slate-950 !text-white", "").replace("border-white/10", "border-slate-100");
+  return <section className={`rounded-2xl border border-slate-200 bg-white text-slate-900 shadow-sm ${normalizedClassName}`}>{children}</section>;
+}
 
 function EmptyState({ title, description }: { title: string; description: string }) { return <div className="flex min-h-[240px] flex-col items-center justify-center text-center"><div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 text-slate-400"><Icon name="grid" /></div><h3 className="mt-4 text-sm font-semibold text-slate-800">{title}</h3><p className="mt-1 max-w-sm text-xs leading-5 text-slate-500">{description}</p></div>; }
 
+type DashboardCollections = {
+  data: DashboardData;
+  exhibitions: Awaited<ReturnType<typeof adminApi.listExhibitions>>;
+  venues: Awaited<ReturnType<typeof adminApi.listVenues>>;
+  points: Awaited<ReturnType<typeof adminApi.listPoints>>;
+  exhibitors: Awaited<ReturnType<typeof adminApi.listExhibitors>>;
+  exhibits: Awaited<ReturnType<typeof adminApi.listExhibits>>;
+  schedules: Awaited<ReturnType<typeof adminApi.listSchedules>>;
+  documents: Awaited<ReturnType<typeof adminApi.listDocuments>>;
+  qa: Awaited<ReturnType<typeof adminApi.listQa>>;
+  scripts: Awaited<ReturnType<typeof adminApi.listScripts>>;
+  packages: Awaited<ReturnType<typeof adminApi.listPackages>>;
+};
+
+function AnalysisBar({ label, value, total, detail, tone = "cyan" }: { label: string; value: number; total: number; detail?: string; tone?: "cyan" | "green" | "amber" | "violet" }) {
+  const width = value > 0 && total > 0 ? Math.max(6, Math.round((value / total) * 100)) : 0;
+  const colors = { cyan: "bg-cyan-500", green: "bg-emerald-500", amber: "bg-amber-400", violet: "bg-violet-500" };
+  return <div className="space-y-1.5"><div className="flex items-center justify-between gap-3 text-xs"><span className="font-medium text-slate-600">{label}</span><span className="font-semibold text-slate-800">{value}{detail ? <span className="ml-1 font-normal text-slate-400">{detail}</span> : null}</span></div><div className="h-2 overflow-hidden rounded-full bg-slate-100"><div className={`h-full rounded-full transition-all ${colors[tone]}`} style={{ width: `${width}%` }} /></div></div>;
+}
+
 function DashboardPage({ navigate }: { navigate: (path: string) => void }) {
-  const [data, setData] = useState<DashboardData | null>(null);
-  useEffect(() => { void adminApi.getDashboard().then(setData); }, []);
-  return <div className="p-6 xl:p-8"><PageHeader eyebrow="Overview" title="运营概览" description="掌握展会数字人运行状态与内容运营进度。" actions={<Button variant="secondary" onClick={() => navigate("/knowledge/base")}><Icon name="arrow" />查看待办</Button>} />
+  const [snapshot, setSnapshot] = useState<DashboardCollections | null>(null);
+  const [error, setError] = useState("");
+  const [refreshing, setRefreshing] = useState(false);
+  const load = async () => {
+    setRefreshing(true);
+    setError("");
+    try {
+      const [data, exhibitions, venues, points, exhibitors, exhibits, schedules, documents, qa, scripts, packages] = await Promise.all([
+        adminApi.getDashboard(), adminApi.listExhibitions(), adminApi.listVenues(), adminApi.listPoints(), adminApi.listExhibitors(), adminApi.listExhibits(), adminApi.listSchedules(), adminApi.listDocuments(), adminApi.listQa(), adminApi.listScripts(), adminApi.listPackages(),
+      ]);
+      setSnapshot({ data, exhibitions, venues, points, exhibitors, exhibits, schedules, documents, qa, scripts, packages });
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "首页统计数据加载失败");
+    } finally {
+      setRefreshing(false);
+    }
+  };
+  useEffect(() => { void load(); }, []);
+
+  const data = snapshot?.data;
+  const exhibitions = snapshot?.exhibitions ?? [];
+  const venues = snapshot?.venues ?? [];
+  const points = snapshot?.points ?? [];
+  const exhibitors = snapshot?.exhibitors ?? [];
+  const exhibits = snapshot?.exhibits ?? [];
+  const schedules = snapshot?.schedules ?? [];
+  const documents = snapshot?.documents ?? [];
+  const qa = snapshot?.qa ?? [];
+  const scripts = snapshot?.scripts ?? [];
+  const packages = snapshot?.packages ?? [];
+  const currentExhibition = exhibitions.find((item) => item.status === "operating") ?? exhibitions.find((item) => item.status === "setup");
+  const currentExhibitionStatus = currentExhibition?.status === "operating" ? "运营中" : currentExhibition?.status === "setup" ? "搭建中" : "待配置";
+  const activeExhibitions = exhibitions.filter((item) => item.status === "operating").length;
+  const pendingQa = qa.filter((item) => item.status === "pending_review").length;
+  const pendingPackages = packages.filter((item) => item.status === "pending_review").length;
+  const processingDocuments = documents.filter((item) => item.parseStatus !== "parsed" || item.vectorStatus !== "indexed").length;
+  const publishTotal = qa.length + packages.length;
+  const publishCompleted = qa.filter((item) => item.status === "published").length + packages.filter((item) => item.status === "published").length;
+  const publishRate = publishTotal > 0 ? Math.round((publishCompleted / publishTotal) * 100) : 0;
+  const exhibitorCoverage = exhibitors.length > 0 ? Math.round((exhibitors.filter((item) => exhibits.some((exhibit) => exhibit.exhibitorId === item.id)).length / exhibitors.length) * 100) : 0;
+  const resourceValues = [exhibitors.length, exhibits.length, venues.length, points.length, schedules.length];
+  const resourceMax = Math.max(...resourceValues, 1);
+  const exhibitionStatuses = [
+    { label: "运营中", value: exhibitions.filter((item) => item.status === "operating").length, tone: "green" as const },
+    { label: "搭建中", value: exhibitions.filter((item) => item.status === "setup").length, tone: "cyan" as const },
+    { label: "准备中", value: exhibitions.filter((item) => item.status === "preparing").length, tone: "amber" as const },
+    { label: "已结束", value: exhibitions.filter((item) => item.status === "teardown").length, tone: "violet" as const },
+  ];
+
+  return <div className="p-6 xl:p-8"><PageHeader eyebrow="Management Analytics" title="运营分析" description="从展会运营、内容资产和发布状态三个维度掌握当前管理后台情况。" actions={<><Button variant="secondary" onClick={() => void load()} disabled={refreshing}>{refreshing ? "刷新中…" : "刷新数据"}</Button><Button onClick={() => navigate("/knowledge/base")}><Icon name="arrow" />处理待办</Button></>} />
+    {error ? <div className="mb-5 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-700">{error}</div> : null}
     <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">{(data?.metrics ?? []).map((metric) => <Card key={metric.id} className="p-5"><div className="flex items-start justify-between"><span className="text-xs font-medium text-slate-500">{metric.label}</span><span className={`h-2.5 w-2.5 rounded-full ${metric.tone === "green" ? "bg-emerald-400" : metric.tone === "amber" ? "bg-amber-400" : metric.tone === "rose" ? "bg-rose-400" : metric.tone === "violet" ? "bg-violet-400" : "bg-cyan-400"}`} /></div><p className="mt-4 text-2xl font-semibold tracking-tight text-slate-950">{metric.value}</p><p className="mt-2 text-[11px] font-medium text-slate-400">{metric.trend}</p></Card>)}</div>
-    <div className="mt-6 grid gap-6 xl:grid-cols-[1.4fr_1fr]"><Card><div className="flex items-center justify-between border-b border-slate-100 px-5 py-4"><div><h2 className="text-sm font-semibold text-slate-900">待办事项</h2><p className="mt-1 text-xs text-slate-400">需要运营团队关注的事项</p></div><Badge tone="amber">{data?.todos.length ?? 0} 项</Badge></div><div className="divide-y divide-slate-100">{(data?.todos ?? []).map((todo) => <button type="button" key={todo.id} onClick={() => navigate(todo.path)} className="flex w-full items-center gap-4 px-5 py-4 text-left transition hover:bg-slate-50"><div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-cyan-50 text-cyan-600"><Icon name="arrow" /></div><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><Badge tone="cyan">{todo.type}</Badge><p className="truncate text-sm font-medium text-slate-800">{todo.title}</p></div><p className="mt-1 text-xs text-slate-400">{todo.owner} · {todo.time}</p></div><Icon name="chevron" /></button>)}</div></Card><Card className="overflow-hidden"><div className="border-b border-slate-100 px-5 py-4"><h2 className="text-sm font-semibold text-slate-900">运行摘要</h2><p className="mt-1 text-xs text-slate-400">今日实时交互概况</p></div><div className="p-5"><div className="flex items-center gap-5"><div className="relative flex h-32 w-32 items-center justify-center rounded-full" style={{ background: "conic-gradient(#0e9fba 0 72%, #e2e8f0 72% 100%)" }}><div className="flex h-24 w-24 flex-col items-center justify-center rounded-full bg-white"><span className="text-2xl font-semibold text-slate-900">72%</span><span className="text-[11px] text-slate-400">命中率</span></div></div><div className="space-y-3 text-xs"><div><p className="text-slate-400">强控 QA 命中</p><p className="mt-1 font-semibold text-slate-800">46.8%</p></div><div><p className="text-slate-400">RAG 知识命中</p><p className="mt-1 font-semibold text-slate-800">25.2%</p></div><div><p className="text-slate-400">平均响应时长</p><p className="mt-1 font-semibold text-slate-800">1.8 s</p></div></div></div><div className="mt-6 rounded-xl bg-slate-50 p-3 text-xs leading-5 text-slate-500">当前展会：<span className="font-semibold text-slate-800">2026 西部博览会</span><br />18 台终端正在提供数字人服务。</div></div></Card></div>
-  </div>;
+    <div className="mt-6 grid gap-6 xl:grid-cols-[1.25fr_0.75fr]"><Card className="!bg-slate-950 !text-white overflow-hidden"><div className="flex flex-wrap items-start justify-between gap-4 border-b border-white/10 px-5 py-5"><div><h2 className="mt-2 text-xl font-semibold">{currentExhibition?.name ?? "暂无运营中的展会"}</h2><p className="mt-1 text-xs text-slate-400">{currentExhibition ? `${currentExhibition.startDate} 至 ${currentExhibition.endDate} · ${currentExhibition.code}` : "请先在展会运营中配置并推进展会状态。"}</p></div><Badge tone={currentExhibition ? "green" : "amber"}>{currentExhibitionStatus}</Badge></div><div className="grid grid-cols-2 gap-4 p-5 sm:grid-cols-4"><div><p className="text-xs text-slate-400">运营展会</p><p className="mt-2 text-2xl font-semibold">{activeExhibitions}<span className="ml-1 text-sm font-normal text-slate-500">/ {exhibitions.length}</span></p></div><div><p className="text-xs text-slate-400">展商</p><p className="mt-2 text-2xl font-semibold">{exhibitors.length}</p></div><div><p className="text-xs text-slate-400">展品</p><p className="mt-2 text-2xl font-semibold">{exhibits.length}</p></div><div><p className="text-xs text-slate-400">活动排期</p><p className="mt-2 text-2xl font-semibold">{schedules.length}</p></div></div></Card><Card className="p-5"><div className="flex items-center justify-between"><div><h2 className="text-sm font-semibold text-slate-900">知识发布完成度</h2><p className="mt-1 text-xs text-slate-400">问答与发布包已发布占比</p></div><Badge tone={publishRate >= 80 ? "green" : publishRate >= 50 ? "amber" : "rose"}>{publishRate}%</Badge></div><div className="mt-5 flex items-center gap-5"><div className="relative flex h-28 w-28 shrink-0 items-center justify-center rounded-full" style={{ background: `conic-gradient(#0e9fba 0 ${publishRate}%, #e2e8f0 ${publishRate}% 100%)` }}><div className="flex h-20 w-20 flex-col items-center justify-center rounded-full bg-white"><span className="text-xl font-semibold text-slate-900">{publishRate}%</span><span className="text-[10px] text-slate-400">已发布</span></div></div><div className="min-w-0 flex-1 space-y-3 text-xs"><div className="flex items-center justify-between"><span className="text-slate-400">已发布内容</span><span className="font-semibold text-slate-800">{publishCompleted} / {publishTotal}</span></div><div className="flex items-center justify-between"><span className="text-slate-400">待审问答</span><span className="font-semibold text-amber-600">{pendingQa}</span></div><div className="flex items-center justify-between"><span className="text-slate-400">待审发布包</span><span className="font-semibold text-amber-600">{pendingPackages}</span></div></div></div></Card></div>
+    <div className="mt-6 grid gap-6 xl:grid-cols-[1.1fr_0.9fr]"><Card className="p-5"><div className="flex items-center justify-between"><div><h2 className="text-sm font-semibold text-slate-900">运营资源结构</h2><p className="mt-1 text-xs text-slate-400">当前后台已建档资源数量</p></div><Badge tone="cyan">{exhibitorCoverage}% 展商有展品</Badge></div><div className="mt-6 space-y-5"><AnalysisBar label="展商" value={exhibitors.length} total={resourceMax} tone="cyan" /><AnalysisBar label="展品" value={exhibits.length} total={resourceMax} tone="violet" /><AnalysisBar label="场馆" value={venues.length} total={resourceMax} tone="green" /><AnalysisBar label="地图点位" value={points.length} total={resourceMax} tone="amber" /><AnalysisBar label="活动排期" value={schedules.length} total={resourceMax} tone="cyan" /></div></Card><Card className="p-5"><div className="flex items-center justify-between"><div><h2 className="text-sm font-semibold text-slate-900">展会状态分布</h2><p className="mt-1 text-xs text-slate-400">按当前生命周期统计</p></div><Badge tone="slate">{exhibitions.length} 个展会</Badge></div><div className="mt-6 space-y-5">{exhibitionStatuses.map((item) => <AnalysisBar key={item.label} label={item.label} value={item.value} total={Math.max(exhibitions.length, 1)} tone={item.tone} />)}</div><div className="mt-6 rounded-xl bg-slate-50 p-3 text-xs leading-5 text-slate-500">内容资料：{documents.length} 份文档 · {qa.length} 条问答 · {scripts.length} 套话术。{processingDocuments > 0 ? <span className="text-amber-700"> 当前有 {processingDocuments} 份文档仍在处理。</span> : null}</div></Card></div>
+    </div>;
 }
 
 export function AvatarPage() {
@@ -265,13 +351,28 @@ function LoginScreen({ onLogin }: { onLogin: (username: string, password: string
   return <div className="flex min-h-screen items-center justify-center bg-[#f3f7f9] px-5"><div className="grid w-full max-w-5xl overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-xl shadow-slate-200/70 lg:grid-cols-[1.1fr_0.9fr]"><div className="hidden bg-slate-950 p-12 text-white lg:block"><div className="flex h-full flex-col justify-between"><div><div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-cyan-500/15 text-cyan-300"><Icon name="sparkle" /></div><p className="mt-8 text-xs font-semibold uppercase tracking-[0.2em] text-cyan-300">四川博览集团数字人</p><h1 className="mt-3 max-w-md text-4xl font-semibold leading-tight">让每一次展会交互，都可运营、可追踪、可复用。</h1><p className="mt-5 max-w-md text-sm leading-7 text-slate-400">统一管理展会内容、数字人资产、知识发布与实时联调，让数字人服务真正进入运营闭环。</p></div><p className="text-xs text-slate-500">四川博览集团数字人项目 · Admin v0.1</p></div></div><form onSubmit={submit} className="p-8 sm:p-12"><Logo /><div className="mt-12"><p className="text-xs font-semibold uppercase tracking-[0.16em] text-cyan-600">Welcome back</p><h2 className="mt-2 text-2xl font-semibold text-slate-950">登录管理后台</h2><p className="mt-2 text-sm text-slate-500">使用运营账号进入项目管理工作区。</p></div><div className="mt-8 space-y-4"><label className="block text-xs font-semibold text-slate-600">用户名<input value={username} onChange={(event) => setUsername(event.target.value)} className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-cyan-400 focus:ring-4 focus:ring-cyan-50" /></label><label className="block text-xs font-semibold text-slate-600">密码<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-cyan-400 focus:ring-4 focus:ring-cyan-50" /></label>{error ? <p className="rounded-xl bg-rose-50 px-3 py-2 text-xs text-rose-600">{error}</p> : null}<Button type="submit" className="mt-2 w-full py-3" disabled={loading}>{loading ? "登录中…" : "进入管理后台"}<Icon name="arrow" /></Button></div><p className="mt-6 text-center text-xs text-slate-400">原型账号：admin / Admin@123456</p></form></div></div>;
 }
 
+function hasVisibleMenuItem(user: AdminUser, item: MenuItem): boolean {
+  if (item.enabled === false) return false;
+  if (item.permission && !canAccess(user.role, item.permission)) return false;
+  return item.path ? true : Boolean(item.children?.some((child) => hasVisibleMenuItem(user, child)));
+}
+
+function menuContainsPath(item: MenuItem, path: string): boolean {
+  if (item.path && (path === item.path || path.startsWith(`${item.path}/`))) return true;
+  return Boolean(item.children?.some((child) => menuContainsPath(child, path)));
+}
+
+function flattenMenu(items: MenuItem[]): MenuItem[] {
+  return items.flatMap((item) => item.path ? [item] : flattenMenu(item.children ?? []));
+}
+
 function Sidebar({ user, path, navigate, collapsed, onCollapse, mobileOpen, onClose }: { user: AdminUser; path: string; navigate: (path: string) => void; collapsed: boolean; onCollapse: () => void; mobileOpen: boolean; onClose: () => void }) {
-  const visible = MENU_GROUPS.filter((item) => item.permission ? canAccess(user.role, item.permission) : item.children?.some((child) => canAccess(user.role, child.permission)));
+  const visible = MENU_GROUPS.filter((item) => hasVisibleMenuItem(user, item));
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
-    const activeGroup = visible.find((item) => item.children?.some((child) => child.path && (path === child.path || path.startsWith(`${child.path}/`))));
-    if (activeGroup) setCollapsedGroups((current) => ({ ...current, [activeGroup.id]: false }));
+    const activeGroups = visible.filter((item) => menuContainsPath(item, path)).flatMap((item) => [item.id, ...(item.children ?? []).filter((child) => menuContainsPath(child, path)).map((child) => child.id)]);
+    if (activeGroups.length) setCollapsedGroups((current) => ({ ...current, ...Object.fromEntries(activeGroups.map((id) => [id, false])) }));
   }, [path]);
 
   const toggleGroup = (id: string) => setCollapsedGroups((current) => ({ ...current, [id]: !current[id] }));
@@ -286,18 +387,20 @@ function Sidebar({ user, path, navigate, collapsed, onCollapse, mobileOpen, onCl
       <button type="button" onClick={onClose} aria-label="关闭菜单" className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700 lg:hidden"><span className="text-xl leading-none">×</span></button>
     </div>
     <div className="flex-1 overflow-y-auto px-3 py-5">
-      {visible.map((item) => {
-        const groupCollapsed = Boolean(collapsedGroups[item.id]);
-        return <div key={item.id} className="mb-5">
-          {item.children ? <>
-            <button type="button" onClick={() => !collapsed && toggleGroup(item.id)} aria-expanded={!groupCollapsed} title={collapsed ? item.label : undefined} className={`${collapsed ? "justify-center" : "justify-between px-3"} mb-2 flex w-full items-center rounded-lg py-1.5 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400 hover:bg-slate-50 hover:text-slate-600`}>
+      {(() => {
+        const renderItems = (items: MenuItem[], level = 0): ReactNode => items.filter((item) => hasVisibleMenuItem(user, item)).map((item) => {
+          if (!item.children) return <NavButton key={item.id} item={item} path={path} navigate={goTo} collapsed={collapsed} />;
+          const groupCollapsed = Boolean(collapsedGroups[item.id]);
+          return <div key={item.id} className={level ? "mt-2" : "mb-5"}>
+            <button type="button" onClick={() => !collapsed && toggleGroup(item.id)} aria-expanded={!groupCollapsed} title={collapsed ? item.label : undefined} className={`${collapsed ? "justify-center" : "justify-between px-3"} mb-1 flex w-full items-center rounded-lg py-1.5 text-[10px] font-bold uppercase tracking-[0.12em] ${level ? "text-slate-500" : "text-slate-400"} hover:bg-slate-50`}>
               <span>{collapsed ? "•" : item.label}</span>
               {!collapsed ? <span className={`transition-transform ${groupCollapsed ? "-rotate-90" : "rotate-90"}`}><Icon name="chevron" /></span> : null}
             </button>
-            {!collapsed && !groupCollapsed ? <div className="space-y-1">{item.children.filter((child) => canAccess(user.role, child.permission)).map((child) => <NavButton key={child.id} item={child} path={path} navigate={goTo} collapsed={collapsed} />)}</div> : null}
-          </> : <NavButton item={item} path={path} navigate={goTo} collapsed={collapsed} />}
-        </div>;
-      })}
+            {!collapsed && !groupCollapsed ? <div className={level ? "ml-2 space-y-1 border-l border-slate-100 pl-2" : "space-y-1"}>{renderItems(item.children, level + 1)}</div> : null}
+          </div>;
+        });
+        return renderItems(visible);
+      })()}
     </div>
     <div className="shrink-0 border-t border-slate-100 p-3"><button type="button" onClick={onCollapse} title={collapsed ? "展开侧栏" : "收起侧栏"} className="flex w-full items-center justify-center rounded-xl py-2 text-xs text-slate-400 hover:bg-slate-50 hover:text-slate-700"><span className={`text-xl leading-none transition ${collapsed ? "rotate-180" : ""}`}>‹</span>{collapsed ? null : <span className="ml-2">收起侧栏</span>}</button></div>
   </aside>;
@@ -309,7 +412,7 @@ function NavButton({ item, path, navigate, collapsed }: { item: MenuItem; path: 
   return <button type="button" disabled={disabled} onClick={() => item.path && navigate(item.path)} title={disabled ? `${item.label}（规划中）` : item.label} className={`group flex w-full items-center rounded-xl px-3 py-2.5 text-left text-xs font-semibold transition ${collapsed ? "justify-center" : "gap-3"} ${active ? "bg-cyan-50 text-cyan-700" : disabled ? "cursor-not-allowed text-slate-300" : "text-slate-500 hover:bg-slate-50 hover:text-slate-800"}`}><span className={active ? "text-cyan-600" : "text-slate-400"}><Icon name={item.id.includes("knowledge") ? "book" : item.id.includes("asset") ? "sparkle" : item.id.includes("interact") ? "chat" : item.id.includes("event") ? "calendar" : item.id === "report" ? "chart" : item.id === "system" ? "settings" : item.id === "lead" ? "users" : "grid"} /></span>{collapsed ? null : <><span className="flex-1">{item.label}</span>{disabled ? <span className="text-[10px] font-normal text-slate-300">Soon</span> : active ? <span className="h-1.5 w-1.5 rounded-full bg-cyan-500" /> : null}</>}</button>;
 }
 
-function MobileNav({ user, path, navigate }: { user: AdminUser; path: string; navigate: (path: string) => void }) { const links = MENU_GROUPS.flatMap((item) => item.children ?? (item.path ? [item] : [])).filter((item) => item.path && item.enabled !== false && canAccess(user.role, item.permission)).slice(0, 6); return <div className="flex gap-1 overflow-x-auto border-b border-slate-200 bg-white px-3 py-2 lg:hidden">{links.map((item) => <button type="button" key={item.id} onClick={() => item.path && navigate(item.path)} className={`whitespace-nowrap rounded-lg px-3 py-2 text-xs font-semibold ${path === item.path ? "bg-cyan-50 text-cyan-700" : "text-slate-500"}`}>{item.label}</button>)}</div>; }
+function MobileNav({ user, path, navigate }: { user: AdminUser; path: string; navigate: (path: string) => void }) { const links = flattenMenu(MENU_GROUPS).filter((item) => hasVisibleMenuItem(user, item)).slice(0, 6); return <div className="flex gap-1 overflow-x-auto border-b border-slate-200 bg-white px-3 py-2 lg:hidden">{links.map((item) => <button type="button" key={item.id} onClick={() => item.path && navigate(item.path)} className={`whitespace-nowrap rounded-lg px-3 py-2 text-xs font-semibold ${path === item.path ? "bg-cyan-50 text-cyan-700" : "text-slate-500"}`}>{item.label}</button>)}</div>; }
 
 export function AdminApp() {
   const [path, navigate] = useAdminPath();
@@ -327,7 +430,7 @@ export function AdminApp() {
   const searchParams = new URLSearchParams(window.location.search);
   const exhibitionId = searchParams.get("id") ?? "";
   const initialExhibitionId = searchParams.get("exhibitionId") ?? "";
-  return <div className="flex min-h-screen bg-[#f3f7f9] text-slate-900">{mobileOpen ? <button type="button" aria-label="关闭菜单" onClick={() => setMobileOpen(false)} className="fixed inset-0 z-40 bg-slate-950/25 lg:hidden" /> : null}<Sidebar user={user} path={path} navigate={navigate} collapsed={collapsed} onCollapse={() => setCollapsed((value) => !value)} mobileOpen={mobileOpen} onClose={() => setMobileOpen(false)} /><div className="flex min-w-0 flex-1 flex-col"><header className="sticky top-0 z-30 flex h-[72px] items-center justify-between border-b border-slate-200 bg-white/95 px-5 backdrop-blur lg:px-8"><div className="flex min-w-0 items-center gap-3"><button type="button" onClick={() => setMobileOpen(true)} aria-label="打开菜单" className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 lg:hidden"><span className="text-lg">☰</span></button><div className="hidden lg:block"><p className="text-xs text-slate-400">当前工作区</p><div className="mt-1 flex items-center gap-2"><span className="text-sm font-semibold text-slate-900">{GROUP_LABELS[path.split("/")[1]] || "运营总览"}</span><span className="text-slate-300">/</span><span className="text-sm text-slate-500">{title}</span></div></div><div className="lg:hidden"><Logo /></div></div><div className="flex items-center gap-2 sm:gap-4"><button type="button" onClick={() => { window.location.search = "mode=studio"; }} className="hidden rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:border-cyan-300 hover:text-cyan-700 sm:inline-flex">旧 Studio</button><div className="hidden h-7 w-px bg-slate-200 sm:block" /><div className="flex items-center gap-2"><div className="flex h-8 w-8 items-center justify-center rounded-full bg-cyan-100 text-xs font-bold text-cyan-700">{user.displayName.slice(0, 1)}</div><div className="hidden text-right sm:block"><p className="text-xs font-semibold text-slate-800">{user.displayName}</p><p className="text-[10px] text-slate-400">{roleLabel(user.role)}</p></div></div><button type="button" onClick={logout} title="退出登录" className="rounded-xl p-2 text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Icon name="logout" /></button></div></header><MobileNav user={user} path={path} navigate={navigate} /><main className="min-h-0 flex-1 overflow-auto">{!isKnown ? <ComingSoonPage title={title} /> : path === "/dashboard" || path === "/dashboard/todo" ? <DashboardPage navigate={navigate} /> : path === "/event/exhibition/detail" ? <ExhibitionDetailPage exhibitionId={exhibitionId} canWrite={eventCanWrite("event:exhibition:write")} onBack={() => navigate("/event/exhibition")} /> : path === "/event/exhibition" ? <ExhibitionPage canWrite={eventCanWrite("event:exhibition:write")} onOpenDetail={(id) => navigate(`/event/exhibition/detail?id=${encodeURIComponent(id)}`)} /> : path === "/event/exhibitor" ? <ExhibitorPage canWrite={eventCanWrite("event:exhibitor:write")} initialExhibitionId={initialExhibitionId} /> : path === "/event/exhibit" ? <ExhibitPage canWrite={eventCanWrite("event:exhibit:write")} initialExhibitionId={initialExhibitionId} /> : path === "/event/venue" ? <VenuePage canWrite={eventCanWrite("event:venue:write")} initialExhibitionId={initialExhibitionId} /> : path === "/event/route" ? <RoutePage canWrite={eventCanWrite("event:route:write")} initialExhibitionId={initialExhibitionId} /> : path === "/event/schedule" ? <SchedulePage canWrite={eventCanWrite("event:schedule:write")} /> : path === "/asset/avatar" ? <EnhancedAvatarPage onDebug={(avatarId) => navigate(`/interact/test?avatarId=${encodeURIComponent(avatarId)}`)} /> : path === "/asset/gif" ? <EnhancedGifPage /> : path === "/asset/voice" ? <EnhancedVoicePage /> : path === "/asset/scene" ? <EnhancedScenePage /> : path === "/asset/idle" ? <EnhancedIdlePage /> : path === "/knowledge/document" ? <DocumentCenterPage /> : path === "/knowledge/base" ? <KnowledgeBasePage /> : path === "/knowledge/memory" ? <MemoryCenterPage /> : path === "/knowledge/qa" ? <EnhancedQaPage /> : path === "/knowledge/script" ? <EnhancedScriptPage /> : path === "/knowledge/package" ? <EnhancedPackagePage /> : path === "/interact/test" ? <RealtimeTestWorkspace /> : <ComingSoonPage title={title} />}</main></div></div>;
+  return <div className="flex min-h-screen bg-[#f3f7f9] text-slate-900">{mobileOpen ? <button type="button" aria-label="关闭菜单" onClick={() => setMobileOpen(false)} className="fixed inset-0 z-40 bg-slate-950/25 lg:hidden" /> : null}<Sidebar user={user} path={path} navigate={navigate} collapsed={collapsed} onCollapse={() => setCollapsed((value) => !value)} mobileOpen={mobileOpen} onClose={() => setMobileOpen(false)} /><div className="flex min-w-0 flex-1 flex-col"><header className="sticky top-0 z-30 flex h-[72px] items-center justify-between border-b border-slate-200 bg-white/95 px-5 backdrop-blur lg:px-8"><div className="flex min-w-0 items-center gap-3"><button type="button" onClick={() => setMobileOpen(true)} aria-label="打开菜单" className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 lg:hidden"><span className="text-lg">☰</span></button><div className="hidden lg:block"><p className="text-xs text-slate-400">当前工作区</p><div className="mt-1 flex items-center gap-2"><span className="text-sm font-semibold text-slate-900">{GROUP_LABELS[path.split("/")[1]] || "运营总览"}</span><span className="text-slate-300">/</span><span className="text-sm text-slate-500">{title}</span></div></div><div className="lg:hidden"><Logo /></div></div><div className="flex items-center gap-2 sm:gap-4"><button type="button" onClick={() => { window.location.search = "mode=studio"; }} className="hidden rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:border-cyan-300 hover:text-cyan-700 sm:inline-flex">旧 Studio</button><div className="hidden h-7 w-px bg-slate-200 sm:block" /><div className="flex items-center gap-2"><div className="flex h-8 w-8 items-center justify-center rounded-full bg-cyan-100 text-xs font-bold text-cyan-700">{user.displayName.slice(0, 1)}</div><div className="hidden text-right sm:block"><p className="text-xs font-semibold text-slate-800">{user.displayName}</p><p className="text-[10px] text-slate-400">{roleLabel(user.role)}</p></div></div><button type="button" onClick={logout} title="退出登录" className="rounded-xl p-2 text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Icon name="logout" /></button></div></header><MobileNav user={user} path={path} navigate={navigate} /><main className="min-h-0 flex-1 overflow-auto">{!isKnown ? <ComingSoonPage title={title} /> : path === "/dashboard" || path === "/dashboard/todo" ? <DashboardPage navigate={navigate} /> : path === "/event/exhibition/detail" ? <ExhibitionDetailPage exhibitionId={exhibitionId} canWrite={eventCanWrite("event:exhibition:write")} onBack={() => navigate("/event/exhibition")} onNavigate={navigate} /> : path === "/event/exhibition" ? <ExhibitionPage canWrite={eventCanWrite("event:exhibition:write")} onOpenDetail={(id) => navigate(`/event/exhibition/detail?id=${encodeURIComponent(id)}`)} /> : path === "/event/exhibitor" ? <ExhibitorPage canWrite={eventCanWrite("event:exhibitor:write")} initialExhibitionId={initialExhibitionId} /> : path === "/event/exhibit" ? <ExhibitPage canWrite={eventCanWrite("event:exhibit:write")} initialExhibitionId={initialExhibitionId} /> : path === "/event/venue" ? <VenuePage canWrite={eventCanWrite("event:venue:write")} initialExhibitionId={initialExhibitionId} /> : path === "/event/point" ? <PointPage canWrite={eventCanWrite("event:point:write")} initialExhibitionId={initialExhibitionId} /> : path === "/event/route" ? <RoutePage canWrite={eventCanWrite("event:route:write")} initialExhibitionId={initialExhibitionId} /> : path === "/event/schedule" ? <SchedulePage canWrite={eventCanWrite("event:schedule:write")} initialExhibitionId={initialExhibitionId} /> : path === "/event/broadcast" ? <BroadcastPage canWrite={eventCanWrite("event:broadcast:write")} initialExhibitionId={initialExhibitionId} /> : path === "/asset/avatar" ? <EnhancedAvatarPage onDebug={(avatarId) => navigate(`/interact/test?avatarId=${encodeURIComponent(avatarId)}`)} /> : path === "/asset/gif" ? <EnhancedGifPage /> : path === "/asset/voice" ? <EnhancedVoicePage /> : path === "/asset/scene" ? <EnhancedScenePage /> : path === "/asset/idle" ? <EnhancedIdlePage /> : path === "/knowledge/document" ? <DocumentCenterPage /> : path === "/knowledge/base" ? <KnowledgeBasePage /> : path === "/knowledge/memory" ? <MemoryCenterPage /> : path === "/knowledge/qa" ? <EnhancedQaPage /> : path === "/knowledge/script" ? <EnhancedScriptPage /> : path === "/knowledge/package" ? <EnhancedPackagePage /> : path === "/interact/test" ? <RealtimeTestWorkspace /> : <ComingSoonPage title={title} />}</main></div></div>;
 }
 
 export function adminRoleCanWrite(user: AdminUser, permission: Parameters<typeof canUseButton>[1]): boolean { return canUseButton(user.role, permission); }

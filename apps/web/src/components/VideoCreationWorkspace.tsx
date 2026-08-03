@@ -463,7 +463,7 @@ export function VideoCreationWorkspace({
   const [audioSource, setAudioSource] = useState<VideoCreationAudioSource>("upload");
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [sourceAssetBusy, setSourceAssetBusy] = useState(false);
-  const [text, setText] = useState("欢迎使用 OpenTalking 视频创作。请选择数字人形象和音色，生成一段离线口播视频。");
+  const [text, setText] = useState("欢迎使用四川博览集团数字人视频创作。请选择数字人形象和音色，生成一段离线口播视频。");
   const [duoDialogLines, setDuoDialogLines] = useState<DuoDialogLine[]>(() => freshDuoDialogLines());
   const [duoDialogSpeakers, setDuoDialogSpeakers] = useState<DuoDialogSpeakers>(() => duoDialogDefaultSpeakers(selectedAvatar, voiceCatalog));
   const [duoDialogGapMs, setDuoDialogGapMs] = useState(DEFAULT_DUO_DIALOG_GAP_MS);

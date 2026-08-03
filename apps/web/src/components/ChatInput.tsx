@@ -26,6 +26,29 @@ function floatToInt16Buffer(input: Float32Array): ArrayBuffer {
 
 /** 流式 STT：等待服务端 JSON；无超时会导致 uploadLock 永不释放，VAD 永久卡死 */
 const STT_WS_REPLY_MS = 55_000;
+const STT_WS_CONNECT_TIMEOUT_MS = 8_000;
+const STT_WS_RETRY_DELAYS_MS = [0, 500, 1_000];
+
+async function waitForSttWsOpen(ws: WebSocket): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const timer = window.setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(new Error("语音识别连接超时"));
+    }, STT_WS_CONNECT_TIMEOUT_MS);
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      if (error) reject(error);
+      else resolve();
+    };
+    ws.onopen = () => finish();
+    ws.onerror = () => finish(new Error("语音识别 WebSocket 连接失败"));
+    ws.onclose = () => finish(new Error("语音识别 WebSocket 已关闭"));
+  });
+}
 
 async function awaitSttWsReply(ws: WebSocket): Promise<{ text?: string; error?: string }> {
   return new Promise((resolve, reject) => {
@@ -110,7 +133,11 @@ interface ChatInputProps {
   qwenModel?: string;
   qwenVoice?: string;
   compact?: boolean;
+  /** 流式 STT 后端是否支持识别完成后由前端决定是否 speak。 */
+  deferSpeak?: boolean;
 }
+
+export type ListeningState = "off" | "listening" | "recording" | "transcribing" | "processing" | "error";
 
 function pickRecorderMime(): string | undefined {
   const candidates = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus"];
@@ -169,6 +196,7 @@ export function ChatInput({
   qwenModel = "",
   qwenVoice = "",
   compact = false,
+  deferSpeak = false,
 }: ChatInputProps) {
   const voiceCaptureEnabled = !!(
     onSpeakAudio ||
@@ -176,6 +204,7 @@ export function ChatInput({
   );
   const [text, setText] = useState("");
   const [voiceMode, setVoiceMode] = useState(false);
+  const [listeningState, setListeningState] = useState<ListeningState>("off");
   const [segmentHot, setSegmentHot] = useState(false);
   const [voiceBusy, setVoiceBusy] = useState(false);
   const [ftAudioBusy, setFtAudioBusy] = useState(false);
@@ -244,6 +273,7 @@ export function ChatInput({
   const stopSegmentRecorder = useCallback(async (): Promise<Blob | null> => {
     /** 仅当真开过 WS 录音时才走流式收尾；否则会误伤 MediaRecorder 回退路径（此前无音频上传） */
     if (streamWsRef.current) {
+      setListeningState("transcribing");
       pcmSendGateRef.current = false;
       const ws = streamWsRef.current;
       streamWsRef.current = null;
@@ -280,6 +310,7 @@ export function ChatInput({
       return null;
     }
     const mime = mr.mimeType || "audio/webm";
+    setListeningState("transcribing");
     try {
       if (mr.state === "recording") mr.requestData();
     } catch {
@@ -368,6 +399,7 @@ export function ChatInput({
     softFramesRef.current = 0;
     silenceStartRef.current = null;
     setVoiceMode(false);
+    setListeningState("off");
     setSegmentHot(false);
   }, [stopSegmentRecorder, stopVadLoop]);
 
@@ -385,13 +417,23 @@ export function ChatInput({
         segmentStartTsRef.current = performance.now();
         silenceStartRef.current = null;
         setSegmentHot(true);
+        setListeningState("recording");
         try {
           const url = buildWsUrl(`/sessions/${streamingAsrSessionId}/speak_audio_stream`);
-          const ws = new WebSocket(url);
-          await new Promise<void>((resolve, reject) => {
-            ws.onopen = () => resolve();
-            ws.onerror = () => reject(new Error("WebSocket 连接失败"));
-          });
+          let ws: WebSocket | null = null;
+          let lastError: Error | null = null;
+          for (const delay of STT_WS_RETRY_DELAYS_MS) {
+            if (delay > 0) await new Promise<void>((resolve) => window.setTimeout(resolve, delay));
+            try {
+              const candidate = new WebSocket(url);
+              await waitForSttWsOpen(candidate);
+              ws = candidate;
+              break;
+            } catch (error) {
+              lastError = error instanceof Error ? error : new Error(String(error));
+            }
+          }
+          if (!ws) throw lastError ?? new Error("语音识别 WebSocket 连接失败");
           ws.send(
             JSON.stringify({
               type: "meta",
@@ -403,6 +445,7 @@ export function ChatInput({
               tts_provider: ttsProvider,
               tts_model: !isEdgeTts(ttsProvider) ? qwenModel ?? "" : "",
               stt_provider: sttProvider,
+              defer_speak: deferSpeak,
             }),
           );
           if (PCM_PREROLL_HEAD_SILENCE_SAMPLES > 0) {
@@ -451,11 +494,13 @@ export function ChatInput({
       segmentStartTsRef.current = performance.now();
       silenceStartRef.current = null;
       setSegmentHot(true);
+      setListeningState("recording");
     },
     [
       edgeVoice,
       qwenModel,
       qwenVoice,
+      deferSpeak,
       sttProvider,
       streamingAsrSessionId,
       ttsProvider,
@@ -533,6 +578,7 @@ export function ChatInput({
                 if (startedGen !== voiceBreakGenRef.current) return;
                 if (blob && onSpeakAudioRef.current) {
                   setVoiceBusy(true);
+                  setListeningState("processing");
                   try {
                     if (startedGen !== voiceBreakGenRef.current) return;
                     await onSpeakAudioRef.current(blob);
@@ -540,10 +586,12 @@ export function ChatInput({
                     setVoiceBusy(false);
                   }
                 }
+                if (voiceModeRef.current) setListeningState("listening");
               } catch (err) {
                 console.warn("voice segment failed", err);
                 const message = err instanceof Error ? err.message : String(err);
                 onSpeakAudioStreamErrorRef.current?.(message);
+                if (voiceModeRef.current) setListeningState("error");
               } finally {
                 uploadLockRef.current = false;
               }
@@ -625,9 +673,11 @@ export function ChatInput({
       segmentActiveRef.current = false;
 
       setVoiceMode(true);
+      setListeningState("listening");
       rafRef.current = requestAnimationFrame(vadTick);
     } catch (e) {
       console.warn("Voice mode failed", e);
+      setListeningState("error");
       onNotify?.(
         "无法使用麦克风。请用 localhost 或 HTTPS 打开页面，并允许麦克风权限（纯 IP 的 HTTP 多半会被浏览器拦截）。",
         "error",
@@ -644,13 +694,19 @@ export function ChatInput({
 
   const toggleVoiceMode = useCallback(async () => {
     if (!voiceCaptureEnabled || disabled) return;
-    if (voiceBusy) return;
     if (voiceMode) {
       await teardownVoicePipeline();
       return;
     }
+    if (voiceBusy) return;
     await enterVoiceMode();
   }, [disabled, enterVoiceMode, teardownVoicePipeline, voiceBusy, voiceCaptureEnabled, voiceMode]);
+
+  useEffect(() => {
+    if (disabled && voiceMode) {
+      void teardownVoicePipeline();
+    }
+  }, [disabled, teardownVoicePipeline, voiceMode]);
 
   useEffect(() => {
     return () => {
@@ -705,6 +761,22 @@ export function ChatInput({
 
   const hasText = !!text.trim();
   const showInterruptButton = (isSpeaking && !hasText) || (voiceMode && (segmentHot || voiceBusy));
+  const listeningLabel = listeningState === "recording"
+    ? "正在收音"
+    : listeningState === "transcribing"
+      ? "正在识别"
+      : listeningState === "processing"
+        ? "正在处理"
+        : listeningState === "error"
+          ? "监听异常"
+          : voiceMode
+            ? "正在监听"
+            : "语音输入";
+  const listeningHint = voiceMode
+    ? listeningState === "error"
+      ? "下一句话会自动重试"
+      : "静音自动分句，识别后继续监听"
+    : "点击开启长期监听";
 
   if (compact) {
     return (
@@ -712,16 +784,16 @@ export function ChatInput({
         <div className="digital-display-voice-copy">
           <span className={voiceMode ? "is-active" : ""} />
           <div>
-            <strong>{voiceMode ? (segmentHot || voiceBusy ? "正在识别语音" : "正在聆听") : "语音输入"}</strong>
-            <small>{voiceMode ? "说完自动断句并播报" : "点击开始说话"}</small>
+            <strong>{listeningLabel}</strong>
+            <small>{listeningHint}</small>
           </div>
         </div>
         {voiceCaptureEnabled ? (
           <button
             type="button"
             className={`digital-display-voice-trigger ${voiceMode ? "is-active" : ""}`}
-            aria-label={voiceMode ? "停止语音输入" : "开始语音输入"}
-            disabled={voiceBusy || ftAudioBusy}
+            aria-label={voiceMode ? "停止长期监听" : "开始长期监听"}
+            disabled={ftAudioBusy}
             onClick={(event) => {
               event.preventDefault();
               if (disabled) {
@@ -731,7 +803,7 @@ export function ChatInput({
               void toggleVoiceMode();
             }}
           >
-            {voiceMode ? "停止收音" : "开始说话"}
+            {voiceMode ? "停止监听" : "开始监听"}
           </button>
         ) : null}
         {showInterruptButton ? (

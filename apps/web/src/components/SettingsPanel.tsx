@@ -100,7 +100,7 @@ const ASR_PROVIDER_MODELS: Record<string, string> = {
 const WAV2LIP_POSTPROCESS_OPTIONS: { id: Wav2LipPostprocessMode; label: string }[] = [
   { id: "auto", label: "自动推荐" },
   { id: "basic", label: "基础" },
-  { id: "opentalking_improved", label: "OpenTalking 优化" },
+  { id: "opentalking_improved", label: "四川博览集团优化" },
   { id: "easy_improved", label: "Easy-Wav2Lip 优化" },
 ];
 
@@ -499,7 +499,7 @@ export function SettingsPanel({
     subtitle: ASR_PROVIDER_SUBTITLES[p] ?? p,
   }));
   const selectedAsrLabel = ASR_PROVIDER_LABELS[asrProvider] ?? asrProvider;
-  const selectedAsrModel = ASR_PROVIDER_MODELS[asrProvider] ?? (asrModel || "OPENTALKING_STT_MODEL");
+  const selectedAsrModel = ASR_PROVIDER_MODELS[asrProvider] ?? (asrModel || "默认语音识别模型");
   const qwenVoiceColumnOptions = qwenVoiceOptions.map((option) => ({
     id: option.id,
     label: option.label,
@@ -921,7 +921,7 @@ export function SettingsPanel({
                 当前数字人运行中，停止后可修改语音识别配置。
               </p>
             ) : (
-              <p className="mt-2 text-xs leading-relaxed text-slate-500">默认由 OPENTALKING_STT_DEFAULT_PROVIDER 控制；连续语音和上传语音共用该本地/API STT 配置，可选择百炼、小米 MiMo 或 OpenAI-compatible STT。</p>
+              <p className="mt-2 text-xs leading-relaxed text-slate-500">默认由服务端语音识别配置控制；连续语音和上传语音共用该本地/API STT 配置，可选择百炼、小米 MiMo 或 OpenAI-compatible STT。</p>
             )}
           </div>
         </SettingsSection>
@@ -998,7 +998,7 @@ export function SettingsPanel({
                     ) : ttsProvider === "openai_compatible" ? (
                       <div className="rounded-lg border border-slate-200 bg-white px-3 py-3">
                         <p className="text-xs font-semibold text-slate-700">后端默认音色</p>
-                        <p className="mt-1 text-[11px] leading-relaxed text-slate-500">使用 OPENTALKING_TTS_OPENAI_VOICE；如服务不需要 voice 字段，可在 .env 中留空或使用服务默认值。</p>
+                        <p className="mt-1 text-[11px] leading-relaxed text-slate-500">使用服务端默认音色配置；如服务不需要 voice 字段，可在 .env 中留空或使用服务默认值。</p>
                       </div>
                     ) : (
                       <LevelTwoList

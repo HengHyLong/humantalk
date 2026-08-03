@@ -6,6 +6,7 @@ import { ChatInput } from "../components/ChatInput";
 import { ChatMessages } from "../components/ChatMessages";
 import { BailianVoiceClone } from "../components/BailianVoiceClone";
 import { RealtimeConfigPanel, realtimeTtsModels, realtimeTtsVoices, type RuntimeHealth } from "./RealtimeConfigPanel";
+import { adminApi } from "./api";
 import type { AgentConfig } from "../components/AvatarSelectionStage";
 import type { TtsProviderExtended } from "../constants/ttsBailian";
 import type { VoiceCloneApplication } from "../lib/voiceCloneApply";
@@ -29,6 +30,8 @@ const ASR_MODELS: Record<string, string> = {
   sensevoice: "iic/SenseVoiceSmall",
 };
 
+const SUPPORTED_TTS_PROVIDERS: TtsProviderExtended[] = ["edge", "dashscope", "cosyvoice", "sambert", "local_cosyvoice", "indextts", "local_f5_tts", "xiaomi_mimo", "openai_compatible"];
+
 function audioProviderConfigError({
   asrProvider,
   ttsProvider,
@@ -43,6 +46,10 @@ function audioProviderConfigError({
   const ttsStatus = health?.tts_providers?.[ttsProvider];
   const apiStt = ["dashscope", "xiaomi_mimo", "openai_compatible"].includes(asrProvider);
   const apiTts = ["dashscope", "cosyvoice", "sambert", "xiaomi_mimo", "openai_compatible"].includes(ttsProvider);
+  const enabledTtsProviders = health?.tts_enabled_providers;
+  if (enabledTtsProviders?.length && !enabledTtsProviders.includes(ttsProvider)) {
+    missing.push(`${ttsProvider} TTS 后端未配置或未启用`);
+  }
   const sttConfigured = sttStatus?.key_set ?? health?.stt_key_set;
   const ttsConfigured = ttsStatus?.key_set ?? health?.tts_key_set;
   if (apiStt && (sttConfigured !== true || (["xiaomi_mimo", "openai_compatible"].includes(asrProvider) && sttStatus?.service_url_set !== true))) {
@@ -69,6 +76,7 @@ export function RealtimeTestWorkspace({ initialAvatarId = "" }: { initialAvatarI
   const playbackRef = useRef<PlaybackHandle | null>(null);
   const closeEventsRef = useRef<(() => void) | null>(null);
   const sessionRef = useRef<string | null>(null);
+  const exhibitionSttModelRef = useRef<string | null>(null);
   const [avatars, setAvatars] = useState<AvatarSummary[]>([]);
   const [models, setModels] = useState<ModelStatus[]>([]);
   const [avatarId, setAvatarId] = useState("");
@@ -94,6 +102,7 @@ export function RealtimeTestWorkspace({ initialAvatarId = "" }: { initialAvatarI
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [panelTab, setPanelTab] = useState<"chat" | "status" | "export">("chat");
   const requestedAvatarId = initialAvatarId || new URLSearchParams(window.location.search).get("avatarId") || "";
+  const requestedExhibitionId = new URLSearchParams(window.location.search).get("exhibitionId") || "";
   const isAvatarDebug = Boolean(requestedAvatarId);
 
   useEffect(() => {
@@ -114,12 +123,39 @@ export function RealtimeTestWorkspace({ initialAvatarId = "" }: { initialAvatarI
       const summaries = knowledgeResponse.knowledge_base_summaries ?? (knowledgeResponse.knowledge_bases ?? []).map((item) => typeof item === "string" ? { id: item, name: item, document_count: 0, ready_document_count: 0, error_document_count: 0, created_at: "", updated_at: "" } : item);
       setKnowledgeBases(summaries);
       setHealth(healthResponse);
+      const enabledTtsProviders = healthResponse.tts_enabled_providers ?? [];
+      const defaultTtsProvider = healthResponse.tts_default_provider;
+      if (!requestedExhibitionId && defaultTtsProvider && SUPPORTED_TTS_PROVIDERS.includes(defaultTtsProvider as TtsProviderExtended) && (!enabledTtsProviders.length || enabledTtsProviders.includes(defaultTtsProvider))) {
+        setTtsProvider(defaultTtsProvider as TtsProviderExtended);
+      }
       setVoiceCatalog(voiceResponse.items ?? []);
     }).catch(() => {
       if (!cancelled) setError("暂时无法读取 OpenTalking 形象或模型列表，请确认服务已启动。");
     });
     return () => { cancelled = true; };
   }, [requestedAvatarId]);
+
+  useEffect(() => {
+    if (!requestedExhibitionId) return;
+    let cancelled = false;
+    void adminApi.listExhibitions().then((exhibitions) => {
+      if (cancelled) return;
+      const exhibition = exhibitions.find((item) => item.id === requestedExhibitionId);
+      if (!exhibition) return;
+      if (exhibition.boundAvatarId) setAvatarId(exhibition.boundAvatarId);
+      if (exhibition.boundModel) setModel(exhibition.boundModel);
+      if (exhibition.boundVoiceProvider && SUPPORTED_TTS_PROVIDERS.includes(exhibition.boundVoiceProvider as TtsProviderExtended)) setTtsProvider(exhibition.boundVoiceProvider as TtsProviderExtended);
+      if (exhibition.boundVoiceModel) setTtsModel(exhibition.boundVoiceModel);
+      if (exhibition.boundVoiceId) setTtsVoice(exhibition.boundVoiceId);
+      if (exhibition.boundSttProvider) setAsrProvider(exhibition.boundSttProvider);
+      if (exhibition.boundSttModel) {
+        exhibitionSttModelRef.current = exhibition.boundSttModel;
+        setAsrModel(exhibition.boundSttModel);
+      }
+      if (exhibition.knowledgeBaseIds.length) setAgentConfig((current) => ({ ...current, knowledgeEnabled: true, knowledgeBaseIds: exhibition.knowledgeBaseIds }));
+    }).catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [requestedExhibitionId]);
 
   useEffect(() => {
     if (!avatarId) {
@@ -140,7 +176,9 @@ export function RealtimeTestWorkspace({ initialAvatarId = "" }: { initialAvatarI
   }, [avatarId]);
 
   useEffect(() => {
-    setAsrModel(ASR_MODELS[asrProvider] ?? "");
+    const configuredModel = exhibitionSttModelRef.current;
+    exhibitionSttModelRef.current = null;
+    setAsrModel(configuredModel || ASR_MODELS[asrProvider] || "");
   }, [asrProvider]);
 
   useEffect(() => {

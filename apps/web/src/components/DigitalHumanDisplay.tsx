@@ -1,5 +1,12 @@
 import { useState, type RefObject } from "react";
-import type { AvatarSummary, ClientRendererDescriptor, SceneBackgroundAsset, SceneComposition } from "../lib/api";
+import type {
+  AvatarSummary,
+  ClientRendererDescriptor,
+  NavigationResult,
+  SceneBackgroundAsset,
+  SceneComposition,
+  VoiceIntent,
+} from "../lib/api";
 import type { TtsProviderExtended } from "../constants/ttsBailian";
 import type { ConnectionStatus, Message } from "../types";
 import { ChatInput } from "./ChatInput";
@@ -33,6 +40,9 @@ type DigitalHumanDisplayProps = {
   edgeVoice?: string;
   qwenModel?: string;
   qwenVoice?: string;
+  navigationResult?: NavigationResult | null;
+  voiceIntent?: VoiceIntent | null;
+  exhibitionConfigNotice?: string | null;
 };
 
 const languages = ["中文", "English"];
@@ -66,6 +76,9 @@ export function DigitalHumanDisplay({
   edgeVoice = "",
   qwenModel = "",
   qwenVoice = "",
+  navigationResult = null,
+  voiceIntent = null,
+  exhibitionConfigNotice = null,
 }: DigitalHumanDisplayProps) {
   const [activeLanguage, setActiveLanguage] = useState("中文");
   const [draft, setDraft] = useState("");
@@ -123,9 +136,49 @@ export function DigitalHumanDisplay({
           <section className="digital-display-chat-panel" aria-label="实时对话">
             <div className="digital-display-chat-heading">
               <span>{activeLanguage === "中文" ? "实时对话" : "LIVE CONVERSATION"}</span>
-              {isSpeaking ? <span className="digital-display-speaking">正在播报</span> : null}
+              <span className="digital-display-chat-state">
+                {voiceIntent === "navigation" ? "导航" : voiceIntent === "exhibition_content" ? "展品问答" : ""}
+                {isSpeaking ? " · 正在播报" : ""}
+              </span>
             </div>
             <div className="digital-display-chat-feed" aria-live="polite">
+              {exhibitionConfigNotice ? (
+                <div className="digital-display-chat-notice" role="status">{exhibitionConfigNotice}</div>
+              ) : null}
+              {navigationResult ? (
+                <article className="digital-display-navigation-card">
+                  {navigationResult.image_url ? (
+                    <img
+                      src={navigationResult.image_url}
+                      alt={navigationResult.title || "导航示意图"}
+                      loading="lazy"
+                      onError={(event) => { event.currentTarget.style.display = "none"; }}
+                    />
+                  ) : null}
+                  <div className="digital-display-navigation-copy">
+                    <strong>{navigationResult.title || "导航指引"}</strong>
+                    <p className="digital-display-navigation-summary">
+                      {navigationResult.subtitle_text || navigationResult.spoken_text}
+                    </p>
+                    {navigationResult.route?.from || navigationResult.route?.to ? (
+                      <p className="digital-display-navigation-route">
+                        {navigationResult.route.from || "当前位置"}
+                        {navigationResult.route.to ? ` → ${navigationResult.route.to}` : ""}
+                        {navigationResult.route.estimated_minutes != null
+                          ? ` · 约 ${navigationResult.route.estimated_minutes} 分钟`
+                          : ""}
+                      </p>
+                    ) : null}
+                    {navigationResult.route?.directions?.length ? (
+                      <ol>
+                        {navigationResult.route.directions.map((direction, index) => (
+                          <li key={`${index}-${direction}`}>{direction}</li>
+                        ))}
+                      </ol>
+                    ) : null}
+                  </div>
+                </article>
+              ) : null}
               {visibleMessages.length === 0 && displaySubtitle ? (
                 <div className="digital-display-chat-empty">{displaySubtitle}</div>
               ) : null}
@@ -202,14 +255,14 @@ export function DigitalHumanDisplay({
 
           {!live && !busy ? (
             <div className="digital-display-start-card">
-              <p className="digital-display-eyebrow">OPENTALKING REALTIME STREAM</p>
+              <p className="digital-display-eyebrow">四川博览集团数字人 · 实时推流</p>
               <h1>{busy ? "数字人正在准备中" : connection === "error" ? "推流暂时未连接" : "欢迎来到智能展厅"}</h1>
               <p>
                 {busy
                   ? queueInfo?.position
                     ? `当前排队第 ${queueInfo.position} 位，请稍候。`
                     : "正在建立 WebRTC 低延迟视频通道。"
-                  : "连接 OpenTalking 数字人视频推流，开始实时问答与展览导览。"}
+                  : "连接四川博览集团数字人视频推流，开始实时问答与展览导览。"}
               </p>
               <button type="button" className="digital-display-start-button" onClick={onStart} disabled={busy}>
                 {busy ? "连接中..." : connection === "error" ? "重新连接" : "开始体验"}

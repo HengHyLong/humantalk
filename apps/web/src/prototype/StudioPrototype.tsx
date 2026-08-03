@@ -214,7 +214,7 @@ function Stage() {
               <img src={avatarPreviewUrl} alt="数字人舞台预览" className="h-full w-full object-cover" />
               <div className="absolute inset-x-0 bottom-0 h-40 bg-gradient-to-t from-white/90 to-transparent" />
               <div className="absolute bottom-4 left-4 right-4 rounded-lg border border-slate-200 bg-white/95 px-4 py-3 text-center text-sm leading-relaxed text-slate-900 shadow-lg shadow-slate-300/50 backdrop-blur">
-                欢迎来到 OpenTalking Studio，我可以实时回答问题，也可以生成适合直播和短视频的数字人内容。
+                欢迎来到四川博览集团数字人工作台，我可以实时回答问题，也可以生成适合直播和短视频的数字人内容。
               </div>
             </div>
           </div>
@@ -229,7 +229,7 @@ function Stage() {
               <p className="mb-1 text-xs font-medium text-slate-500">实时输入</p>
               <textarea
                 className="h-11 w-full resize-none rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-800 outline-none transition focus:border-cyan-300 focus:bg-white"
-                value="请用更专业的主播口吻介绍 OpenTalking 的实时数字人能力。"
+                value="请用更专业的主播口吻介绍四川博览集团数字人的实时数字人能力。"
                 readOnly
               />
             </div>
@@ -369,7 +369,7 @@ function Header() {
           <Icon name="spark" />
         </div>
         <div className="min-w-0">
-          <p className="truncate text-sm font-semibold text-slate-950">OpenTalking Studio</p>
+          <p className="truncate text-sm font-semibold text-slate-950">四川博览集团数字人工作台</p>
           <p className="truncate text-xs text-slate-500">实时数字人工作台原型</p>
         </div>
       </div>

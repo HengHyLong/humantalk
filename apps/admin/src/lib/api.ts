@@ -707,5 +707,6 @@ export type VoiceCatalogItem = {
   voice_id: string;
   display_label: string;
   target_model: string | null;
+  profile?: string | null;
   source: "system" | "clone" | string;
 };

@@ -33,14 +33,19 @@ import {
   apiUploadFile,
   buildApiUrl,
   getMemoryLibraries,
+  getExhibitionVoiceConfig,
   listSceneBackgrounds,
   listSceneCompositions,
+  queryExhibitionNavigation,
+  transcribeSessionAudio,
   loadRuntimeConfig,
   uploadExportVideo,
   type AvatarKnowledgeBasesResponse,
   type AvatarSummary,
   type CreateSessionRequest,
   type CreateSessionResponse,
+  type ExhibitionVoiceConfig,
+  type NavigationResult,
   type KnowledgeBaseSummary,
   type KnowledgeBasesResponse,
   type PersonaSummary,
@@ -55,6 +60,11 @@ import {
 } from "./lib/api";
 import { modelConnectionBadge, type ModelStatus } from "./lib/modelStatus";
 import { modelLabel } from "./lib/modelLabels";
+import {
+  getConfiguredExhibitionId,
+  matchVoiceIntent,
+  normalizeExhibitionVoiceConfig,
+} from "./lib/exhibitionVoiceConfig";
 import { connectSse } from "./lib/sse";
 import {
   DEFAULT_TTS_PREVIEW_TEXT,
@@ -318,7 +328,7 @@ function normalizeAsrProvider(value: string | null | undefined, fallback = "dash
 }
 
 function sttModelForProvider(provider: string): string {
-  return STT_MODEL_BY_PROVIDER[normalizeAsrProvider(provider)] ?? "OPENTALKING_STT_MODEL";
+  return STT_MODEL_BY_PROVIDER[normalizeAsrProvider(provider)] ?? "默认语音识别模型";
 }
 
 function sttProviderNeedsApiKey(provider: string): boolean {
@@ -551,17 +561,17 @@ function validateAudioProviderConfigBeforeStart({
   const ttsServiceUrlSet = ttsStatus?.service_url_set ?? runtimeStatus?.tts_service_url_set;
   if (sttProviderNeedsApiKey(sttProvider) && (sttKeySet !== true || ((sttProvider === "openai_compatible" || sttProvider === "xiaomi_mimo") && sttServiceUrlSet !== true))) {
     missing.push(sttProvider === "openai_compatible"
-      ? "API 语音识别缺少 OPENTALKING_STT_OPENAI_API_KEY 或 OPENTALKING_STT_OPENAI_BASE_URL"
+      ? "API 语音识别缺少对应的 API Key 或服务地址"
       : sttProvider === "xiaomi_mimo"
-        ? "小米 MiMo 语音识别缺少 OPENTALKING_STT_XIAOMI_API_KEY 或 OPENTALKING_STT_XIAOMI_BASE_URL"
-        : "API 语音识别缺少 OPENTALKING_STT_DASHSCOPE_API_KEY");
+        ? "小米 MiMo 语音识别缺少对应的 API Key 或服务地址"
+        : "API 语音识别缺少对应的 API Key");
   }
   if (ttsProviderNeedsApiKey(ttsProvider) && (ttsKeySet !== true || ((ttsProvider === "openai_compatible" || ttsProvider === "xiaomi_mimo") && ttsServiceUrlSet !== true))) {
     missing.push(ttsProvider === "openai_compatible"
-      ? "当前 TTS API 缺少 OPENTALKING_TTS_OPENAI_API_KEY 或 OPENTALKING_TTS_OPENAI_BASE_URL"
+      ? "当前 TTS API 缺少对应的 API Key 或服务地址"
       : ttsProvider === "xiaomi_mimo"
-        ? "小米 MiMo TTS 缺少 OPENTALKING_TTS_XIAOMI_API_KEY 或 OPENTALKING_TTS_XIAOMI_BASE_URL"
-      : "当前 TTS API 缺少 OPENTALKING_TTS_DASHSCOPE_API_KEY");
+        ? "小米 MiMo TTS 缺少对应的 API Key 或服务地址"
+      : "当前 TTS API 缺少对应的 API Key");
   }
   if (missing.length === 0) return null;
   return `${missing.join("；")}。请在后端 .env 配置后重启服务。`;
@@ -928,6 +938,7 @@ export default function App() {
   );
   const [fasterliveportraitApplying, setFasterliveportraitApplying] = useState(false);
   const [workflow, setWorkflow] = useState<StudioWorkflow>("realtime");
+  const configuredExhibitionId = getConfiguredExhibitionId();
 
   // Connection
   const [connection, setConnection] = useState<ConnectionStatus>("idle");
@@ -940,6 +951,10 @@ export default function App() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [currentSubtitle, setCurrentSubtitle] = useState("");
+  const [exhibitionVoiceConfig, setExhibitionVoiceConfig] = useState<ExhibitionVoiceConfig | null>(null);
+  const [exhibitionConfigNotice, setExhibitionConfigNotice] = useState<string | null>(null);
+  const [lastVoiceIntent, setLastVoiceIntent] = useState<"navigation" | "exhibition_content" | null>(null);
+  const [navigationResult, setNavigationResult] = useState<NavigationResult | null>(null);
   const [, setRuntimeStatus] = useState<HealthResponse | null>(null);
   const [runtimeConfig, setRuntimeConfig] = useState<RuntimeConfigResponse | null>(null);
   const [runtimeConfigLoading, setRuntimeConfigLoading] = useState(false);
@@ -1301,6 +1316,21 @@ export default function App() {
     }
   }, []);
 
+  const refreshExhibitionVoiceConfig = useCallback(async () => {
+    try {
+      const raw = await getExhibitionVoiceConfig(configuredExhibitionId);
+      const normalized = normalizeExhibitionVoiceConfig(raw, configuredExhibitionId);
+      setExhibitionVoiceConfig(normalized);
+      setExhibitionConfigNotice(
+        normalized.keywords.navigation.length ? null : "当前展会暂未配置导航关键词，将按普通展品问答处理。",
+      );
+    } catch (error) {
+      console.warn("load exhibition voice config failed", error);
+      setExhibitionVoiceConfig(null);
+      setExhibitionConfigNotice("展会导航配置暂不可用，普通展品问答仍可使用。");
+    }
+  }, [configuredExhibitionId]);
+
   const handleSceneCompositionsChange = useCallback((scenes: SceneComposition[]) => {
     setSceneCompositions(scenes);
     setSelectedSceneIdsByAvatar((current) => {
@@ -1412,6 +1442,10 @@ export default function App() {
   useEffect(() => {
     void refreshScenes();
   }, [refreshScenes]);
+
+  useEffect(() => {
+    if (workflow === "realtime") void refreshExhibitionVoiceConfig();
+  }, [refreshExhibitionVoiceConfig, workflow]);
 
   useEffect(() => {
     try {
@@ -1895,6 +1929,8 @@ export default function App() {
       setActiveAsrProvider("");
       setQueueInfo(null);
       setExpiringCountdown(null);
+      setNavigationResult(null);
+      setLastVoiceIntent(null);
       slotAcquiredRef.current = null;
       clearSubtitleState();
       if (clearMessages) {
@@ -2504,8 +2540,10 @@ export default function App() {
     }
   }, [bailianVoices, edgeVoice, notify, qwenModel, qwenVoice, ttsPreviewText, ttsProvider]);
 
-  const handleSend = useCallback(
-    (text: string) => {
+  const enqueueSpeech = useCallback(
+    (speechText: string, userText: string) => {
+      const text = speechText.trim();
+      const user = userText.trim();
       if (!sessionId || !text) return;
       const pendingId = makeId();
       const activeAssistantId = streamingAssistantMsgIdRef.current;
@@ -2514,7 +2552,7 @@ export default function App() {
       setIsSpeaking(true);
       setMessages((prev) => [
         ...prev.filter((m) => m.id !== previousPendingId && m.id !== activeAssistantId),
-        { id: makeId(), role: "user", text, timestamp: Date.now() },
+        ...(user ? [{ id: makeId(), role: "user" as const, text: user, timestamp: Date.now() }] : []),
         { id: pendingId, role: "assistant", text: "正在合成语音和口型...", timestamp: Date.now() },
       ]);
       if (isSpeaking) {
@@ -2542,6 +2580,56 @@ export default function App() {
     },
     [appendAssistantError, bailianVoices, edgeVoice, isSpeaking, notify, qwenModel, qwenVoice, sessionId, ttsProvider],
   );
+
+  const routeRecognizedText = useCallback(async (rawText: string) => {
+    const text = rawText.trim();
+    if (!text || !sessionId) return;
+    const match = matchVoiceIntent(
+      text,
+      exhibitionVoiceConfig ?? {
+        exhibition_id: configuredExhibitionId ?? "current",
+        keywords: { navigation: [], exhibition_content: [] },
+      },
+    );
+    setLastVoiceIntent(match.intent);
+
+    if (match.intent === "navigation") {
+      try {
+        const result = await queryExhibitionNavigation(configuredExhibitionId, {
+          text,
+          session_id: sessionId,
+        });
+        setNavigationResult(result);
+        const spokenText = result.spoken_text?.trim();
+        enqueueSpeech(spokenText || text, text);
+        return;
+      } catch (error) {
+        console.warn("navigation query failed, falling back to exhibition Q&A", error);
+        setNavigationResult(null);
+        notify("导航服务暂不可用，已切换为展会内容问答。", "info");
+      }
+    } else {
+      setNavigationResult(null);
+    }
+    enqueueSpeech(text, text);
+  }, [configuredExhibitionId, enqueueSpeech, exhibitionVoiceConfig, notify, sessionId]);
+
+  const handleSend = useCallback((text: string) => {
+    void routeRecognizedText(text);
+  }, [routeRecognizedText]);
+
+  const handleRealtimeVoiceAudio = useCallback(async (blob: Blob) => {
+    if (!sessionId) return;
+    try {
+      const result = await transcribeSessionAudio(sessionId, blob, activeAsrProvider || undefined);
+      await routeRecognizedText(result.text);
+    } catch (error) {
+      console.warn("realtime voice transcription failed", error);
+      const detail = apiErrorMessage(error, "语音识别失败，请检查 STT 配置。");
+      appendAssistantError(`语音识别失败：${detail}`);
+      notify(`语音识别失败：${detail}`, "error");
+    }
+  }, [activeAsrProvider, appendAssistantError, notify, routeRecognizedText, sessionId]);
 
   /** 流式 STT（WebSocket PCM）成功后仅追加本地消息（speak 已由后端入队） */
   const handleSpeakAudioStreamResult = useCallback(({ text }: { text: string }) => {
@@ -3048,10 +3136,10 @@ export default function App() {
           onSend={handleSend}
           onInterrupt={handleInterrupt}
           onChangeAvatar={handleReturnToAvatarSelection}
-          onSpeakAudio={handleSpeakAudio}
-          onSpeakAudioStreamResult={handleSpeakAudioStreamResult}
-          onSpeakAudioStreamError={handleSpeakAudioStreamError}
-          streamingAsrSessionId={sessionId}
+          onSpeakAudio={handleRealtimeVoiceAudio}
+          voiceIntent={lastVoiceIntent}
+          navigationResult={navigationResult}
+          exhibitionConfigNotice={exhibitionConfigNotice}
           onNotify={notify}
           ttsProvider={ttsProvider}
           sttProvider={activeAsrProvider}

@@ -280,6 +280,67 @@ export type SceneComposition = {
   updated_at: string;
 };
 
+export type VoiceIntent = "navigation" | "exhibition_content";
+
+export type ExhibitionVoiceConfig = {
+  exhibition_id: string;
+  keywords: {
+    navigation: string[];
+    exhibition_content: string[];
+  };
+  supports_deferred_speak?: boolean;
+};
+
+export type NavigationResult = {
+  title?: string;
+  spoken_text: string;
+  subtitle_text?: string;
+  image_url?: string;
+  route?: {
+    from?: string;
+    to?: string;
+    directions?: string[];
+    estimated_minutes?: number;
+  };
+};
+
+export type ExhibitionVoiceConfigResponse = Partial<ExhibitionVoiceConfig> & {
+  exhibitionId?: string;
+  keyword_groups?: {
+    navigation?: string[];
+    exhibition_content?: string[];
+    exhibitionContent?: string[];
+  };
+};
+
+export type NavigationQueryResponse = NavigationResult;
+
+export async function getExhibitionVoiceConfig(exhibitionId?: string | null): Promise<ExhibitionVoiceConfigResponse> {
+  const id = exhibitionId?.trim();
+  const path = `/exhibitions/${encodeURIComponent(id || "current")}/digital-human-config`;
+  return apiGet<ExhibitionVoiceConfigResponse>(path);
+}
+
+export async function queryExhibitionNavigation(
+  exhibitionId: string | null | undefined,
+  input: { text: string; session_id: string },
+): Promise<NavigationQueryResponse> {
+  const id = exhibitionId?.trim();
+  const path = `/exhibitions/${encodeURIComponent(id || "current")}/navigation/query`;
+  return apiPost<NavigationQueryResponse>(path, input);
+}
+
+export async function transcribeSessionAudio(
+  sessionId: string,
+  file: Blob,
+  sttProvider?: string,
+): Promise<{ session_id: string; text: string }> {
+  const form = new FormData();
+  form.set("file", file, "speech.webm");
+  if (sttProvider) form.set("stt_provider", sttProvider);
+  return apiPostForm<{ session_id: string; text: string }>(`/sessions/${encodeURIComponent(sessionId)}/transcribe`, form);
+}
+
 export type CreateSceneCompositionInput = {
   name: string;
   avatar_id: string;

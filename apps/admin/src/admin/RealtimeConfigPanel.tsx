@@ -24,6 +24,9 @@ export type RuntimeProviderStatus = {
 };
 
 export type RuntimeHealth = {
+  tts_provider?: string;
+  tts_default_provider?: string;
+  tts_enabled_providers?: string[];
   tts_key_set?: boolean;
   tts_service_url_set?: boolean;
   stt_key_set?: boolean;
@@ -169,8 +172,11 @@ export function RealtimeConfigPanel({
   const selectedModel = models.find((item) => item.id === model);
   const apiTtsStatus = health?.tts_providers?.[ttsProvider];
   const apiSttStatus = health?.stt_providers?.[asrProvider];
-  const ttsConfigured = ttsProvider === "edge" || ttsProvider.startsWith("local_") || ttsProvider === "indextts"
-    ? true
+  const ttsProviderEnabled = !health?.tts_enabled_providers?.length || health.tts_enabled_providers.includes(ttsProvider);
+  const ttsConfigured = !ttsProviderEnabled
+    ? false
+    : ttsProvider === "edge" || ttsProvider.startsWith("local_") || ttsProvider === "indextts"
+      ? true
     : apiTtsStatus ? apiTtsStatus.key_set === true && (ttsProvider === "xiaomi_mimo" || ttsProvider === "openai_compatible" ? apiTtsStatus.service_url_set === true : true) : undefined;
   const sttConfigured = selectedAsr.local ? true : apiSttStatus ? apiSttStatus.key_set === true && (asrProvider === "xiaomi_mimo" || asrProvider === "openai_compatible" ? apiSttStatus.service_url_set === true : true) : undefined;
   const ttsBadge = statusLabel(ttsConfigured);

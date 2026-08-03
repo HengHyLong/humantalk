@@ -91,8 +91,8 @@ export function TopBar({
         </div>
         <div className="min-w-0">
           <p className="truncate text-sm font-semibold text-slate-950">
-            <span className="sm:hidden">OpenTalking</span>
-            <span className="hidden sm:inline">OpenTalking Studio</span>
+            <span className="sm:hidden">四川博览集团数字人</span>
+            <span className="hidden sm:inline">四川博览集团数字人工作台</span>
           </p>
           <p className="hidden truncate text-xs text-slate-500 sm:block">实时数字人工作台</p>
         </div>

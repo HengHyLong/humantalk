@@ -29,7 +29,7 @@ export type OpenTalkingClient = {
     speakingGif?: File;
   }): Promise<AvatarSummary>;
   deleteAvatar(avatarId: string): Promise<void>;
-  previewTts(input: { text: string; voice: string; provider?: string }): Promise<Blob>;
+  previewTts(input: { text: string; voice: string; provider?: string; model?: string | null }): Promise<Blob>;
   previewUrl(avatarId: string): string;
   assetUrl(path: string): string;
   listSceneBackgrounds(): Promise<SceneBackgroundAsset[]>;
@@ -67,7 +67,8 @@ export const openTalkingClient: OpenTalkingClient = {
     return apiPostForm<AvatarSummary>("/avatars/custom", form);
   },
   deleteAvatar: (avatarId) => apiDelete<{ avatar_id: string; status: string }>(`/avatars/${encodeURIComponent(avatarId)}`).then(() => undefined),
-  previewTts: ({ text, voice, provider = "edge" }) => requestTTSPreview(buildTTSPreviewPayload({ text, voice, provider: provider as TtsProviderExtended })),
+  previewTts: ({ text, voice, provider = "edge", model }) =>
+    requestTTSPreview(buildTTSPreviewPayload({ text, voice, provider: provider as TtsProviderExtended, model: model ?? undefined })),
   previewUrl: (avatarId) => buildApiUrl(`/avatars/${encodeURIComponent(avatarId)}/preview`),
   assetUrl: (path) => buildApiUrl(path),
   listSceneBackgrounds: () => apiGet<{ items: SceneBackgroundAsset[] }>("/scene-assets/backgrounds").then((response) => response.items ?? []),

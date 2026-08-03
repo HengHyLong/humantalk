@@ -28,6 +28,10 @@ test("Mock Admin API covers login and P1 CRUD/state flows", async () => {
   await api.deleteGif(gif.id);
   assert.equal((await api.listGifs()).some((item) => item.id === gif.id), false);
 
+  const voice = await api.saveVoiceConfig({ id: "voice-config-test", provider: "xiaomi_mimo", targetModel: "mimo-v2.5-tts", voiceId: "mimo_default", name: "测试 MiMo 音色", previewText: "测试", status: "active", source: "local" });
+  assert.equal((await api.listVoiceConfigs()).find((item) => item.id === voice.id)?.targetModel, "mimo-v2.5-tts");
+  await api.deleteVoiceConfig(voice.id);
+
   const bindings = await api.saveSceneBindings([{ scene: "qa", assets: [{ assetId: "gif-welcome", isPrimary: true, order: 0 }] }]);
   assert.equal(bindings[0].scene, "qa");
 
@@ -57,22 +61,36 @@ test("Mock Admin API covers login and P1 CRUD/state flows", async () => {
 
 test("Mock Admin API covers event operations CRUD and relationships", async () => {
   const api = new MockAdminApiClient();
-  const exhibition = await api.saveExhibition({ id: "event-test-exhibition", name: "测试展会", code: "TEST-2026", venue: "测试场馆", hostUnit: "主办单位", organizerUnit: "承办单位", coOrganizerUnits: "协办单位一、协办单位二", startDate: "2026-09-01", endDate: "2026-09-03", status: "preparing", description: "测试", boundAvatarId: null, knowledgeBaseIds: [], createdAt: "", updatedAt: "" });
+  const exhibition = await api.saveExhibition({ id: "event-test-exhibition", name: "测试展会", code: "TEST-2026", mainVenueId: null, hostUnit: "主办单位", organizerUnit: "承办单位", coOrganizerUnits: "协办单位一、协办单位二", startDate: "2026-09-01", endDate: "2026-09-03", status: "preparing", description: "测试", boundAvatarId: null, boundModel: "QuickTalk", boundVoiceId: null, boundScene: null, knowledgeBaseIds: [], lifecycleHistory: [], createdAt: "", updatedAt: "" });
   const exhibitor = await api.saveExhibitor({ id: "event-test-exhibitor", exhibitionId: exhibition.id, name: "测试展商", boothCode: "T-01", category: "测试", contact: "测试联系人", phone: "000", status: "active", description: "测试", createdAt: "", updatedAt: "" });
   const exhibit = await api.saveExhibit({ id: "event-test-exhibit", exhibitionId: exhibition.id, exhibitorId: exhibitor.id, name: "测试展品", category: "设备", modelNo: "T-001", description: "测试", status: "draft", createdAt: "", updatedAt: "" });
   const venue = await api.saveVenue({ id: "event-test-venue", exhibitionId: exhibition.id, name: "测试场地", address: "测试地址", description: "测试", status: "active", createdAt: "", updatedAt: "" });
-  const route = await api.saveRoute({ id: "event-test-route", venueId: venue.id, exhibitionId: venue.id, name: "测试路线", from: "入口", to: "展位", distance: "10米", estimatedMinutes: 1, description: "测试", status: "draft", createdAt: "", updatedAt: "" });
-  const schedule = await api.saveSchedule({ id: "event-test-schedule", exhibitionId: exhibition.id, title: "测试活动", type: "论坛", startAt: "2026-09-01 09:00", endAt: "2026-09-01 10:00", location: "测试厅", speaker: "测试方", description: "测试", status: "draft", createdAt: "", updatedAt: "" });
+  await api.saveExhibition({ ...exhibition, mainVenueId: venue.id });
+  const entrance = await api.savePoint({ id: "event-test-point-entrance", venueId: venue.id, code: "ENT-TEST", name: "测试入口", type: "entrance", floor: "1F", x: 10, y: 20, exhibitorId: null, exhibitId: null, description: "测试", status: "active", createdAt: "", updatedAt: "" });
+  const booth = await api.savePoint({ id: "event-test-point-booth", venueId: venue.id, code: "BOOTH-TEST", name: "测试展位", type: "booth", floor: "1F", x: 50, y: 60, exhibitorId: exhibitor.id, exhibitId: exhibit.id, description: "测试", status: "active", createdAt: "", updatedAt: "" });
+  const route = await api.saveRoute({ id: "event-test-route", venueId: venue.id, name: "测试路线", type: "navigation", pointIds: [entrance.id, booth.id], directions: ["沿主通道直行"], estimatedMinutes: 1, description: "测试", status: "draft", createdAt: "", updatedAt: "" });
+  const schedule = await api.saveSchedule({ id: "event-test-schedule", exhibitionId: exhibition.id, venueId: venue.id, pointId: booth.id, title: "测试活动", type: "论坛", startAt: "2026-09-01 09:00", endAt: "2026-09-01 10:00", location: "测试厅", speaker: "测试方", description: "测试", status: "draft", createdAt: "", updatedAt: "" });
+  const broadcast = await api.saveBroadcast({ id: "event-test-broadcast", exhibitionId: exhibition.id, title: "测试播报", content: "请有序参观", priority: "high", targetTerminals: "全部终端", effectiveAt: "2026-09-01 08:00", status: "draft", createdAt: "", updatedAt: "" });
+  assert.equal((await api.transitionBroadcast(broadcast.id, "active")).status, "active");
+  assert.equal((await api.transitionBroadcast(broadcast.id, "ended")).status, "ended");
+  assert.equal((await api.transitionExhibition(exhibition.id, "setup")).status, "setup");
+  await assert.rejects(() => api.saveExhibition({ ...exhibition, status: "operating" }), /生命周期/);
   assert.equal((await api.listExhibitors()).find((item) => item.id === exhibitor.id)?.exhibitionId, exhibition.id);
   assert.equal((await api.listExhibits()).find((item) => item.id === exhibit.id)?.exhibitorId, exhibitor.id);
   assert.equal((await api.listVenues()).find((item) => item.id === venue.id)?.exhibitionId, exhibition.id);
   assert.equal((await api.listRoutes()).find((item) => item.id === route.id)?.name, "测试路线");
+  assert.deepEqual((await api.listRoutes()).find((item) => item.id === route.id)?.pointIds, [entrance.id, booth.id]);
   assert.equal((await api.listSchedules()).find((item) => item.id === schedule.id)?.title, "测试活动");
-  await api.deleteSchedule(schedule.id);
-  await api.deleteRoute(route.id);
-  await api.deleteVenue(venue.id);
-  await api.deleteExhibit(exhibit.id);
-  await api.deleteExhibitor(exhibitor.id);
+  await assert.rejects(() => api.deleteVenue(venue.id), /关联/);
+  await assert.rejects(() => api.deleteExhibit(exhibit.id), /关联/);
+  await assert.rejects(() => api.deletePoint(booth.id), /路线或活动/);
   await api.deleteExhibition(exhibition.id);
   assert.equal((await api.listExhibitions()).some((item) => item.id === exhibition.id), false);
+  assert.equal((await api.listVenues()).some((item) => item.id === venue.id), false);
+  assert.equal((await api.listPoints()).some((item) => item.id === entrance.id || item.id === booth.id), false);
+  assert.equal((await api.listRoutes()).some((item) => item.id === route.id), false);
+  assert.equal((await api.listSchedules()).some((item) => item.id === schedule.id), false);
+  assert.equal((await api.listBroadcasts()).some((item) => item.id === broadcast.id), false);
+  assert.equal((await api.listExhibits()).some((item) => item.id === exhibit.id), false);
+  assert.equal((await api.listExhibitors()).some((item) => item.id === exhibitor.id), false);
 });

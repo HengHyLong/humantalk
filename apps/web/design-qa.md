@@ -72,5 +72,6 @@ Focused regions checked:
 - Iteration 6: removed the extra top brand/watermark region and replaced the large bottom footer block with compact floating functional cards. Re-captured the clean fullscreen live state at 762 × 1052.
 - Iteration 7: changed realtime video fitting from `contain` to `cover` and removed the redundant audio-status card. Re-captured at the supplied 662 × 1446 viewport.
 - Iteration 8: removed the HOME item from the language rail and consolidated transcript, live subtitle, suggested questions, and input controls into a fixed translucent chat panel. Removed panel blur so the avatar remains sharp; the live 662 × 1446 viewport was verified after the CSS hot update.
+- Iteration 9: added exhibition voice configuration loading, normalized keyword intent matching, navigation result cards with optional images/routes, and a safe `/transcribe`-then-route voice path for realtime mode. Long listening now exposes explicit listening/recording/transcribing/processing/error states and retries streaming STT connections with bounded backoff.
 
 final result: passed

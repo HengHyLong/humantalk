@@ -1,9 +1,12 @@
 import { ROLE_BUTTON_PERMISSIONS, ROLE_PERMISSIONS } from "./policy";
+import { EDGE_ZH_VOICES } from "../constants/edgeZhVoices";
 import type {
   AdminUser,
   DashboardData,
   EventSchedule,
   EventVenue,
+  EmergencyBroadcast,
+  EventPoint,
   Exhibit,
   Exhibition,
   ExhibitionRoute,
@@ -17,6 +20,7 @@ import type {
   SceneBinding,
   ScriptTemplate,
   VoiceAsset,
+  ExhibitionStatus,
 } from "./types";
 
 const STORAGE_PREFIX = "opentalking-admin-";
@@ -78,13 +82,19 @@ const DEFAULT_MISS: MissPoolItem[] = [
 ];
 
 const DEFAULT_EXHIBITIONS: Exhibition[] = [
-  { id: "exhibition-1", name: "2026 西部博览会", code: "XBH-2026", venue: "成都西部国际博览城", hostUnit: "四川博览集团", organizerUnit: "四川博览集团展览有限公司", coOrganizerUnits: "成都市人民政府、四川省商务厅", startDate: "2026-10-15", endDate: "2026-10-19", status: "operating", description: "四川博览集团年度综合展会。", boundAvatarId: null, knowledgeBaseIds: [], createdAt: "2026-07-20 09:00", updatedAt: "2026-08-03 10:00" },
-  { id: "exhibition-2", name: "2027 智能制造专题展", code: "IM-2027", venue: "成都世纪城新国际会展中心", hostUnit: "四川博览集团", organizerUnit: "四川博览集团会展事业部", coOrganizerUnits: "四川省经济和信息化厅", startDate: "2027-04-08", endDate: "2027-04-11", status: "preparing", description: "面向智能制造和工业互联网的专题展会。", boundAvatarId: null, knowledgeBaseIds: [], createdAt: "2026-08-01 14:20", updatedAt: "2026-08-01 14:20" },
+  { id: "exhibition-1", name: "2026 西部博览会", code: "XBH-2026", mainVenueId: "venue-1", hostUnit: "四川博览集团", organizerUnit: "四川博览集团展览有限公司", coOrganizerUnits: "成都市人民政府、四川省商务厅", startDate: "2026-10-15", endDate: "2026-10-19", status: "operating", description: "四川博览集团年度综合展会。", boundAvatarId: null, boundModel: "QuickTalk", boundVoiceId: null, boundVoiceProvider: null, boundVoiceModel: null, boundSttProvider: "sensevoice", boundSttModel: "iic/SenseVoiceSmall", boundScene: "welcome", knowledgeBaseIds: [], lifecycleHistory: [{ from: "setup", to: "operating", operator: "系统管理员", time: "2026-08-03 10:00" }], createdAt: "2026-07-20 09:00", updatedAt: "2026-08-03 10:00" },
+  { id: "exhibition-2", name: "2027 智能制造专题展", code: "IM-2027", mainVenueId: null, hostUnit: "四川博览集团", organizerUnit: "四川博览集团会展事业部", coOrganizerUnits: "四川省经济和信息化厅", startDate: "2027-04-08", endDate: "2027-04-11", status: "preparing", description: "面向智能制造和工业互联网的专题展会。", boundAvatarId: null, boundModel: "", boundVoiceId: null, boundVoiceProvider: null, boundVoiceModel: null, boundSttProvider: null, boundSttModel: null, boundScene: null, knowledgeBaseIds: [], lifecycleHistory: [], createdAt: "2026-08-01 14:20", updatedAt: "2026-08-01 14:20" },
 ];
 
 const DEFAULT_VENUES: EventVenue[] = [
   { id: "venue-1", exhibitionId: "exhibition-1", name: "成都西部国际博览城主展馆", address: "成都市天府新区福州路88号", description: "本届展会主展馆，包含入口、展区和服务设施。", status: "active", createdAt: "2026-07-21 09:00", updatedAt: "2026-08-01 10:00" },
   { id: "venue-2", exhibitionId: "exhibition-1", name: "4号馆主论坛区", address: "成都西部国际博览城4号馆", description: "开幕式及主论坛使用场地。", status: "active", createdAt: "2026-07-21 09:20", updatedAt: "2026-08-01 10:00" },
+];
+
+const DEFAULT_POINTS: EventPoint[] = [
+  { id: "point-entrance", venueId: "venue-1", code: "ENT-01", name: "1号入口", type: "entrance", floor: "1F", x: 12, y: 48, exhibitorId: null, exhibitId: null, description: "主入口和签到服务台。", status: "active", createdAt: "2026-07-21 10:00", updatedAt: "2026-08-01 10:00" },
+  { id: "point-booth-a1", venueId: "venue-1", code: "BOOTH-A1-08", name: "A1馆智能制造展区", type: "booth", floor: "1F", x: 62, y: 36, exhibitorId: "exhibitor-1", exhibitId: "exhibit-1", description: "四川智造科技有限公司展位。", status: "active", createdAt: "2026-07-22 10:00", updatedAt: "2026-08-01 10:00" },
+  { id: "point-rest", venueId: "venue-1", code: "SERVICE-REST", name: "中央休息区", type: "facility", floor: "1F", x: 45, y: 70, exhibitorId: null, exhibitId: null, description: "观众休息和饮水区域。", status: "active", createdAt: "2026-07-22 10:10", updatedAt: "2026-08-01 10:00" },
 ];
 
 const DEFAULT_EXHIBITORS: Exhibitor[] = [
@@ -98,13 +108,17 @@ const DEFAULT_EXHIBITS: Exhibit[] = [
 ];
 
 const DEFAULT_ROUTES: ExhibitionRoute[] = [
-  { id: "route-1", venueId: "venue-1", exhibitionId: "venue-1", name: "主入口到智能制造展区", from: "1号入口", to: "A1馆智能制造展区", distance: "260米", estimatedMinutes: 4, description: "沿中央通道向东直行，经过服务台后右转。", status: "published", createdAt: "2026-07-28 09:00", updatedAt: "2026-08-01 17:20" },
-  { id: "route-2", venueId: "venue-1", exhibitionId: "venue-1", name: "主入口到休息区", from: "1号入口", to: "中央休息区", distance: "120米", estimatedMinutes: 2, description: "沿中央通道直行至服务设施区域。", status: "published", createdAt: "2026-07-28 09:20", updatedAt: "2026-07-28 09:20" },
+  { id: "route-1", venueId: "venue-1", name: "主入口到智能制造展区", type: "navigation", pointIds: ["point-entrance", "point-booth-a1"], directions: ["从1号入口沿中央通道向东直行。", "经过服务台后右转进入A1馆。"], estimatedMinutes: 4, description: "适合现场导航和数字人讲解。", status: "published", createdAt: "2026-07-28 09:00", updatedAt: "2026-08-01 17:20" },
+  { id: "route-2", venueId: "venue-1", name: "主入口到休息区", type: "navigation", pointIds: ["point-entrance", "point-rest"], directions: ["沿中央通道直行至服务设施区域。"], estimatedMinutes: 2, description: "适合现场导航和数字人讲解。", status: "published", createdAt: "2026-07-28 09:20", updatedAt: "2026-07-28 09:20" },
 ];
 
 const DEFAULT_SCHEDULES: EventSchedule[] = [
-  { id: "schedule-1", exhibitionId: "exhibition-1", title: "开幕式暨主论坛", type: "论坛", startAt: "2026-10-15 09:30", endAt: "2026-10-15 11:30", location: "4号馆主论坛区", speaker: "四川博览集团", description: "展会开幕及年度产业趋势分享。", status: "scheduled", createdAt: "2026-07-30 10:00", updatedAt: "2026-08-02 09:00" },
-  { id: "schedule-2", exhibitionId: "exhibition-1", title: "机器人现场演示", type: "演示", startAt: "2026-10-16 14:00", endAt: "2026-10-16 15:00", location: "A1-08 展位", speaker: "四川智造科技有限公司", description: "协作机器人工作站现场演示和互动。", status: "draft", createdAt: "2026-08-01 11:00", updatedAt: "2026-08-01 11:00" },
+  { id: "schedule-1", exhibitionId: "exhibition-1", venueId: "venue-2", pointId: null, title: "开幕式暨主论坛", type: "论坛", startAt: "2026-10-15 09:30", endAt: "2026-10-15 11:30", location: "4号馆主论坛区", speaker: "四川博览集团", description: "展会开幕及年度产业趋势分享。", status: "scheduled", createdAt: "2026-07-30 10:00", updatedAt: "2026-08-02 09:00" },
+  { id: "schedule-2", exhibitionId: "exhibition-1", venueId: "venue-1", pointId: "point-booth-a1", title: "机器人现场演示", type: "演示", startAt: "2026-10-16 14:00", endAt: "2026-10-16 15:00", location: "A1-08 展位", speaker: "四川智造科技有限公司", description: "协作机器人工作站现场演示和互动。", status: "draft", createdAt: "2026-08-01 11:00", updatedAt: "2026-08-01 11:00" },
+];
+
+const DEFAULT_BROADCASTS: EmergencyBroadcast[] = [
+  { id: "broadcast-1", exhibitionId: "exhibition-1", title: "现场安全提示", content: "请观众按照现场工作人员指引有序参观。", priority: "normal", targetTerminals: "全部终端", effectiveAt: "2026-10-15 08:00", status: "draft", createdAt: "2026-08-02 09:00", updatedAt: "2026-08-02 09:00" },
 ];
 
 export interface AdminApiClient {
@@ -114,6 +128,9 @@ export interface AdminApiClient {
   createGif(input: Omit<GifAssetMeta, "id" | "createdAt">): Promise<GifAssetMeta>;
   updateGif(id: string, patch: Partial<GifAssetMeta>): Promise<GifAssetMeta>;
   deleteGif(id: string): Promise<void>;
+  listVoiceConfigs(): Promise<VoiceAsset[]>;
+  saveVoiceConfig(item: VoiceAsset): Promise<VoiceAsset>;
+  deleteVoiceConfig(id: string): Promise<void>;
   listSceneBindings(): Promise<SceneBinding[]>;
   saveSceneBindings(bindings: SceneBinding[]): Promise<SceneBinding[]>;
   listIdle(): Promise<IdleContent[]>;
@@ -137,9 +154,13 @@ export interface AdminApiClient {
   listExhibitions(): Promise<Exhibition[]>;
   saveExhibition(item: Exhibition): Promise<Exhibition>;
   deleteExhibition(id: string): Promise<void>;
+  transitionExhibition(id: string, status: ExhibitionStatus): Promise<Exhibition>;
   listVenues(): Promise<EventVenue[]>;
   saveVenue(item: EventVenue): Promise<EventVenue>;
   deleteVenue(id: string): Promise<void>;
+  listPoints(): Promise<EventPoint[]>;
+  savePoint(item: EventPoint): Promise<EventPoint>;
+  deletePoint(id: string): Promise<void>;
   listExhibitors(): Promise<Exhibitor[]>;
   saveExhibitor(item: Exhibitor): Promise<Exhibitor>;
   deleteExhibitor(id: string): Promise<void>;
@@ -149,6 +170,10 @@ export interface AdminApiClient {
   listRoutes(): Promise<ExhibitionRoute[]>;
   saveRoute(item: ExhibitionRoute): Promise<ExhibitionRoute>;
   deleteRoute(id: string): Promise<void>;
+  listBroadcasts(): Promise<EmergencyBroadcast[]>;
+  saveBroadcast(item: EmergencyBroadcast): Promise<EmergencyBroadcast>;
+  transitionBroadcast(id: string, status: EmergencyBroadcast["status"]): Promise<EmergencyBroadcast>;
+  deleteBroadcast(id: string): Promise<void>;
   listSchedules(): Promise<EventSchedule[]>;
   saveSchedule(item: EventSchedule): Promise<EventSchedule>;
   deleteSchedule(id: string): Promise<void>;
@@ -165,20 +190,27 @@ export class MockAdminApiClient implements AdminApiClient {
   }
 
   async getDashboard(): Promise<DashboardData> {
+    const [qa, packages, documents, missPool] = await Promise.all([this.listQa(), this.listPackages(), this.listDocuments(), this.listMissPool()]);
+    const pendingKnowledge = qa.filter((item) => item.status === "pending_review").length;
+    const pendingPackages = packages.filter((item) => item.status === "pending_review").length;
+    const processingDocuments = documents.filter((item) => item.parseStatus !== "parsed" || item.vectorStatus !== "indexed").length;
+    const pendingMisses = missPool.filter((item) => item.status === "pending").length;
+    const backlog = pendingKnowledge + pendingPackages + processingDocuments + pendingMisses;
+    const todos = [
+      pendingKnowledge > 0 ? { id: "todo-1", type: "待审知识", title: `${pendingKnowledge} 条展会知识内容等待审核`, owner: "内容运营", time: "当前快照", path: "/knowledge/base" } : null,
+      processingDocuments > 0 ? { id: "todo-2", type: "知识文档", title: `${processingDocuments} 份知识文档仍在处理`, owner: "内容运营", time: "当前快照", path: "/knowledge/document" } : null,
+      pendingMisses > 0 ? { id: "todo-3", type: "未命中池", title: `${pendingMisses} 个高频问题需要补齐`, owner: "系统", time: "当前快照", path: "/knowledge/memory" } : null,
+      { id: "todo-4", type: "运行状态", title: "查看数字人终端实时联调状态", owner: "运维", time: "快捷入口", path: "/interact/test" },
+    ].filter((item): item is { id: string; type: string; title: string; owner: string; time: string; path: string } => Boolean(item));
     return {
       metrics: [
         { id: "interactions", label: "今日交互量", value: "1,286", trend: "+18.6%", tone: "cyan" },
         { id: "terminals", label: "在线终端", value: "18 / 24", trend: "75% 在线", tone: "green" },
-        { id: "pending", label: "待审知识", value: "12", trend: "需及时处理", tone: "amber" },
+        { id: "pending", label: "待审知识", value: String(pendingKnowledge), trend: pendingKnowledge > 0 ? "需及时处理" : "当前无待审", tone: pendingKnowledge > 0 ? "amber" : "green" },
         { id: "leads", label: "新增线索", value: "86", trend: "+12.4%", tone: "violet" },
-        { id: "alerts", label: "当前告警", value: "3", trend: "1 条高优先级", tone: "rose" },
+        { id: "backlog", label: "运营待处理", value: String(backlog), trend: `${pendingPackages} 个发布包 · ${processingDocuments} 份文档`, tone: backlog > 0 ? "rose" : "green" },
       ],
-      todos: [
-        { id: "todo-1", type: "待审知识", title: "审核 12 条展会知识内容", owner: "李内容", time: "10 分钟前", path: "/knowledge/base" },
-        { id: "todo-2", type: "知识文档", title: "智能制造资料等待整理入库", owner: "李内容", time: "35 分钟前", path: "/knowledge/document" },
-        { id: "todo-3", type: "未命中池", title: "4 个高频问题需要补齐", owner: "系统", time: "1 小时前", path: "/knowledge/memory" },
-        { id: "todo-4", type: "运行告警", title: "2 号终端连接延迟升高", owner: "运维", time: "2 小时前", path: "/interact/test" },
-      ],
+      todos,
     };
   }
 
@@ -186,6 +218,9 @@ export class MockAdminApiClient implements AdminApiClient {
   async createGif(input: Omit<GifAssetMeta, "id" | "createdAt">) { const item = { ...input, id: `gif-${Date.now()}`, createdAt: now() }; writeStore("gifs", [item, ...await this.listGifs()]); return item; }
   async updateGif(id: string, patch: Partial<GifAssetMeta>) { const items = await this.listGifs(); const next = items.map((item) => item.id === id ? { ...item, ...patch } : item); writeStore("gifs", next); return next.find((item) => item.id === id) ?? items[0]; }
   async deleteGif(id: string) { writeStore("gifs", (await this.listGifs()).filter((item) => item.id !== id)); }
+  async listVoiceConfigs() { return readStore<VoiceAsset[]>("voice-configs", []); }
+  async saveVoiceConfig(item: VoiceAsset) { const saved = { ...item, id: item.id || `voice-config-${Date.now()}` }; writeStore("voice-configs", [saved, ...(await this.listVoiceConfigs()).filter((candidate) => candidate.id !== saved.id)]); return saved; }
+  async deleteVoiceConfig(id: string) { writeStore("voice-configs", (await this.listVoiceConfigs()).filter((item) => item.id !== id)); }
   async listSceneBindings() { return readStore<SceneBinding[]>("scene-bindings", [{ scene: "welcome", assets: [{ assetId: "gif-welcome", isPrimary: true, order: 0 }] }, { scene: "explain", assets: [{ assetId: "gif-explain", isPrimary: true, order: 0 }] }, { scene: "idle", assets: [{ assetId: "gif-idle", isPrimary: true, order: 0 }] }]); }
   async saveSceneBindings(bindings: SceneBinding[]) { writeStore("scene-bindings", bindings); return bindings; }
   async listIdle() { return readStore<IdleContent[]>("idle", [{ id: "idle-1", type: "标语轮播", title: "西博会欢迎语", content: "欢迎来到 2026 西部博览会", interval: 8, exhibition: "2026 西部博览会", enabled: true }]); }
@@ -209,31 +244,92 @@ export class MockAdminApiClient implements AdminApiClient {
   async resolveMiss(id: string, status: MissPoolItem["status"]) { const list = await this.listMissPool(); const next = list.map((item) => item.id === id ? { ...item, status } : item); writeStore("miss-pool", next); return next.find((item) => item.id === id) ?? list[0]; }
   async listExhibitions() {
     const legacyStatus: Record<string, Exhibition["status"]> = { draft: "preparing", active: "operating", ended: "teardown", archived: "teardown" };
-    return (await readStore<Exhibition[]>("exhibitions", DEFAULT_EXHIBITIONS)).map((item) => ({ ...item, status: legacyStatus[item.status] ?? item.status }));
+    return (await readStore<Exhibition[]>("exhibitions", DEFAULT_EXHIBITIONS)).map((item) => ({ ...item, mainVenueId: item.mainVenueId ?? null, status: legacyStatus[item.status] ?? item.status, boundModel: item.boundModel ?? "", boundVoiceId: item.boundVoiceId ?? null, boundVoiceProvider: item.boundVoiceProvider ?? null, boundVoiceModel: item.boundVoiceModel ?? null, boundSttProvider: item.boundSttProvider ?? null, boundSttModel: item.boundSttModel ?? null, boundScene: item.boundScene ?? null, lifecycleHistory: item.lifecycleHistory ?? [] }));
   }
-  async saveExhibition(item: Exhibition) { const saved = { ...item, updatedAt: now() }; writeStore("exhibitions", [saved, ...(await this.listExhibitions()).filter((candidate) => candidate.id !== item.id)]); return saved; }
-  async deleteExhibition(id: string) { writeStore("exhibitions", (await this.listExhibitions()).filter((item) => item.id !== id)); }
+  async saveExhibition(item: Exhibition) {
+    const list = await this.listExhibitions();
+    const current = list.find((candidate) => candidate.id === item.id);
+    if (current && current.status !== item.status) throw new Error("生命周期只能通过阶段推进操作变更");
+    if (item.mainVenueId) {
+      const venue = (await this.listVenues()).find((candidate) => candidate.id === item.mainVenueId);
+      if (!venue || venue.exhibitionId !== item.id) throw new Error("主场地必须属于当前展会");
+    }
+    const saved = { ...item, updatedAt: now() };
+    writeStore("exhibitions", [saved, ...list.filter((candidate) => candidate.id !== item.id)]);
+    return saved;
+  }
+  async transitionExhibition(id: string, status: Exhibition["status"]) {
+    const list = await this.listExhibitions();
+    const current = list.find((item) => item.id === id);
+    if (!current) throw new Error("展会不存在");
+    const order: Exhibition["status"][] = ["preparing", "setup", "operating", "teardown"];
+    if (order.indexOf(status) !== order.indexOf(current.status) + 1) throw new Error("展会生命周期必须按顺序推进");
+    const saved = { ...current, status, lifecycleHistory: [...current.lifecycleHistory, { from: current.status, to: status, operator: "当前用户", time: now() }], updatedAt: now() };
+    writeStore("exhibitions", [saved, ...list.filter((item) => item.id !== id)]);
+    return saved;
+  }
+  async deleteExhibition(id: string) {
+    const [exhibitions, exhibitors, exhibits, venues, schedules, broadcasts, points] = await Promise.all([this.listExhibitions(), this.listExhibitors(), this.listExhibits(), this.listVenues(), this.listSchedules(), this.listBroadcasts(), this.listPoints()]);
+    const venueIds = new Set(venues.filter((item) => item.exhibitionId === id).map((item) => item.id));
+    const exhibitIds = new Set(exhibits.filter((item) => item.exhibitionId === id).map((item) => item.id));
+    const exhibitorIds = new Set(exhibitors.filter((item) => item.exhibitionId === id).map((item) => item.id));
+    const relatedPointIds = new Set(points.filter((item) => venueIds.has(item.venueId)).map((item) => item.id));
+    const rawRoutes = await readStore<Array<ExhibitionRoute & { exhibitionId?: string }>>("routes", DEFAULT_ROUTES);
+    writeStore("exhibitions", exhibitions.filter((item) => item.id !== id));
+    writeStore("venues", venues.filter((item) => !venueIds.has(item.id)));
+    writeStore("points", points.filter((item) => !relatedPointIds.has(item.id)));
+    writeStore("routes", rawRoutes.filter((item) => !venueIds.has(item.venueId) && item.exhibitionId !== id));
+    writeStore("schedules", schedules.filter((item) => item.exhibitionId !== id));
+    writeStore("broadcasts", broadcasts.filter((item) => item.exhibitionId !== id));
+    writeStore("exhibits", exhibits.filter((item) => !exhibitIds.has(item.id)));
+    writeStore("exhibitors", exhibitors.filter((item) => !exhibitorIds.has(item.id)));
+  }
   async listVenues() { return readStore<EventVenue[]>("venues", DEFAULT_VENUES); }
-  async saveVenue(item: EventVenue) { const saved = { ...item, updatedAt: now() }; writeStore("venues", [saved, ...(await this.listVenues()).filter((candidate) => candidate.id !== item.id)]); return saved; }
-  async deleteVenue(id: string) { writeStore("venues", (await this.listVenues()).filter((item) => item.id !== id)); }
+  async saveVenue(item: EventVenue) { if (!(await this.listExhibitions()).some((exhibition) => exhibition.id === item.exhibitionId)) throw new Error("场地所属展会不存在"); const saved = { ...item, updatedAt: now() }; writeStore("venues", [saved, ...(await this.listVenues()).filter((candidate) => candidate.id !== item.id)]); return saved; }
+  async deleteVenue(id: string) { if ((await this.listPoints()).some((item) => item.venueId === id) || (await this.listRoutes()).some((item) => item.venueId === id) || (await this.listSchedules()).some((item) => item.venueId === id) || (await this.listExhibitions()).some((item) => item.mainVenueId === id)) throw new Error("该场地仍有关联点位、路线、排期或主场地配置，请先处理后再删除。"); writeStore("venues", (await this.listVenues()).filter((item) => item.id !== id)); }
+  async listPoints() { return readStore<EventPoint[]>("points", DEFAULT_POINTS); }
+  async savePoint(item: EventPoint) {
+    const venue = (await this.listVenues()).find((candidate) => candidate.id === item.venueId);
+    if (!venue) throw new Error("点位所属场地不存在");
+    const [exhibitors, exhibits] = await Promise.all([this.listExhibitors(), this.listExhibits()]);
+    if (item.exhibitorId) {
+      const exhibitor = exhibitors.find((candidate) => candidate.id === item.exhibitorId);
+      if (!exhibitor || exhibitor.exhibitionId !== venue.exhibitionId) throw new Error("点位关联的展商必须属于当前场地所属展会");
+    }
+    if (item.exhibitId) {
+      const exhibit = exhibits.find((candidate) => candidate.id === item.exhibitId);
+      const exhibitor = item.exhibitorId ? exhibitors.find((candidate) => candidate.id === item.exhibitorId) : null;
+      if (!exhibit || exhibit.exhibitionId !== venue.exhibitionId || (item.exhibitorId && exhibit.exhibitorId !== item.exhibitorId) || (!item.exhibitorId && exhibitor === null)) throw new Error("点位关联的展品必须属于当前展会和所选展商");
+    }
+    const saved = { ...item, updatedAt: now() };
+    writeStore("points", [saved, ...(await this.listPoints()).filter((candidate) => candidate.id !== item.id)]);
+    return saved;
+  }
+  async deletePoint(id: string) { if ((await this.listRoutes()).some((route) => route.pointIds.includes(id)) || (await this.listSchedules()).some((schedule) => schedule.pointId === id)) throw new Error("该点位仍被路线或活动排期使用，请先解除关联后再删除。"); writeStore("points", (await this.listPoints()).filter((item) => item.id !== id)); }
   async listExhibitors() { return readStore<Exhibitor[]>("exhibitors", DEFAULT_EXHIBITORS); }
   async saveExhibitor(item: Exhibitor) { const saved = { ...item, updatedAt: now() }; writeStore("exhibitors", [saved, ...(await this.listExhibitors()).filter((candidate) => candidate.id !== item.id)]); return saved; }
-  async deleteExhibitor(id: string) { writeStore("exhibitors", (await this.listExhibitors()).filter((item) => item.id !== id)); }
+  async deleteExhibitor(id: string) { if ((await this.listExhibits()).some((item) => item.exhibitorId === id) || (await this.listPoints()).some((item) => item.exhibitorId === id)) throw new Error("该展商仍有关联展品或点位，请先处理后再删除。"); writeStore("exhibitors", (await this.listExhibitors()).filter((item) => item.id !== id)); }
   async listExhibits() { return readStore<Exhibit[]>("exhibits", DEFAULT_EXHIBITS); }
-  async saveExhibit(item: Exhibit) { const saved = { ...item, updatedAt: now() }; writeStore("exhibits", [saved, ...(await this.listExhibits()).filter((candidate) => candidate.id !== item.id)]); return saved; }
-  async deleteExhibit(id: string) { writeStore("exhibits", (await this.listExhibits()).filter((item) => item.id !== id)); }
+  async saveExhibit(item: Exhibit) { const exhibitor = (await this.listExhibitors()).find((candidate) => candidate.id === item.exhibitorId); if (!exhibitor || exhibitor.exhibitionId !== item.exhibitionId) throw new Error("展品与展商必须属于同一场展会"); const saved = { ...item, updatedAt: now() }; writeStore("exhibits", [saved, ...(await this.listExhibits()).filter((candidate) => candidate.id !== item.id)]); return saved; }
+  async deleteExhibit(id: string) { if ((await this.listPoints()).some((item) => item.exhibitId === id)) throw new Error("该展品仍被点位关联，请先解除关联后再删除。"); writeStore("exhibits", (await this.listExhibits()).filter((item) => item.id !== id)); }
   async listRoutes() {
-    const routes = await readStore<ExhibitionRoute[]>("routes", DEFAULT_ROUTES);
+    const routes = await readStore<Array<ExhibitionRoute & { exhibitionId?: string; from?: string; to?: string }>>("routes", DEFAULT_ROUTES);
+    const points = await this.listPoints();
     return routes.map((route) => {
-      if (route.venueId) return route;
-      const venueId = DEFAULT_VENUES.find((venue) => venue.exhibitionId === route.exhibitionId)?.id ?? route.exhibitionId;
-      return { ...route, venueId, exhibitionId: venueId };
+      if (route.pointIds?.length) return route;
+      const venueId = route.venueId ?? DEFAULT_VENUES.find((venue) => venue.exhibitionId === route.exhibitionId)?.id ?? route.exhibitionId ?? "";
+      const pointIds = [route.from, route.to].map((name) => points.find((point) => point.venueId === venueId && point.name === name)?.id).filter((id): id is string => Boolean(id));
+      return { id: route.id, venueId, name: route.name, type: "navigation" as const, pointIds, directions: route.directions ?? [], estimatedMinutes: route.estimatedMinutes, description: route.description, status: route.status, createdAt: route.createdAt, updatedAt: route.updatedAt };
     });
   }
-  async saveRoute(item: ExhibitionRoute) { const saved = { ...item, updatedAt: now() }; writeStore("routes", [saved, ...(await this.listRoutes()).filter((candidate) => candidate.id !== item.id)]); return saved; }
+  async saveRoute(item: ExhibitionRoute) { const venue = (await this.listVenues()).find((candidate) => candidate.id === item.venueId); if (!venue) throw new Error("路线所属场地不存在"); const points = await this.listPoints(); if (item.pointIds.length < 2 || item.pointIds.some((id) => points.find((point) => point.id === id)?.venueId !== item.venueId)) throw new Error("路线至少需要两个属于同一场地的点位"); const saved = { ...item, updatedAt: now() }; writeStore("routes", [saved, ...(await this.listRoutes()).filter((candidate) => candidate.id !== item.id)]); return saved; }
   async deleteRoute(id: string) { writeStore("routes", (await this.listRoutes()).filter((item) => item.id !== id)); }
+  async listBroadcasts() { return readStore<EmergencyBroadcast[]>("broadcasts", DEFAULT_BROADCASTS); }
+  async saveBroadcast(item: EmergencyBroadcast) { const saved = { ...item, updatedAt: now() }; writeStore("broadcasts", [saved, ...(await this.listBroadcasts()).filter((candidate) => candidate.id !== item.id)]); return saved; }
+  async transitionBroadcast(id: string, status: EmergencyBroadcast["status"]) { const list = await this.listBroadcasts(); const next = list.map((item) => item.id === id ? { ...item, status, updatedAt: now() } : item); writeStore("broadcasts", next); return next.find((item) => item.id === id) ?? list[0]; }
+  async deleteBroadcast(id: string) { writeStore("broadcasts", (await this.listBroadcasts()).filter((item) => item.id !== id)); }
   async listSchedules() { return readStore<EventSchedule[]>("schedules", DEFAULT_SCHEDULES); }
-  async saveSchedule(item: EventSchedule) { const saved = { ...item, updatedAt: now() }; writeStore("schedules", [saved, ...(await this.listSchedules()).filter((candidate) => candidate.id !== item.id)]); return saved; }
+  async saveSchedule(item: EventSchedule) { if (!(await this.listExhibitions()).some((exhibition) => exhibition.id === item.exhibitionId)) throw new Error("活动所属展会不存在"); if (item.venueId) { const venue = (await this.listVenues()).find((candidate) => candidate.id === item.venueId); if (!venue || venue.exhibitionId !== item.exhibitionId) throw new Error("活动场地必须属于所属展会"); if (item.pointId && !(await this.listPoints()).some((point) => point.id === item.pointId && point.venueId === item.venueId)) throw new Error("活动点位必须属于所选场地"); } else if (item.pointId) throw new Error("选择活动点位前必须先选择场地"); const saved = { ...item, updatedAt: now() }; writeStore("schedules", [saved, ...(await this.listSchedules()).filter((candidate) => candidate.id !== item.id)]); return saved; }
   async deleteSchedule(id: string) { writeStore("schedules", (await this.listSchedules()).filter((item) => item.id !== id)); }
 }
 
@@ -258,7 +354,13 @@ export class FetchAdminApiClient extends MockAdminApiClient {
 const runtimeEnv = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env ?? {};
 export const adminApi: AdminApiClient = runtimeEnv.VITE_ADMIN_API_MODE === "real" ? new FetchAdminApiClient() : new MockAdminApiClient();
 
-export const DEFAULT_VOICES: VoiceAsset[] = [
-  { id: "voice-xiaoxiao", provider: "edge", voiceId: "zh-CN-XiaoxiaoNeural", name: "晓晓（女·温和）", previewText: "您好，欢迎来到西部博览会。", status: "active" },
-  { id: "voice-yunxi", provider: "edge", voiceId: "zh-CN-YunxiNeural", name: "云希（男·沉稳）", previewText: "很高兴为您介绍本次展会。", status: "active" },
-];
+export const DEFAULT_VOICES: VoiceAsset[] = EDGE_ZH_VOICES.map((voice) => ({
+  id: `voice-edge-${voice.id}`,
+  provider: "edge",
+  targetModel: null,
+  voiceId: voice.id,
+  name: voice.label,
+  previewText: "您好，欢迎来到四川博览集团数字人项目。",
+  status: "active" as const,
+  source: "system" as const,
+}));

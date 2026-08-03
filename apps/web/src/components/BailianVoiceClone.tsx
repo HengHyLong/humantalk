@@ -354,8 +354,7 @@ export function BailianVoiceClone({ onSuccess, onClose }: BailianVoiceCloneProps
       <div className="space-y-4 p-4">
         <div>
           <p className="text-xs leading-relaxed text-slate-500">
-            请朗读下方固定文案并录音。本地 CosyVoice 和 IndexTTS 会保存到本机模型目录；千问和小米 MiMo 复刻走 base64，内网可用；云端 CosyVoice 需本服务对公网可访问或配置{" "}
-            <code className="rounded bg-slate-100 px-1 py-0.5 text-slate-700">OPENTALKING_PUBLIC_BASE_URL</code>。
+            请朗读下方固定文案并录音。本地 CosyVoice 和 IndexTTS 会保存到本机模型目录；千问和小米 MiMo 复刻走 base64，内网可用；云端 CosyVoice 需本服务对公网可访问或配置服务公网地址。
           </p>
           <div className="mt-3 rounded-lg border border-cyan-300 bg-cyan-50 shadow-sm shadow-cyan-100/70">
             <div className="flex items-center justify-between border-b border-cyan-200 px-3 py-2">

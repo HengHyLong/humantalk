@@ -5,13 +5,13 @@ export const ROLE_PERMISSIONS: Record<AdminRole, PermissionCode[]> = {
     "dashboard:view", "asset:avatar", "asset:gif", "asset:voice", "asset:scene", "asset:idle",
     "knowledge:document", "knowledge:base", "knowledge:memory", "knowledge:qa", "knowledge:script", "knowledge:publish", "interact:test",
     "interact:welcome", "interact:explain", "interact:shopping", "event:exhibition", "event:exhibitor",
-    "event:exhibit", "event:venue", "event:route", "event:schedule", "lead:view", "report:interaction", "system:user",
+    "event:exhibit", "event:venue", "event:point", "event:route", "event:schedule", "event:broadcast", "lead:view", "report:interaction", "system:user",
   ],
   content_ops: [
     "dashboard:view", "asset:avatar", "asset:gif", "asset:voice", "asset:scene", "asset:idle",
     "knowledge:document", "knowledge:base", "knowledge:memory", "knowledge:qa", "knowledge:script", "knowledge:publish", "interact:test",
     "interact:welcome", "interact:explain", "interact:shopping", "event:exhibition", "event:exhibitor",
-    "event:exhibit", "event:venue", "event:route", "event:schedule", "lead:view",
+    "event:exhibit", "event:venue", "event:point", "event:route", "event:schedule", "event:broadcast", "lead:view",
   ],
   data_viewer: ["dashboard:view", "lead:view", "report:interaction"],
   security_audit: ["dashboard:view", "report:interaction", "system:user"],
@@ -19,13 +19,13 @@ export const ROLE_PERMISSIONS: Record<AdminRole, PermissionCode[]> = {
     "dashboard:view", "asset:avatar", "asset:gif", "asset:voice", "asset:scene", "asset:idle",
     "knowledge:document", "knowledge:base", "knowledge:memory", "knowledge:qa", "knowledge:script", "knowledge:publish", "interact:test",
     "interact:welcome", "interact:explain", "interact:shopping", "event:exhibition", "event:exhibitor",
-    "event:exhibit", "event:venue", "event:route", "event:schedule", "lead:view", "report:interaction", "system:user",
+    "event:exhibit", "event:venue", "event:point", "event:route", "event:schedule", "event:broadcast", "lead:view", "report:interaction", "system:user",
   ],
 };
 
 export const ROLE_BUTTON_PERMISSIONS: Record<AdminRole, ButtonPermission[]> = {
-  sys_admin: ["event:exhibition:write", "event:exhibitor:write", "event:exhibit:write", "event:venue:write", "event:route:write", "event:schedule:write", "asset:gif:write", "asset:scene:write", "knowledge:qa:write", "knowledge:publish:approve", "knowledge:rollback", "report:export"],
-  content_ops: ["event:exhibition:write", "event:exhibitor:write", "event:exhibit:write", "event:venue:write", "event:route:write", "event:schedule:write", "asset:gif:write", "asset:scene:write", "knowledge:qa:write", "knowledge:publish:approve"],
+  sys_admin: ["event:exhibition:write", "event:exhibitor:write", "event:exhibit:write", "event:venue:write", "event:point:write", "event:route:write", "event:schedule:write", "event:broadcast:write", "asset:gif:write", "asset:scene:write", "knowledge:qa:write", "knowledge:publish:approve", "knowledge:rollback", "report:export"],
+  content_ops: ["event:exhibition:write", "event:exhibitor:write", "event:exhibit:write", "event:venue:write", "event:point:write", "event:route:write", "event:schedule:write", "event:broadcast:write", "asset:gif:write", "asset:scene:write", "knowledge:qa:write", "knowledge:publish:approve"],
   data_viewer: ["report:export"],
   security_audit: [],
   readonly: [],

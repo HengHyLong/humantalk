@@ -1,10 +1,15 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { ApiError, type AvatarSummary, type SceneBackgroundAsset, type SceneComposition } from "../lib/api";
+import { ApiError, apiGet, type AvatarSummary, type SceneBackgroundAsset, type SceneComposition } from "../lib/api";
 import { DEFAULT_VOICES, adminApi } from "./api";
 import { openTalkingClient } from "./openTalkingClient";
 import type { GifAssetMeta, IdleContent, KnowledgeDocument, KnowledgeQa, MissPoolItem, PublishPackage, ScriptTemplate, VoiceAsset } from "./types";
 
 type Tone = "slate" | "cyan" | "green" | "amber" | "rose" | "violet";
+
+type TtsHealthSummary = {
+  tts_default_provider?: string;
+  tts_enabled_providers?: string[];
+};
 
 function Badge({ children, tone = "slate" }: { children: ReactNode; tone?: Tone }) {
   const styles: Record<Tone, string> = { slate: "bg-slate-100 text-slate-600", cyan: "bg-cyan-50 text-cyan-700", green: "bg-emerald-50 text-emerald-700", amber: "bg-amber-50 text-amber-700", rose: "bg-rose-50 text-rose-700", violet: "bg-violet-50 text-violet-700" };
@@ -139,35 +144,61 @@ export function EnhancedGifPage() {
   return <div className="p-6 xl:p-8"><Header eyebrow="数字人中心 / 动作素材" title="Gif 动作素材" description="管理迎宾、讲解、问答、待机和应急场景的动图资产。" action={<Button onClick={() => setForm((current) => ({ ...current, name: current.name || "新动作素材" }))}>+ 添加 Gif</Button>} />{form.name ? <Modal title="添加 Gif 动作素材" onClose={() => setForm({ name: "", scene: "welcome", tags: "欢迎,微笑" })} onSave={() => void save()} saveLabel="上传素材"><Field label="素材名称" value={form.name} onChange={(value) => setForm({ ...form, name: value })} /><label className="mt-4 block rounded-xl border border-dashed border-cyan-300 bg-cyan-50 p-5 text-center text-xs text-cyan-700">选择 .gif 文件<input type="file" accept=".gif,image/gif" className="sr-only" onChange={(event) => setFile(event.target.files?.[0] ?? null)} />{file ? <p className="mt-2 font-semibold">{file.name}</p> : null}</label><div className="mt-4 grid grid-cols-2 gap-3"><label className="text-xs font-semibold text-slate-600">场景<select value={form.scene} onChange={(event) => setForm({ ...form, scene: event.target.value })} className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-normal"><option value="welcome">welcome</option><option value="explain">explain</option><option value="qa">qa</option><option value="idle">idle</option><option value="emergency">emergency</option></select></label><Field label="标签（逗号分隔）" value={form.tags} onChange={(value) => setForm({ ...form, tags: value })} /></div>{error ? <p className="mt-3 text-xs text-rose-600">{error}</p> : null}</Modal> : null}<div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">{pagination.pageItems.map((item) => <Card key={item.id} className="overflow-hidden"><div className="relative h-44 bg-slate-100"><img src={item.previewUrl} alt={item.name} className="h-full w-full object-cover" /><div className="absolute left-3 top-3"><Badge tone="cyan">{item.scene}</Badge></div></div><div className="p-4"><div className="flex items-start justify-between gap-2"><div><h3 className="font-semibold text-slate-900">{item.name}</h3><p className="mt-1 text-xs text-slate-400">{item.width} × {item.height} · {item.frames} 帧</p></div><Badge tone={item.status === "active" ? "green" : "slate"}>{item.status === "active" ? "启用" : "停用"}</Badge></div><div className="mt-3 flex flex-wrap gap-1">{item.tags.map((tag) => <span key={tag} className="rounded-md bg-slate-100 px-2 py-1 text-[10px] text-slate-500">#{tag}</span>)}</div><div className="mt-4 flex justify-end gap-1"><Button variant="ghost" onClick={() => setDetail(item)}>详情</Button><Button variant="ghost" onClick={() => setEditing(item)}>编辑</Button><Button variant="danger" onClick={() => { if (window.confirm(`确认删除“${item.name}”？`)) void adminApi.deleteGif(item.id).then(reload); }}>删除</Button></div></div></Card>)}</div><Pagination page={pagination.page} pageCount={pagination.pageCount} total={items.length} onChange={pagination.setPage} />{editing ? <Modal title="编辑 Gif 元数据" onClose={() => setEditing(null)} onSave={() => void update()}><Field label="素材名称" value={editing.name} onChange={(value) => setEditing({ ...editing, name: value })} /><label className="mt-4 block text-xs font-semibold text-slate-600">场景<select value={editing.scene} onChange={(event) => setEditing({ ...editing, scene: event.target.value })} className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-normal"><option value="welcome">welcome</option><option value="explain">explain</option><option value="qa">qa</option><option value="idle">idle</option><option value="emergency">emergency</option></select></label><Field label="标签" value={editing.tags.join(",")} onChange={(value) => setEditing({ ...editing, tags: value.split(",").map((tag) => tag.trim()).filter(Boolean) })} /></Modal> : null}{detail ? <Detail title="Gif 素材详情" onClose={() => setDetail(null)} rows={[["名称", detail.name], ["文件", detail.fileName], ["场景", detail.scene], ["标签", detail.tags.join("、")], ["尺寸", `${detail.width} × ${detail.height}`], ["帧数", detail.frames], ["时长", `${detail.durationMs} ms`], ["大小", `${Math.round(detail.sizeBytes / 1024)} KB`]]} /> : null}</div>;
 }
 
+function voiceCategoryKey(voice: VoiceAsset): string {
+  return voice.targetModel?.trim() || voice.provider;
+}
+
+function voiceCategoryLabel(voice: VoiceAsset): string {
+  if (voice.targetModel) return voice.targetModel;
+  return { edge: "Edge TTS", dashscope: "DashScope", cosyvoice: "CosyVoice", sambert: "Sambert", local_cosyvoice: "本地 CosyVoice", indextts: "IndexTTS", local_f5_tts: "本地 F5-TTS", xiaomi_mimo: "小米 MiMo", openai_compatible: "OpenAI 兼容" }[voice.provider] ?? voice.provider;
+}
+
+function backendVoiceAsset(item: Awaited<ReturnType<typeof openTalkingClient.listVoices>>[number]): VoiceAsset {
+  return { id: `backend-${item.provider}-${item.id}`, backendId: item.id, provider: item.provider, targetModel: item.target_model, voiceId: item.voice_id, name: item.display_label, previewText: "您好，欢迎来到四川博览集团数字人项目。", status: "active", source: item.source };
+}
+
+function mergeVoiceAssets(...groups: VoiceAsset[][]): VoiceAsset[] {
+  return Array.from(new Map(groups.flat().map((voice) => [`${voice.provider}:${voice.voiceId}`, voice])).values());
+}
+
 export function EnhancedVoicePage() {
   const [voices, setVoices] = useState<VoiceAsset[]>(DEFAULT_VOICES);
   const [editing, setEditing] = useState<VoiceAsset | null>(null);
   const [detail, setDetail] = useState<VoiceAsset | null>(null);
   const [playing, setPlaying] = useState("");
+  const [category, setCategory] = useState("all");
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const pagination = usePagination(voices);
-  useEffect(() => {
-    void openTalkingClient.listVoices().then((items) => setVoices(items.map((item) => ({
-      id: `backend-${item.provider}-${item.id}`,
-      backendId: item.id,
-      provider: item.provider,
-      voiceId: item.voice_id,
-      name: item.display_label,
-      previewText: "您好，欢迎来到四川博览集团数字人项目。",
-      status: "active",
-      source: item.source,
-    })))).catch(() => setError("无法读取真实后端音色目录，当前仅显示本地配置。"));
-  }, []);
-  const preview = async (voice: VoiceAsset) => { setPlaying(voice.id); try { const blob = await openTalkingClient.previewTts({ text: voice.previewText, voice: voice.voiceId, provider: voice.provider }); const audio = new Audio(URL.createObjectURL(blob)); audio.onended = () => setPlaying(""); await audio.play(); } catch { setPlaying(""); } };
-  const save = () => { if (!editing?.name.trim() || !editing.voiceId.trim()) return; setVoices((current) => [editing, ...current.filter((item) => item.id !== editing.id)]); setEditing(null); };
-  const remove = async (voice: VoiceAsset) => {
-    if (!window.confirm(`确认删除“${voice.name}”配置？`)) return;
-    if (voice.source === "clone" && typeof voice.backendId === "number") {
-      try { await openTalkingClient.deleteVoiceEntry(voice.backendId); } catch { setError("后端音色删除失败，未移除当前配置。"); return; }
+  const load = async () => {
+    setLoading(true);
+    try {
+      const [backendResult, localConfigs, health] = await Promise.all([
+        openTalkingClient.listVoices(),
+        adminApi.listVoiceConfigs(),
+        apiGet<TtsHealthSummary>("/health").catch(() => ({} as TtsHealthSummary)),
+      ]);
+      const backendVoices = backendResult.map(backendVoiceAsset);
+      const enabledProviders = health.tts_enabled_providers ?? [];
+      const edgeEnabled = !enabledProviders.length || enabledProviders.includes("edge");
+      setVoices(mergeVoiceAssets(localConfigs, backendVoices, edgeEnabled ? DEFAULT_VOICES : []));
+      setError("");
+    } catch (caught) {
+      const localConfigs = await adminApi.listVoiceConfigs().catch(() => [] as VoiceAsset[]);
+      setVoices(mergeVoiceAssets(localConfigs, DEFAULT_VOICES));
+      setError(caught instanceof ApiError ? caught.message : "音色目录读取失败，当前显示本地配置。 ");
+    } finally {
+      setLoading(false);
     }
-    setVoices((current) => current.filter((item) => item.id !== voice.id));
   };
-  return <div className="p-6 xl:p-8"><Header eyebrow="数字人中心 / 真实后端" title="声音配置" description="真实读取 /voices，使用 /tts/preview 试听；系统音色目录为只读，新增和编辑是本地配置层。" action={<Button onClick={() => setEditing({ id: `voice-${Date.now()}`, provider: "edge", voiceId: "", name: "", previewText: "您好，欢迎来到四川博览集团数字人项目。", status: "active" })}>+ 添加配置</Button>} />{error ? <p className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-700">{error}</p> : null}<div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">{pagination.pageItems.map((voice) => <Card key={voice.id} className="p-5"><div className="flex items-start justify-between gap-3"><div><h3 className="font-semibold text-slate-900">{voice.name}</h3><p className="mt-1 text-xs text-slate-400">{voice.provider} · {voice.voiceId}</p></div><Badge tone={voice.source === "clone" ? "violet" : "green"}>{voice.source === "clone" ? "复刻音色" : "后端目录"}</Badge></div><p className="mt-4 rounded-xl bg-slate-50 p-3 text-sm leading-6 text-slate-600">{voice.previewText}</p><div className="mt-4 flex justify-end gap-1"><Button variant="secondary" className="whitespace-nowrap" onClick={() => void preview(voice)}>{playing === voice.id ? "播放中…" : "试听"}</Button><Button variant="ghost" className="whitespace-nowrap" onClick={() => setDetail(voice)}>详情</Button><Button variant="ghost" className="whitespace-nowrap" onClick={() => setEditing(voice)}>编辑配置</Button><Button variant="danger" className="whitespace-nowrap" onClick={() => void remove(voice)}>删除配置</Button></div></Card>)}</div><Pagination page={pagination.page} pageCount={pagination.pageCount} total={voices.length} onChange={pagination.setPage} />{editing ? <Modal title="声音配置" onClose={() => setEditing(null)} onSave={save}><Field label="音色名称" value={editing.name} onChange={(value) => setEditing({ ...editing, name: value })} placeholder="例如：展会女声" /><div className="mt-4 grid grid-cols-2 gap-3"><Field label="Provider" value={editing.provider} onChange={(value) => setEditing({ ...editing, provider: value })} /><Field label="音色 ID" value={editing.voiceId} onChange={(value) => setEditing({ ...editing, voiceId: value })} /></div><Field label="试听文本" value={editing.previewText} onChange={(value) => setEditing({ ...editing, previewText: value })} textarea /></Modal> : null}{detail ? <Detail title="声音详情" onClose={() => setDetail(null)} rows={[["名称", detail.name], ["Provider", detail.provider], ["音色 ID", detail.voiceId], ["后端 ID", detail.backendId ?? "本地配置"], ["来源", detail.source ?? "本地配置"], ["试听文本", detail.previewText], ["状态", detail.status]]} /> : null}</div>;
+  useEffect(() => { void load(); }, []);
+  const categoryItems = Array.from(new Map(voices.map((voice) => [voiceCategoryKey(voice), { key: voiceCategoryKey(voice), label: voiceCategoryLabel(voice) }])).values());
+  const filteredVoices = category === "all" ? voices : voices.filter((voice) => voiceCategoryKey(voice) === category);
+  const pagination = usePagination(filteredVoices);
+  const preview = async (voice: VoiceAsset) => { setPlaying(voice.id); setError(""); try { const blob = await openTalkingClient.previewTts({ text: voice.previewText, voice: voice.voiceId, provider: voice.provider, model: voice.targetModel }); const audio = new Audio(URL.createObjectURL(blob)); audio.onended = () => { URL.revokeObjectURL(audio.src); setPlaying(""); }; await audio.play(); } catch (caught) { setPlaying(""); setError(caught instanceof ApiError ? caught.message : `“${voice.name}”试听失败，请检查该模型的服务配置。`); } };
+  const save = async () => { if (!editing?.name.trim() || !editing.voiceId.trim() || !editing.provider.trim()) { setError("请填写名称、Provider 和音色 ID。 "); return; } try { const saved = await adminApi.saveVoiceConfig({ ...editing, id: editing.id.startsWith("voice-local-") ? editing.id : `voice-local-${Date.now()}`, name: editing.name.trim(), provider: editing.provider.trim(), targetModel: editing.targetModel?.trim() || null, voiceId: editing.voiceId.trim(), source: "local" }); setVoices((current) => [saved, ...current.filter((item) => item.id !== saved.id)]); setEditing(null); setError(""); } catch (caught) { setError(caught instanceof Error ? caught.message : "声音配置保存失败。 "); } };
+  const remove = async (voice: VoiceAsset) => { if (voice.source === "system") { setError("系统音色由后端统一维护，不能在此删除。 "); return; } if (!window.confirm(`确认删除“${voice.name}”配置？`)) return; try { if (voice.source === "clone" && typeof voice.backendId === "number") await openTalkingClient.deleteVoiceEntry(voice.backendId); else await adminApi.deleteVoiceConfig(voice.id); await load(); } catch (caught) { setError(caught instanceof ApiError ? caught.message : "音色删除失败，请确认后端服务状态。 "); } };
+  const isLocal = (voice: VoiceAsset) => voice.source !== "system" && voice.source !== "clone";
+  return <div className="p-6 xl:p-8"><Header eyebrow="数字人中心 / 声音配置" title="声音配置" description="音色目录按模型类别分组；试听会携带对应 Provider 和模型参数，系统音色只读，本地配置可持久化管理。" action={<Button onClick={() => setEditing({ id: `voice-local-${Date.now()}`, provider: "local_cosyvoice", targetModel: "FunAudioLLM/Fun-CosyVoice3-0.5B-2512", voiceId: "", name: "", previewText: "您好，欢迎来到四川博览集团数字人项目。", status: "active", source: "local" })}>+ 添加本地配置</Button>} />{error ? <p className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-700">{error}</p> : null}<Card className="mb-5 p-4"><div className="flex flex-wrap gap-2"><button type="button" onClick={() => setCategory("all")} className={`rounded-xl px-3 py-2 text-xs font-semibold ${category === "all" ? "bg-cyan-600 text-white" : "bg-slate-100 text-slate-600"}`}>全部模型 <span className="ml-1 opacity-70">{voices.length}</span></button>{categoryItems.map((item) => <button type="button" key={item.key} onClick={() => setCategory(item.key)} className={`rounded-xl px-3 py-2 text-xs font-semibold ${category === item.key ? "bg-cyan-600 text-white" : "bg-slate-100 text-slate-600"}`}>{item.label} <span className="ml-1 opacity-70">{voices.filter((voice) => voiceCategoryKey(voice) === item.key).length}</span></button>)}</div></Card>{loading ? <Card className="p-10 text-center text-sm text-slate-400">正在读取后端音色目录…</Card> : <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">{pagination.pageItems.map((voice) => <Card key={voice.id} className="p-5"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><h3 className="truncate font-semibold text-slate-900">{voice.name}</h3><p className="mt-1 text-xs text-slate-400">{voice.provider} · {voice.voiceId}</p><p className="mt-1 truncate text-[11px] text-cyan-700">模型类别：{voiceCategoryLabel(voice)}</p></div><Badge tone={voice.source === "clone" ? "violet" : voice.source === "system" ? "green" : "cyan"}>{voice.source === "clone" ? "复刻音色" : voice.source === "system" ? "系统音色" : "本地配置"}</Badge></div><p className="mt-4 rounded-xl bg-slate-50 p-3 text-sm leading-6 text-slate-600">{voice.previewText}</p><div className="mt-4 flex flex-wrap justify-end gap-1"><Button variant="secondary" className="whitespace-nowrap" onClick={() => void preview(voice)} disabled={playing === voice.id}>{playing === voice.id ? "试听中…" : "试听"}</Button><Button variant="ghost" className="whitespace-nowrap" onClick={() => setDetail(voice)}>详情</Button>{isLocal(voice) ? <><Button variant="ghost" className="whitespace-nowrap" onClick={() => setEditing(voice)}>编辑配置</Button><Button variant="danger" className="whitespace-nowrap" onClick={() => void remove(voice)}>删除配置</Button></> : voice.source === "clone" ? <Button variant="danger" className="whitespace-nowrap" onClick={() => void remove(voice)}>删除后端音色</Button> : null}</div></Card>)}</div>}{!loading ? <Pagination page={pagination.page} pageCount={pagination.pageCount} total={filteredVoices.length} onChange={pagination.setPage} /> : null}{editing ? <Modal title="本地声音配置" onClose={() => setEditing(null)} onSave={() => void save()}><Field label="配置名称" value={editing.name} onChange={(value) => setEditing({ ...editing, name: value })} placeholder="例如：展会中文女声" /><div className="mt-4 grid gap-4 sm:grid-cols-2"><label className="block text-xs font-semibold text-slate-600">Provider<select value={editing.provider} onChange={(event) => setEditing({ ...editing, provider: event.target.value })} className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-normal"><option value="edge">Edge TTS</option><option value="dashscope">DashScope</option><option value="cosyvoice">CosyVoice</option><option value="sambert">Sambert</option><option value="local_cosyvoice">本地 CosyVoice</option><option value="indextts">IndexTTS</option><option value="local_f5_tts">本地 F5-TTS</option><option value="xiaomi_mimo">小米 MiMo</option><option value="openai_compatible">OpenAI 兼容</option></select></label><Field label="模型类别 / tts_model" value={editing.targetModel ?? ""} onChange={(value) => setEditing({ ...editing, targetModel: value })} placeholder="例如：mimo-v2.5-tts" /></div><div className="mt-4"><Field label="音色 ID" value={editing.voiceId} onChange={(value) => setEditing({ ...editing, voiceId: value })} placeholder="例如：mimo_default" /></div><div className="mt-4"><Field label="试听文本" value={editing.previewText} onChange={(value) => setEditing({ ...editing, previewText: value })} textarea /></div></Modal> : null}{detail ? <Detail title="声音详情" onClose={() => setDetail(null)} rows={[["名称", detail.name], ["模型类别", voiceCategoryLabel(detail)], ["Provider", detail.provider], ["tts_model", detail.targetModel || "无需单独指定"], ["音色 ID", detail.voiceId], ["后端 ID", detail.backendId ?? "本地配置"], ["来源", detail.source ?? "本地配置"], ["试听文本", detail.previewText], ["状态", detail.status]]} /> : null}</div>;
 }
 
 export function EnhancedScenePage() {
