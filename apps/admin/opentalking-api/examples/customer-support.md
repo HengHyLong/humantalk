@@ -1,3 +1,0 @@
-# AI 客服数字人
-
-Coming soon...
