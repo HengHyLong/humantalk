@@ -1,0 +1,78 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import { MockAdminApiClient } from "../src/admin/api";
+
+const values = new Map<string, string>();
+Object.defineProperty(globalThis, "window", {
+  configurable: true,
+  value: {
+    localStorage: {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => values.set(key, value),
+      removeItem: (key: string) => values.delete(key),
+    },
+    setTimeout,
+  },
+});
+
+test("Mock Admin API covers login and P1 CRUD/state flows", async () => {
+  const api = new MockAdminApiClient();
+  await assert.rejects(() => api.login("admin", "wrong"), /账号或密码/);
+  const session = await api.login("admin", "Admin@123456");
+  assert.equal(session.user.role, "sys_admin");
+  assert.equal((await api.getDashboard()).metrics.length, 5);
+
+  const gif = await api.createGif({ id: "", name: "测试动作", kind: "gif", previewUrl: "data:image/gif;base64,AA==", scene: "qa", tags: ["测试"], status: "active", width: 320, height: 240, frames: 2, durationMs: 80, fileName: "test.gif", sizeBytes: 20 });
+  assert.equal((await api.updateGif(gif.id, { name: "测试动作-已编辑" })).name, "测试动作-已编辑");
+  await api.deleteGif(gif.id);
+  assert.equal((await api.listGifs()).some((item) => item.id === gif.id), false);
+
+  const bindings = await api.saveSceneBindings([{ scene: "qa", assets: [{ assetId: "gif-welcome", isPrimary: true, order: 0 }] }]);
+  assert.equal(bindings[0].scene, "qa");
+
+  const doc = await api.uploadDocument({ title: "测试文档", fileName: "test.md", type: "官方口径", exhibition: "2026 西部博览会" });
+  assert.equal((await api.updateDocument(doc.id, { title: "测试文档-已编辑" })).title, "测试文档-已编辑");
+  await api.deleteDocument(doc.id);
+  assert.equal((await api.listDocuments()).some((item) => item.id === doc.id), false);
+
+  const qa = await api.saveQa({ id: "qa-test", question: "测试问题", keywords: ["测试"], answer: "测试答案", category: "服务", exhibition: "2026 西部博览会", status: "draft", version: 1, creator: "测试", updatedAt: "", history: [] });
+  assert.equal((await api.transitionQa(qa.id, "pending_review")).status, "pending_review");
+  assert.equal((await api.transitionQa(qa.id, "published")).status, "published");
+  await api.deleteQa(qa.id);
+
+  const script = await api.saveScript({ id: "script-test", name: "测试话术", scene: "welcome", content: "欢迎", exhibition: "2026 西部博览会", status: "active", updatedAt: "" });
+  assert.equal((await api.listScripts()).some((item) => item.id === script.id), true);
+  await api.deleteScript(script.id);
+
+  const pack = await api.createPackage({ name: "测试发布包", exhibition: "2026 西部博览会", qaCount: 1, documentCount: 1 });
+  assert.equal((await api.transitionPackage(pack.id, "pending_review")).status, "pending_review");
+  assert.equal((await api.transitionPackage(pack.id, "published")).status, "published");
+
+  const miss = (await api.listMissPool())[0];
+  assert.equal((await api.resolveMiss(miss.id, "converted_qa")).status, "converted_qa");
+  const idle = await api.saveIdle({ id: "idle-test", type: "标语轮播", title: "测试待机", content: "欢迎", interval: 6, exhibition: "2026 西部博览会", enabled: true });
+  assert.equal((await api.listIdle()).some((item) => item.id === idle.id), true);
+});
+
+test("Mock Admin API covers event operations CRUD and relationships", async () => {
+  const api = new MockAdminApiClient();
+  const exhibition = await api.saveExhibition({ id: "event-test-exhibition", name: "测试展会", code: "TEST-2026", venue: "测试场馆", hostUnit: "主办单位", organizerUnit: "承办单位", coOrganizerUnits: "协办单位一、协办单位二", startDate: "2026-09-01", endDate: "2026-09-03", status: "preparing", description: "测试", boundAvatarId: null, knowledgeBaseIds: [], createdAt: "", updatedAt: "" });
+  const exhibitor = await api.saveExhibitor({ id: "event-test-exhibitor", exhibitionId: exhibition.id, name: "测试展商", boothCode: "T-01", category: "测试", contact: "测试联系人", phone: "000", status: "active", description: "测试", createdAt: "", updatedAt: "" });
+  const exhibit = await api.saveExhibit({ id: "event-test-exhibit", exhibitionId: exhibition.id, exhibitorId: exhibitor.id, name: "测试展品", category: "设备", modelNo: "T-001", description: "测试", status: "draft", createdAt: "", updatedAt: "" });
+  const venue = await api.saveVenue({ id: "event-test-venue", exhibitionId: exhibition.id, name: "测试场地", address: "测试地址", description: "测试", status: "active", createdAt: "", updatedAt: "" });
+  const route = await api.saveRoute({ id: "event-test-route", venueId: venue.id, exhibitionId: venue.id, name: "测试路线", from: "入口", to: "展位", distance: "10米", estimatedMinutes: 1, description: "测试", status: "draft", createdAt: "", updatedAt: "" });
+  const schedule = await api.saveSchedule({ id: "event-test-schedule", exhibitionId: exhibition.id, title: "测试活动", type: "论坛", startAt: "2026-09-01 09:00", endAt: "2026-09-01 10:00", location: "测试厅", speaker: "测试方", description: "测试", status: "draft", createdAt: "", updatedAt: "" });
+  assert.equal((await api.listExhibitors()).find((item) => item.id === exhibitor.id)?.exhibitionId, exhibition.id);
+  assert.equal((await api.listExhibits()).find((item) => item.id === exhibit.id)?.exhibitorId, exhibitor.id);
+  assert.equal((await api.listVenues()).find((item) => item.id === venue.id)?.exhibitionId, exhibition.id);
+  assert.equal((await api.listRoutes()).find((item) => item.id === route.id)?.name, "测试路线");
+  assert.equal((await api.listSchedules()).find((item) => item.id === schedule.id)?.title, "测试活动");
+  await api.deleteSchedule(schedule.id);
+  await api.deleteRoute(route.id);
+  await api.deleteVenue(venue.id);
+  await api.deleteExhibit(exhibit.id);
+  await api.deleteExhibitor(exhibitor.id);
+  await api.deleteExhibition(exhibition.id);
+  assert.equal((await api.listExhibitions()).some((item) => item.id === exhibition.id), false);
+});
