@@ -1,367 +1,274 @@
-<h1 align="center">OpenTalking</h1>
+# 四川博览集团数字人项目
 
-<p align="center">
-  <b>Open-source real-time digital-human pipeline: LLM, TTS, WebRTC, character voices, and pluggable model backends</b>
-</p>
+四川博览集团数字人项目是一个面向展会场景的实时数字人服务平台。项目以 OpenTalking 实时数字人运行时为基础，围绕四川博览集团展会业务建设管理后台、Web 数字人交互端、知识库与 RAG 能力，以及数字人语音、会话和媒体流服务。
 
-<p align="center">
-  <a href="./README.zh.md">中文</a> ·
-  <a href="https://datascale-ai.github.io/opentalking/latest/en/">Documentation</a> ·
-  <a href="https://github.com/datascale-ai/opentalking">GitHub</a>
-</p>
+项目当前以两个业务端为主线：
 
-<p align="center">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="License"></a>
-  <img src="https://img.shields.io/badge/Python-3.10%2B-brightgreen.svg" alt="Python">
-  <img src="https://img.shields.io/badge/React-18-61dafb.svg" alt="React">
-  <img src="https://img.shields.io/badge/FastAPI-009688.svg" alt="FastAPI">
-  <img src="https://img.shields.io/badge/WebRTC-realtime-orange.svg" alt="WebRTC">
-</p>
+- **管理后台 Admin**：负责展会、展商、展品、场地、路线、数字人资产、知识库和交互策略的配置与运营。
+- **Web 数字人端 Web**：面向观众提供语音交互、展会问答、展馆导航、数字人播报和后续导购/线索服务。
 
-<p align="center">
-  <a href="https://www.opentalking.net/#github">
-    <img src="https://img.shields.io/badge/Visit%20OpenTalking%20Website-00A6D6?style=for-the-badge&logo=googlechrome&logoColor=white" alt="Visit OpenTalking Website">
-  </a>
-</p>
+底层 API 负责会话、SSE 事件、WebRTC、语音识别、语音合成、数字人驱动和知识库基础能力。展会业务接口仍在按 Admin/Web 模块逐步补充和联调中。
 
-<p align="center">
-  <a href="#webui-and-demos">Demos</a> ·
-  <a href="#choose-a-deployment-path">Deployment</a> ·
-  <a href="#quickstart">Quickstart</a> ·
-  <a href="#supported-models">Models</a> ·
-  <a href="#progress-and-roadmap">Roadmap</a> ·
-  <a href="#documentation-and-community">Docs & Community</a>
-</p>
+## 项目结构
 
----
+```text
+opentalking-main/
+├── apps/
+│   ├── api/       # FastAPI 后端与 OpenTalking 运行时接口
+│   ├── admin/     # 管理后台 Admin，React + TypeScript
+│   ├── web/       # Web 数字人交互端，React + TypeScript
+│   ├── unified/   # 统一启动入口
+│   └── cli/       # 命令行工具
+├── opentalking/   # 会话、模型、语音、媒体和运行时核心代码
+├── configs/       # 项目和模型配置
+├── examples/      # 示例资源和示例配置
+├── scripts/       # 启动、停止、模型和部署脚本
+├── docs/          # 通用技术文档
+└── tests/         # 项目级测试
+```
 
-## Overview
+## 当前业务功能
 
-OpenTalking is an open-source orchestration framework for real-time digital-human conversations. It covers the core path of a **digital-human conversational product**: frontend interaction, session state, LLM replies, STT, TTS and voice selection, interruption control, subtitle events, WebRTC audio/video playback, and calls into local or remote model services.
+### 1. Admin 管理后台
 
-OpenTalking is designed as a practical digital-human production stack. The WebUI, avatar and voice asset libraries, knowledge bases, memory, multi-session state, LLM / STT / TTS providers, WebRTC playback, and model backends are organized in one project. You can start with the lightweight Mock mode, connect local QuickTalk / Wav2Lip, or use OmniRT for FlashTalk, FasterLivePortrait, and other higher-quality or more complex model workflows.
+当前菜单和页面按照以下功能模块组织：
 
-- **Fast trial**: `mock / driverless mode`, useful for validating the API, TTS, and WebRTC path before downloading video model weights.
-- **Real-time conversation**: connect `QuickTalk`, `Wav2Lip`, `FlashTalk`, and other models for interactive digital-human dialogue.
-- **Video creation and cloning**: reuse FasterLivePortrait runtime for audio/text-driven video creation and camera/uploaded-video-driven video clone workflows.
-- **Private deployment**: supports local STT/TTS, OpenAI-compatible LLMs, knowledge bases, memory, OmniRT remote inference, Docker, and distributed deployment.
+| 功能模块 | 当前内容 | 当前状态 |
+| --- | --- | --- |
+| 首页 | 展会概览、运行状态、待办和告警展示 | 部分完成，部分数据仍为 Mock |
+| 展会运营 | 展会列表、展商管理、展品管理、活动排期、场地管理、点位管理、路线规划、应急播报 | 页面和基础 Mock CRUD 已有，真实业务接口待补充 |
+| 数字人中心 | 数字人形象、声音配置、场景绑定、待机内容 | 基础资产和运行时接口已有，运营数据接入待完善 |
+| 知识中心 | 文档资料、知识库、记忆库，以及知识问答、话术和发布相关页面能力 | 基础文档和知识库接口已有，发布审核和生产链路待完善 |
+| 交互管理 | 实时测试、欢迎配置、讲解流程、导购策略 | 实时测试基础能力已有，后三项页面暂未启用 |
+| 线索运营 | 线索列表、详情、授权、脱敏、反馈和导出 | 当前未启用，接口和页面待开发 |
+| 数据分析 | 交互记录、知识命中、未命中、终端和运营报表 | 当前未启用，接口和页面待开发 |
+| 系统管理 | 用户、角色、菜单权限、按钮权限、审计和运维 | 当前未启用，认证、RBAC 和审计接口待开发 |
 
-More documentation:
+### 2. Web 数字人交互端
 
-- Documentation site: <https://datascale-ai.github.io/opentalking/latest/en/>
-- Chinese docs: <https://datascale-ai.github.io/opentalking/latest/>
+Web 端面向展会观众，当前主要能力包括：
 
-## WebUI And Demos
+- 数字人展示、会话创建、会话启动和会话关闭。
+- SSE 实时事件接收、字幕展示、音频播放和 WebRTC 媒体流。
+- 文本问答、语音输入、流式 STT、TTS 播报和播报中断。
+- VAD 语音活动检测、连续监听基础逻辑和语音识别失败回退。
+- 展会配置读取、关键词归一化、导航意图和普通问答意图的前端分流。
+- 导航结果展示基础结构，包括播报文本、字幕、路线和图片字段。
 
-OpenTalking provides a Web service interface for managing the digital-human conversation pipeline. You can select or create avatars, configure voices, LLM, TTS, STT, and digital-human driver models, inspect model connection status, and validate real-time conversation, subtitles, and audio/video playback on the same page.
+目前 Web 端的展会配置和导航查询调用已经写入前端，但对应的生产后端接口尚未在当前 API 路由中形成完整实现，需要继续联调。
 
-![OpenTalking WebUI](docs/assets/images/WebUI.png)
+## 已具备的底层能力
 
-### Demo Videos
+当前 OpenTalking API 已具备或基本具备以下运行时能力：
 
-These demos cover three common frontend workflows: real-time conversation, video creation, and video clone.
+- 会话创建、启动、说话、转写、音频说话和会话中断。
+- SSE 会话事件流和 WebRTC Offer/ICE 配置。
+- 数字人形象、头像资源、自定义头像和预热能力。
+- 音色列表、音色克隆、音色删除和 TTS 试听。
+- 场景背景、场景组合和数字人场景资产。
+- 知识文档、知识库、文档导入、文档重建索引和会话知识库绑定。
+- 模型状态、健康检查、运行状态和队列状态。
+- 视频创建、视频克隆、记忆和角色等 OpenTalking 基础能力。
 
-<table width="100%" cellpadding="0" cellspacing="0">
-  <tr>
-    <th align="center" colspan="3">Featured Product Scenarios</th>
-  </tr>
-  <tr>
-    <td align="center" valign="top" width="33%">
-      <b>Healthcare guidance</b><br/>
-      <video src="https://github.com/user-attachments/assets/be67429b-b082-473f-a087-e3d1b8a1e9b4" controls preload="metadata" width="248" height="140"></video><br/>
-    </td>
-    <td align="center" valign="top" width="33%">
-      <b>Live commerce</b><br/>
-      <video src="https://github.com/user-attachments/assets/a0aad157-5d0b-4196-9a82-4226b7b2c6c6" controls preload="metadata" width="248" height="140"></video><br/>
-    </td>
-    <td align="center" valign="top" width="33%">
-      <b>Huangshan tourism guide</b><br/>
-      <video src="https://github.com/user-attachments/assets/7d620fe4-9e38-48a2-a3af-a26eae048ab4" controls preload="metadata" width="248" height="140"></video><br/>
-    </td>
-  </tr>
-</table>
+这些能力可以作为展会数字人的底层运行时，但还需要通过展会业务数据、知识发布和 Admin 配置接口形成完整的生产链路。
 
-<table width="100%" cellpadding="0" cellspacing="0">
-  <tr>
-    <th align="center" colspan="3">A. Real-time Conversation</th>
-  </tr>
-  <tr>
-    <td align="center" valign="top" width="33%">
-      <b>E-commerce livestream</b><br/>
-      <video src="https://github.com/user-attachments/assets/4646f29d-f773-4f95-84a9-8128ea97ac14" controls preload="metadata" width="248" height="441"></video><br/>
-    </td>
-    <td align="center" valign="top" width="33%">
-      <b>Companion character</b><br/>
-      <video src="https://github.com/user-attachments/assets/6e80d2ac-36a0-41bb-8394-26e0c1121cb6" controls preload="metadata" width="248" height="441"></video><br/>
-    </td>
-    <td align="center" valign="top" width="33%">
-      <b>News anchor</b><br/>
-      <video src="https://github.com/user-attachments/assets/ff7ba86b-927a-46f9-91a6-cfed5d332bda" controls preload="metadata" width="248" height="441"></video><br/>
-    </td>
-  </tr>
-</table>
+## 需要补充的后端接口
 
-<table width="100%" cellpadding="0" cellspacing="0">
-  <tr>
-    <th align="center" colspan="3">B. Video Creation</th>
-  </tr>
-  <tr>
-    <td align="center" valign="top" width="33%">
-      <b>Audio driven</b><br/>
-      <video src="https://github.com/user-attachments/assets/d2b93d0c-2ee6-409f-84d9-79d109d8592c" controls preload="metadata" width="248" height="140"></video><br/>
-    </td>
-    <td align="center" valign="top" width="33%">
-      <b>Text driven</b><br/>
-      <video src="https://github.com/user-attachments/assets/d1d4df8d-c599-4c6d-b61c-eec361e9556c" controls preload="metadata" width="248" height="140"></video><br/>
-    </td>
-    <td align="center" valign="top" width="33%">
-      <b>Cloned voice driven</b><br/>
-      <video src="https://github.com/user-attachments/assets/87b3efc4-d54a-4d2a-8d70-c37834154518" controls preload="metadata" width="248" height="140"></video><br/>
-    </td>
-  </tr>
-</table>
+后端接口补充按照当前 Admin/Web 模块倒排，不再直接按照完整项目功能清单拆分任务。
 
-<table width="100%" cellpadding="0" cellspacing="0">
-  <tr>
-    <th align="center" colspan="2">C. Video Clone</th>
-  </tr>
-  <tr>
-    <td align="center" valign="top" width="50%">
-      <b>Realtime camera imitation</b><br/>
-      <video src="https://github.com/user-attachments/assets/cd8c9e7b-66a6-46c8-b6c8-61632ce1a712" controls preload="metadata" width="386" height="217"></video><br/>
-    </td>
-    <td align="center" valign="top" width="50%">
-      <b>Uploaded video imitation</b><br/>
-      <video src="https://github.com/user-attachments/assets/5e8a5ae9-e39e-48ee-8c41-930369edc6b4" controls preload="metadata" width="386" height="217"></video><br/>
-    </td>
-  </tr>
-</table>
+### Admin 接口
 
-## Choose A Deployment Path
+- **认证与权限**：
+  `/api/v1/auth/login`、`/api/v1/auth/me`、`/api/v1/auth/refresh`、`/api/v1/auth/logout`、`/api/v1/auth/permissions`。
+- **首页、告警与审计**：
+  `/api/v1/admin/report`、`/api/v1/admin/alerts`、`/api/v1/admin/audit-logs`、`/api/v1/admin/trace-records`。
+- **展会主数据**：展会 CRUD、展会生命周期、运行配置和当前展会上下文。
+- **空间导览**：场地、楼层、展区、展位、设施、点位、路线、导航图片和路线发布。
+- **参展内容**：展商、展品、活动排期、应急播报，以及启用/停用和终端下发。
+- **数字人资产**：数字人形象、GIF、音色、场景绑定和待机内容的运营接口，兼容现有头像、音色、TTS 和场景资产接口。
+- **知识中心**：文档、知识库、QA、话术、发布包、版本回滚、未命中池和文档重建索引。
+- **线索与反馈**：线索列表、详情、授权、脱敏、状态流转、导出、反馈和 `trace_id` 关联。
+- **数据、终端与运维**：交互记录、终端状态、指标概览、数据导出、运维和网关接口。
 
-OpenTalking's **orchestration layer** (API / Worker / frontend) and **digital-human synthesis backend** (`mock`, `local`, `direct_ws`, or [OmniRT](https://github.com/datascale-ai/omnirt)) can be deployed independently. If you are new to the project, start with Mock mode to validate the full path, then switch to a real rendering model based on your GPU, model, and private-deployment requirements.
+### Web 接口
 
-| Path | Recommended model / backend | Device reference | Best for | Details |
-| --- | --- | --- | --- | --- |
-| Fast trial | `mock` | CPU / no GPU | Validate API, LLM, TTS, WebRTC, and browser playback without downloading model weights | [Quickstart](https://datascale-ai.github.io/opentalking/latest/en/quick-start/) |
-| Entry validation | `quicktalk` / `wav2lip` | RTX 3050 Laptop, RTX 3060, RTX 4060 | Run real video rendering for demos and deployment validation; lower the resolution on low-memory devices | [QuickTalk](https://datascale-ai.github.io/opentalking/latest/en/avatar_models/deployment/quicktalk-local/) / [Wav2Lip](https://datascale-ai.github.io/opentalking/latest/en/avatar_models/deployment/wav2lip-local/) |
-| Consumer-GPU single machine | `quicktalk` / `wav2lip` / `musetalk` | RTX 3090, RTX 4090 | Closer to real-time local demos, private validation, and lightweight pre-production evaluation | [Model and backend selection](https://datascale-ai.github.io/opentalking/latest/en/model-support/selection/) |
-| Fully local private path | `sensevoice` + `local_cosyvoice` + `quicktalk` | RTX 3090 / 4090 or similar GPU | Run STT, TTS, and video driving locally; OpenTalking uses the main `.venv`, while CosyVoice runs in a dedicated sidecar venv | [Local STT/TTS + QuickTalk](https://datascale-ai.github.io/opentalking/latest/en/recipes/local-quicktalk-audio/) |
-| High-quality remote inference | `flashtalk` / `flashhead` / `fasterliveportrait` + OmniRT | Multi-GPU, Ascend 910B2, remote GPU service | Multi-card, GPU/NPU, production isolation, higher visual quality, or video clone workflows | [FlashTalk](https://datascale-ai.github.io/opentalking/latest/en/avatar_models/flashtalk/) / [FasterLivePortrait](https://datascale-ai.github.io/opentalking/latest/en/avatar_models/fasterliveportrait/) |
-| Docker / production deployment | API, Web, Worker, external model services | Single GPU, remote GPU, distributed cluster | Service deployment, remote GPU, distributed runtime, and production validation | [Deployment](https://datascale-ai.github.io/opentalking/latest/en/deployment/) |
+- **展会数字人配置**：
+  `GET /exhibitions/{exhibition_id}/digital-human-config`。
+  返回当前展会的数字人配置、导航内容关键词和 `supports_deferred_speak` 等字段。
+- **展会导航查询**：
+  `POST /exhibitions/{exhibition_id}/navigation/query`。
+  根据观众问题匹配展馆、楼层、展区、展位和设施，返回播报文本、字幕、路线、图片和兜底信息。
+- **知识问答闭环**：将当前展会知识库、强控 QA、命中/未命中记录和 RAG 结果绑定到 Web 会话。
+- **运行时联调**：统一会话错误码、超时、断线重连、播报中抢断、`defer_speak` 和异常恢复行为。
 
-## Quickstart
+详细接口需求见：
 
-Choose one of the two quickstart paths first:
+- [Admin 所需补充接口](apps/admin所需补充接口.md)
+- [Web 所需补充接口](apps/web所需补充接口.md)
+- [Admin 功能规划](apps/admin功能规划.md)
 
-| Path | Use when | What you need | What it validates |
-| --- | --- | --- | --- |
-| Compshare image | You want to try OpenTalking before setting up dependencies or downloading model weights. | A Compshare instance created from the published image, with port `5173` open. | WebUI, LLM replies, streaming TTS, subtitle events, WebRTC delivery, and the prebuilt image workflow. |
-| Self deployment | You want to run the repo on your own machine or server, customize config, or continue into local/remote model deployment. | Python, Node.js, FFmpeg, `.env` provider config; real models also need GPU/runtime/model weights. | Mock first-run path, then local QuickTalk or remote OmniRT model paths. |
+## 当前未完成模块
 
-### 1. Compshare Image
+### P0 优先级
 
-If you want to try the OpenTalking + OmniRT + QuickTalk real-time digital-human path before setting up everything manually, use the community image we published on Compshare:
+- Admin 欢迎配置。
+- Admin 讲解流程。
+- Admin 系统管理，包括用户、角色、权限、审计和运维。
+- Admin `FetchAdminApiClient` 真实接口接入，目前除登录、首页、GIF 列表/删除外，其他页面仍存在 Mock 数据映射。
+- Web 导航后端服务，包括展会配置接口、导航查询接口和路线数据。
+- Web 连续监听、回声抑制、播报中抢断、权限恢复和真实设备验收。
+- 展会基础数据生产链路，包括入口、展馆、楼层、展区、展位、设施、路线、导航图片、展商展品和终端绑定。
 
-- Image URL: [image link](https://www.compshare.cn/images/TdDwmKZUZebI?referral_code=Hid5KUhcqlZEptmMEwKy2F)
-- Guide: [Compshare image quick experience](https://datascale-ai.github.io/opentalking/latest/en/quick-start/)
+### P1 优先级
 
-The image includes OpenTalking, OmniRT, the QuickTalk runtime environment, and model files. After deploying an instance, open port `5173` and visit the instance URL provided by the platform. If you need to restart services manually, follow the commands in the guide.
+- Admin 导购策略。
+- Admin 线索运营。
+- Admin 数据分析。
+- Web 导购、线索登记、资料二维码和转化记录。
 
-### 2. Self Deployment
+## 技术栈
 
-Use this path when you want to run OpenTalking from source. Start with Mock mode if you do not want to download video model weights yet: Mock mode uses the built-in static frame, while LLM replies, streaming TTS, subtitle events, and WebRTC delivery still run through the full product path.
+| 层级 | 技术 |
+| --- | --- |
+| Admin/Web | React 18、TypeScript、Vite、Tailwind CSS |
+| API | Python 3.10+、FastAPI、Uvicorn、Pydantic |
+| 实时通信 | SSE、WebSocket、WebRTC、aiortc |
+| 语音能力 | STT、TTS、音色配置、流式音频播放 |
+| 模型与知识 | OpenTalking Runtime、LLM、RAG、知识库、记忆库 |
+| 基础设施 | Redis、FFmpeg、GPU/CPU 模型运行环境 |
+
+## 开发环境
+
+建议使用以下环境：
+
+- Python 3.10 或更高版本。
+- Node.js 和 npm。
+- Redis，默认地址为 `redis://localhost:6379/0`。
+- FFmpeg。
+- 如果使用真实数字人模型、STT 或本地 TTS，需要准备对应的 GPU、模型权重和运行环境。
+
+## 快速启动
+
+### 1. 安装后端依赖
+
+在项目根目录执行：
 
 ```bash
-git clone https://github.com/datascale-ai/opentalking.git
-cd opentalking
-
-uv sync --extra dev --python 3.11
+uv sync --extra dev
 source .venv/bin/activate
 cp .env.example .env
 ```
 
-Edit `.env` and configure at least an LLM. The default TTS can use the keyless `edge` voice. LLM, STT, and TTS are independent providers; see [Configuration](https://datascale-ai.github.io/opentalking/latest/en/reference/configuration/) and [LLM / STT](https://datascale-ai.github.io/opentalking/latest/en/speech_models/llm-stt/).
+根据实际环境修改 `.env`，至少配置 Redis 和所使用的 LLM、STT、TTS 服务。
+
+### 2. 启动 API
+
+确保 Redis 已启动后，在项目根目录执行：
+
+```bash
+uv run opentalking-api
+```
+
+API 默认监听 `http://127.0.0.1:8000`。也可以使用：
+
+```bash
+uv run uvicorn apps.api.main:create_app --factory --host 0.0.0.0 --port 8000
+```
+
+### 3. 启动 Web 数字人端
+
+```bash
+cd apps/web
+npm install
+npm run dev
+```
+
+Web 默认访问地址为 <http://localhost:5173>。Vite 会将 `/api` 请求代理到后端 `8000` 端口。需要指定展会时，可以配置：
+
+```bash
+export VITE_EXHIBITION_ID=<exhibition-id>
+export VITE_BACKEND_PORT=8000
+npm run dev
+```
+
+### 4. 启动 Admin 管理后台
+
+```bash
+cd apps/admin
+npm install
+VITE_ADMIN_API_MODE=mock npm run dev -- --port 5174
+```
+
+当前 Admin 默认可以使用 Mock 数据查看页面和基础交互。需要接入真实 Admin API 时使用：
+
+```bash
+VITE_ADMIN_API_MODE=real npm run dev -- --port 5174
+```
+
+真实接口接入前，需要确认 `apps/admin/vite.config.ts` 中的 API 代理目标指向实际后端地址，并完成 `FetchAdminApiClient` 中各模块的接口映射。
+
+### 5. 一键启动底层运行时
+
+如果只需要快速验证 OpenTalking 的底层会话、TTS、SSE 和 WebRTC 路径，可以使用 Mock 模式：
 
 ```bash
 bash scripts/start_unified.sh --mock
 ```
 
-The default frontend URL is `http://localhost:5173`. To specify ports:
-
-```bash
-bash scripts/start_unified.sh --mock --api-port 8210 --web-port 5280
-```
-
-Stop services:
+停止服务：
 
 ```bash
 bash scripts/quickstart/stop_all.sh
 ```
 
-#### Real Model Entrypoints
+## 验证命令
 
-After Mock mode works, choose a real model path based on your machine. Weight downloads, directory layout, mirrors, checks, and troubleshooting are maintained in the docs; the README keeps only the startup entrypoints:
+前端 TypeScript 类型检查：
 
 ```bash
-# Local QuickTalk: consumer-GPU single-machine path
-export DIGITAL_HUMAN_HOME="${DIGITAL_HUMAN_HOME:-$HOME/digital-human}"
-export OPENTALKING_MODEL_ROOT="${OPENTALKING_MODEL_ROOT:-$DIGITAL_HUMAN_HOME/models}"
-export OPENTALKING_TORCH_DEVICE=cuda:0
-export OPENTALKING_QUICKTALK_ASSET_ROOT="$OPENTALKING_MODEL_ROOT/quicktalk"
-export OPENTALKING_QUICKTALK_WORKER_CACHE=1
-bash scripts/start_unified.sh --backend local --model quicktalk --api-port 8210 --web-port 5280
-
-# Remote OmniRT / FlashTalk: high-quality or multi-card path
-bash scripts/start_unified.sh \
-  --backend omnirt \
-  --model flashtalk \
-  --api-port 8210 \
-  --web-port 5280 \
-  --omnirt http://<gpu-server>:9000
+cd apps/admin && npm run typecheck
+cd ../web && npm run typecheck
 ```
 
-More entrypoints:
+当前 Admin 和 Web 类型检查已通过。前端测试命令为：
 
-- [QuickTalk local deployment](https://datascale-ai.github.io/opentalking/latest/en/avatar_models/deployment/quicktalk-local/)
-- [Wav2Lip local deployment](https://datascale-ai.github.io/opentalking/latest/en/avatar_models/deployment/wav2lip-local/)
-- [FasterLivePortrait / JoyVASA](https://datascale-ai.github.io/opentalking/latest/en/avatar_models/fasterliveportrait/)
-- [Video clone guide](https://datascale-ai.github.io/opentalking/latest/en/usage/webui/video-clone/)
-- [WebUI guide](https://datascale-ai.github.io/opentalking/latest/en/usage/webui/basic/)
-- [Docker Compose and production deployment](https://datascale-ai.github.io/opentalking/latest/en/deployment/)
+```bash
+cd apps/admin && npm test
+cd ../web && npm test
+```
 
-## Supported Models
+如果测试启动时出现 `tsx` 创建临时 IPC 管道的 `EPERM`，应先检查当前运行环境的沙箱或临时目录权限；该启动限制不能直接判定为业务代码测试失败。
 
-| Model | Input | Recommended backend | Resource guidance |
+后端测试可以在项目根目录执行：
+
+```bash
+uv run pytest
+```
+
+## 团队分工
+
+| 小组 | 成员 | 主要职责 | 指导老师 |
 | --- | --- | --- | --- |
-| `mock` | Reference image / static frame | `mock` | No GPU required |
-| `quicktalk` | Template video + audio | `local` | CUDA GPU, RTX 3090 / 4090 recommended |
-| `wav2lip` | Reference image / frames + audio | `local` / `omnirt` | `>= 8 GB` GPU / NPU memory |
-| `musetalk` | Full frames + audio | `omnirt` / `local` | `>= 12 GB` GPU memory |
-| `soulx-flashtalk-14b` | Portrait + audio | `omnirt` | Multi-GPU / NPU |
-| `soulx-flashhead-1.3b` | Portrait + audio | `omnirt` | Multi-GPU / NPU |
-| `fasterliveportrait` | Portrait / driving video / audio | `omnirt` | Single-GPU real-time portrait paste-back, video creation, video clone |
+| 后端小组 | 郭作佳 | Admin 认证、RBAC、展会/线索/报表/系统接口、终端、审计和运维 | 张强 |
+| 后端小组 | 陈文凯 | OpenTalking sessions、SSE/WebRTC、媒体流、运行时兼容、健康和队列 | 张强 |
+| 后端与模型 | 曹飞扬（RAG） | RAG、知识库、QA、发布、未命中池、意图和导航检索 | 张强、陈瑞鼎 |
+| 模型小组 | 吉祥（算法模型） | 大模型、TTS/STT、数字人驱动、实时渲染、延迟和降级 | 陈瑞鼎 |
+| 前端小组 | 苏梦龙 | Admin 框架、认证首页、展会运营、交互管理、权限和前后端接入 | 苏长明 |
+| 前端小组 | 吴涓 | Web 语音交互、VAD、连续监听、展会配置、意图分流和异常恢复 | 苏长明 |
+| 前端小组 | 童治 | Admin 数字资产/知识/线索/报表，以及 Web 导航、卡片和导购展示 | 苏长明 |
 
-### Consumer-GPU Reference
+## 项目资料
 
-| Model | Hardware | Input | Output | VRAM | Throughput |
-| --- | --- | --- | --- | --- | --- |
-| `quicktalk` | RTX 3090 | Template video + audio | 720x900 / 25fps | About 3.8 GiB | About 35 fps |
+- [Admin 所需补充接口](apps/admin所需补充接口.md)
+- [Web 所需补充接口](apps/web所需补充接口.md)
+- [Admin 功能规划](apps/admin功能规划.md)
 
-For weight downloads, Docker, troubleshooting, and model configuration, see [Model deployment](https://datascale-ai.github.io/opentalking/latest/en/model-deployment/).
+## 说明
 
-### Cloud Model API: Atlas Cloud
+本 README 以当前项目代码、Admin/Web 页面、已有 OpenTalking API 和接口补充文档为准。项目功能状态分为：
 
-<p align="center">
-  <a href="https://www.atlascloud.ai/?utm_source=github&utm_medium=link&utm_campaign=opentalking">
-    <img src="docs/assets/images/atlas-cloud-logo.png" alt="Atlas Cloud" width="200">
-  </a>
-</p>
+- **已具备**：代码或运行时接口已经存在，可以进行基础验证。
+- **部分完成**：页面或基础能力已经存在，但真实业务接口、数据链路或生产联调尚未完成。
+- **待补充**：当前页面未启用，或后端接口、业务数据和完整联调链路尚未形成。
 
-> **[Atlas Cloud](https://www.atlascloud.ai/?utm_source=github&utm_medium=link&utm_campaign=opentalking)** is an all-modal AI inference platform. One API gives you access to video generation, image generation, and LLMs, so you do not need to integrate multiple vendors separately. A single integration can route to 300+ curated all-modal models.
-
-OpenTalking uses an OpenAI-compatible interface for LLMs. Point `OPENTALKING_LLM_BASE_URL` to `https://api.atlascloud.ai/v1` to use Atlas-hosted DeepSeek / Qwen models. See [LLM and STT](https://datascale-ai.github.io/opentalking/latest/en/speech_models/llm-stt/). For budget-friendly API options, see Atlas Cloud's [coding plan](https://www.atlascloud.ai/console/coding-plan).
-
-## Progress And Roadmap
-
-- [ ] **More natural real-time conversations**
-  Improve interruption handling, low-latency response, audio/video sync, long-session recovery, and runtime visibility.
-
-- [ ] **Consumer-GPU multi-model path**
-  Improve asset checks, prewarm, cache reuse, low-memory parameters, and more RTX 3090 / 4090 / WSL2 benchmarks for QuickTalk / Wav2Lip / MuseTalk local paths, while filling in more FasterLivePortrait video creation and video clone measurements.
-
-- [ ] **One-command Windows / WSL2 deployment**
-  Continue lowering the barrier for model downloads, runtime installation, environment checks, and diagnostics based on the current Windows docs and test records.
-
-- [ ] **High-quality private deployment**
-  Improve external OmniRT inference services, multi-model endpoints, capacity scheduling, health checks, production monitoring, and GPU / NPU deployment guidance.
-
-- [ ] **More cloud voice and multimodal providers**
-  Extend pluggable STT / TTS / LLM providers, unified frontend selection, and provider-level health checks on top of the current OpenAI-compatible, DashScope, and Xiaomi MiMo profiles.
-
-- [ ] **Agent, memory, and platform capabilities**
-  Productize the asset library, knowledge bases, memory, multi-session scheduling, tool calling, and OpenClaw / external Agent integrations, then fill in observability, safety, licensed voices, and synthetic-content labeling.
-
-### Recent Progress
-
-- **2026-06-25: WeChat memory import and persona workflow**
-  Added WeChat memory persona import, documentation, and the related persona workflow. The frontend no longer treats persona selection and driving-model selection as mutually exclusive, so users can combine imported memory/persona context with the selected avatar driver.
-
-- **2026-06-23: Local CosyVoice TRT sidecar deployment**
-  Added the local CosyVoice sidecar deployment path with TensorRT / FP16 acceleration notes, runtime tuning, dedicated environment isolation, startup checks, and measured deployment guidance for pairing local TTS with QuickTalk.
-
-- **2026-06-22: Runtime configuration, memory refresh, and immersive scenes**
-  Added the runtime API configuration page, improved mem0 provider release during runtime refresh, and expanded the scene asset pipeline: scene asset APIs, asset-library integration, immersive conversation mode, scene/avatar anchoring, transparent background handling, and realtime media preservation across view switches.
-
-- **2026-06-18/19: Quickstart split, LightRAG runtime config, and scenario guides**
-  Split the quickstart into Compshare image and self-deployment paths, added LightRAG runtime configuration and quickstart updates, fixed dependency notes for mem0 / Hugging Face download tooling, and added the Huangshan digital-human guide.
-
-- **2026-06-12: QuickTalk local asset fixes and Apple Silicon support**
-  Organized QuickTalk local weights, HuBERT, InsightFace paths, missing-asset checks, cache preparation, and health checks. Added Apple Silicon deployment docs for validating `quicktalk-cpu` with MPS / CPU on macOS arm64.
-
-- **2026-06-12: IndexTTS, QuickTalk, and FlashTalk video creation improvements**
-  Added local IndexTTS and OmniRT IndexTTS providers, system voices, voice preview, and voice labels. Improved the QuickTalk / IndexTTS video creation path, and added FlashTalk reference-video generation with a default reference driver.
-
-- **2026-06-02/10: Persona Package, knowledge retrieval, and character memory**
-  Added Persona Package API / CLI / WebUI entrypoints for reusable role settings, knowledge materials, and prompts. Added LightRAG knowledge retrieval, session-level knowledge selection, a character memory panel, and BM25 / mem0 / SQLite memory providers.
-
-- **2026-06-05: Asset library and knowledge-base workflow**
-  Extended the WebUI asset library to connect avatar assets, knowledge materials, session selection, and Agent context building. Added audio/video exports so demos, reviews, and reusable materials can stay in the same workspace.
-
-- **2026-06-05/06: OpenAI-compatible audio providers and MuseTalk deployment updates**
-  Added OpenAI-compatible STT / TTS adapters, Xiaomi MiMo STT / TTS / voice clone profiles, frontend provider selection, and voice lists. Reworked `.env.example` into separate LLM / STT / TTS profile templates. Also improved MuseTalk local / OmniRT deployment docs, asset preparation scripts, and quickstart scripts.
-
-- **2026-06-04: FasterLivePortrait video creation and video clone**
-  Added the FasterLivePortrait video creation parameter panel, video clone page, custom source-asset upload, camera / uploaded-video driving input, and docs screenshots, reusing the OmniRT + FasterLivePortrait runtime path.
-
-- **2026-06-03: Web recording exports, asset library, and video workflows**
-  Added Web recording exports, export storage, video creation entrypoints, and the asset library workspace, connecting real-time conversation, material management, and video generation.
-
-- **2026-06-12/13: Homepage analytics, GitHub traffic, and deployment docs**
-  Added the English homepage, deployment-route presentation, site analytics, GitHub traffic statistics, chart style updates, and statistics-interval fixes. Added the WSL2 network-mode selection guide for Windows deployment and continued updating README demo videos and docs-site links.
-
-- **Earlier foundation: real-time conversation path and backend decoupling**
-  Built the Web console, LLM conversation, TTS, subtitle events, WebRTC audio/video playback, Avatar prewarm and cache, unified audio2video runner, and pluggable `mock` / `local` / `direct_ws` / `omnirt` model backends.
-
-## Documentation And Community
-
-- [Quickstart](https://datascale-ai.github.io/opentalking/latest/en/quick-start/)
-- [Models](https://datascale-ai.github.io/opentalking/latest/en/model-deployment/) (weight downloads, mirrors, startup, validation)
-- [Architecture](https://datascale-ai.github.io/opentalking/latest/en/developer-guide/architecture/)
-- [Configuration](https://datascale-ai.github.io/opentalking/latest/en/reference/configuration/)
-- [Deployment](https://datascale-ai.github.io/opentalking/latest/en/deployment/) (Docker Compose, distributed deployment)
-- [Model adapter](https://datascale-ai.github.io/opentalking/latest/en/developer-guide/model-adapter/)
-- [Contributing](CONTRIBUTING.md) (dev environment, CLI tools, ruff / mypy / pytest)
-
-Join the QQ or WeChat community to discuss real-time digital humans, FlashTalk, OmniRT, model deployment, and product scenarios.
-
-<table align="center">
-  <tr>
-    <td align="center"><b>QQ</b></td>
-    <td align="center"><b>WeChat</b><br><b>微信</b></td>
-  </tr>
-  <tr>
-    <td align="center"><img src="docs/assets/images/qq_group_qrcode.png" alt="AI digital human QQ group QR code" width="260"></td>
-    <td align="center"><img src="docs/assets/images/wechat_group_qrcode.png" alt="AI digital human WeChat group QR code" width="260"></td>
-  </tr>
-</table>
-
-<p align="center">
-  <b>AI Digital Human Community</b> · QQ Group ID: <code>1103327938</code> · WeChat
-</p>
-
-## Acknowledgements
-
-OpenTalking references and benefits from excellent projects in the real-time digital-human ecosystem:
-
-- Thanks to the [LINUX DO](https://linux.do/) community for their support and discussions.
-- [SoulX-FlashTalk](https://github.com/Soul-AILab/SoulX-FlashTalk) and [SoulX-FlashTalk-14B](https://huggingface.co/Soul-AILab/SoulX-FlashTalk-14B)
-- [LiveTalking](https://github.com/lipku/LiveTalking)
-- [OmniRT](https://github.com/datascale-ai/omnirt)
-- [Edge TTS](https://github.com/rany2/edge-tts)
-- [aiortc](https://github.com/aiortc/aiortc)
-- [Wan Video](https://github.com/Wan-Video)
-
-## License
-
-[Apache License 2.0](LICENSE)
+项目最终交付需要以 Admin 配置、后端发布、RAG 检索、Web 交互和现场终端联调全部打通为准。
