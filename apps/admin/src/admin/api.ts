@@ -634,7 +634,7 @@ export class FetchAdminApiClient extends MockAdminApiClient {
   }
 
   private saveResource<T extends { id: string }>(item: T, collectionPath: string, createPath = collectionPath): Promise<T> {
-    const isNew = !item.id || item.id.startsWith("new-") || /^(user|role|permission)-\d{10,}$/.test(item.id);
+    const isNew = !item.id || item.id.startsWith("new-") || /^(user|role|permission|welcome|explain|shopping)-\d{10,}$/.test(item.id);
     const { id: _clientId, ...createBody } = item;
     const body = isNew ? createBody : item;
     return this.request<T>(isNew ? createPath : `${collectionPath}/${encodeURIComponent(item.id)}`, {
@@ -711,6 +711,33 @@ export class FetchAdminApiClient extends MockAdminApiClient {
   override async listAlerts() { return this.requestList<AlertEvent>("/admin/alerts"); }
   override async acknowledgeAlert(id: string, operator = "当前用户") {
     return this.request<AlertEvent>(`/admin/alerts/${encodeURIComponent(id)}/acknowledge`, { method: "POST", body: JSON.stringify({ operator }) });
+  }
+
+  override async listWelcomeConfigs(exhibitionId?: string) {
+    return this.requestList<WelcomeConfig>(withQuery("/admin/interactions/welcome-configs", { exhibition_id: exhibitionId }));
+  }
+  override async saveWelcomeConfig(item: WelcomeConfig) {
+    return this.saveResource(item, "/admin/interactions/welcome-configs");
+  }
+  override async listExplainFlows(exhibitionId?: string) {
+    return this.requestList<ExplainFlow>(withQuery("/admin/interactions/explain-flows", { exhibition_id: exhibitionId }));
+  }
+  override async saveExplainFlow(item: ExplainFlow) {
+    return this.saveResource(item, "/admin/interactions/explain-flows");
+  }
+  override async deleteExplainFlow(id: string) {
+    await this.request(`/admin/interactions/explain-flows/${encodeURIComponent(id)}`, { method: "DELETE" });
+  }
+  override async listShoppingStrategies(exhibitionId?: string) {
+    return (await this.requestList<ShoppingStrategy>(withQuery("/admin/interactions/shopping-strategies", { exhibition_id: exhibitionId })))
+      .map((item) => ({ ...item, exhibitIds: item.exhibitIds ?? [] }));
+  }
+  override async saveShoppingStrategy(item: ShoppingStrategy) {
+    const saved = await this.saveResource(item, "/admin/interactions/shopping-strategies");
+    return { ...saved, exhibitIds: saved.exhibitIds ?? [] };
+  }
+  override async deleteShoppingStrategy(id: string) {
+    await this.request(`/admin/interactions/shopping-strategies/${encodeURIComponent(id)}`, { method: "DELETE" });
   }
 
   override async listGifs() { return this.request<GifAssetMeta[]>("/admin/assets?kind=gif"); }
