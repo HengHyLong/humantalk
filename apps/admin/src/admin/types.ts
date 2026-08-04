@@ -505,6 +505,29 @@ export type SystemMonitor = {
   terminals: TerminalStatus[];
 };
 
+export type InteractionRecord = {
+  id: string;
+  exhibitionId: string;
+  terminalId: string;
+  sessionId: string;
+  intent: string;
+  knowledgeHit: boolean;
+  latencyMs: number;
+  occurredAt: string;
+  traceId: string;
+};
+
+export type GatewayPolicy = {
+  id: string;
+  name: string;
+  whitelist: string[];
+  rateLimitPerMinute: number;
+  timeoutMs: number;
+  fallbackMode: "text" | "cached" | "offline";
+  enabled: boolean;
+  updatedAt: string;
+};
+
 export type InteractionStatus = "active" | "inactive";
 
 export type WelcomeConfig = {
