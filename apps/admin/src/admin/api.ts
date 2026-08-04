@@ -33,9 +33,13 @@ import type {
   WelcomeConfig,
   ExplainFlow,
   ShoppingStrategy,
+  AuthSession,
+  PermissionCode,
+  ButtonPermission,
 } from "./types";
 
 const STORAGE_PREFIX = "opentalking-admin-";
+const AUTH_TOKEN_KEY = `${STORAGE_PREFIX}token`;
 const now = () => new Date().toISOString();
 
 function buildAdminFetchUrl(path: string): string {
@@ -201,7 +205,11 @@ const DEFAULT_ALERTS: AlertEvent[] = [
 ];
 
 export interface AdminApiClient {
-  login(username: string, password: string): Promise<{ token: string; user: AdminUser }>;
+  login(username: string, password: string): Promise<AuthSession>;
+  getCurrentUser(): Promise<AdminUser>;
+  refreshAuth(): Promise<AuthSession>;
+  logout(): Promise<void>;
+  getPermissions(): Promise<{ permissions: PermissionCode[]; buttonPermissions: ButtonPermission[] }>;
   getDashboard(): Promise<DashboardData>;
   listGifs(): Promise<GifAssetMeta[]>;
   createGif(input: Omit<GifAssetMeta, "id" | "createdAt">): Promise<GifAssetMeta>;
@@ -342,8 +350,15 @@ function migrateInteractionMockData(): void {
 export class MockAdminApiClient implements AdminApiClient {
   async login(username: string, password: string) {
     if (username !== "admin" || password !== "Admin@123456") throw new Error("账号或密码不正确");
-    return { token: `mock-jwt-${Date.now()}`, user: buildUser(username, "sys_admin") };
+    const session = { token: `mock-jwt-${Date.now()}`, user: buildUser(username, "sys_admin"), expiresAt: Date.now() + 60 * 60 * 1000 };
+    writeStore("token", session.token);
+    return session;
   }
+
+  async getCurrentUser() { return buildUser("admin", "sys_admin"); }
+  async refreshAuth() { return this.login("admin", "Admin@123456"); }
+  async logout() { try { window.localStorage.removeItem(AUTH_TOKEN_KEY); } catch { /* best effort */ } }
+  async getPermissions() { const user = await this.getCurrentUser(); return { permissions: user.permissions, buttonPermissions: user.buttonPermissions }; }
 
   async getDashboard(): Promise<DashboardData> {
     const [qa, packages, documents, missPool] = await Promise.all([this.listQa(), this.listPackages(), this.listDocuments(), this.listMissPool()]);
@@ -406,7 +421,7 @@ export class MockAdminApiClient implements AdminApiClient {
   async transitionPackage(id: string, status: PublishPackage["status"]) { const list = await this.listPackages(); const next = list.map((item) => item.id === id ? { ...item, status, reviewer: status === "published" ? "当前用户" : item.reviewer, updatedAt: now() } : item); writeStore("packages", next); return next.find((item) => item.id === id) ?? list[0]; }
   async listMissPool() { return readStore("miss-pool", DEFAULT_MISS); }
   async resolveMiss(id: string, status: MissPoolItem["status"]) { const list = await this.listMissPool(); const next = list.map((item) => item.id === id ? { ...item, status } : item); writeStore("miss-pool", next); return next.find((item) => item.id === id) ?? list[0]; }
-  async listExhibitions() {
+  async listExhibitions(): Promise<Exhibition[]> {
     const legacyStatus: Record<string, Exhibition["status"]> = { draft: "preparing", active: "operating", ended: "teardown", archived: "teardown" };
     return (await readStore<Exhibition[]>("exhibitions", DEFAULT_EXHIBITIONS)).map((item) => ({ ...item, mainVenueId: item.mainVenueId ?? null, status: legacyStatus[item.status] ?? item.status, boundModel: item.boundModel ?? "", boundVoiceId: item.boundVoiceId ?? null, boundVoiceProvider: item.boundVoiceProvider ?? null, boundVoiceModel: item.boundVoiceModel ?? null, boundSttProvider: item.boundSttProvider ?? null, boundSttModel: item.boundSttModel ?? null, boundScene: item.boundScene ?? null, lifecycleHistory: item.lifecycleHistory ?? [] }));
   }
@@ -422,7 +437,7 @@ export class MockAdminApiClient implements AdminApiClient {
     writeStore("exhibitions", [saved, ...list.filter((candidate) => candidate.id !== item.id)]);
     return saved;
   }
-  async transitionExhibition(id: string, status: Exhibition["status"]) {
+  async transitionExhibition(id: string, status: Exhibition["status"]): Promise<Exhibition> {
     const list = await this.listExhibitions();
     const current = list.find((item) => item.id === id);
     if (!current) throw new Error("展会不存在");
@@ -546,19 +561,108 @@ function flattenPermissionNodes(nodes: PermissionNode[]): PermissionNode[] {
   return nodes.flatMap((node) => [{ ...node, children: undefined }, ...(node.children ? flattenPermissionNodes(node.children) : [])]);
 }
 
+export class AdminApiError extends Error {
+  constructor(message: string, public status: number, public code?: string, public traceId?: string) {
+    super(message);
+    this.name = "AdminApiError";
+  }
+}
+
 export class FetchAdminApiClient extends MockAdminApiClient {
-  private async request<T>(path: string, init?: RequestInit): Promise<T> {
-    const token = window.localStorage.getItem(`${STORAGE_PREFIX}token`);
+  private async request<T>(path: string, init?: RequestInit, retryAuth = true): Promise<T> {
+    const token = window.localStorage.getItem(AUTH_TOKEN_KEY);
     const response = await fetch(buildAdminFetchUrl(`/v1${path}`), { ...init, headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}), ...init?.headers } });
-    if (!response.ok) throw new Error(`Admin API ${response.status}`);
+    if (response.status === 401 && retryAuth && path !== "/auth/login" && path !== "/auth/refresh") {
+      try {
+        await this.refreshAuth();
+        return this.request<T>(path, init, false);
+      } catch {
+        window.localStorage.removeItem(AUTH_TOKEN_KEY);
+      }
+    }
+    if (!response.ok) {
+      const traceId = response.headers.get("X-Trace-ID") ?? undefined;
+      let detail: { code?: string; detail?: string; message?: string; trace_id?: string } = {};
+      try { detail = await response.json() as typeof detail; } catch { /* non-JSON error */ }
+      throw new AdminApiError(detail.detail || detail.message || `请求失败（HTTP ${response.status}）`, response.status, detail.code, detail.trace_id || traceId);
+    }
+    if (response.status === 204) return undefined as T;
     return response.json() as Promise<T>;
   }
 
   override async login(username: string, password: string) {
-    return this.request<{ token: string; user: AdminUser }>("/auth/login", { method: "POST", body: JSON.stringify({ username, password }) });
+    const payload = await this.request<AuthSession & { expires_at?: string | number }>("/auth/login", { method: "POST", body: JSON.stringify({ username, password }) }, false);
+    const session: AuthSession = { ...payload, expiresAt: payload.expiresAt ?? (typeof payload.expires_at === "string" ? Date.parse(payload.expires_at) : payload.expires_at) ?? Date.now() + 60 * 60 * 1000 };
+    window.localStorage.setItem(AUTH_TOKEN_KEY, session.token);
+    return session;
   }
 
+  override async getCurrentUser() { return this.request<AdminUser>("/auth/me"); }
+  override async refreshAuth() {
+    const payload = await this.request<AuthSession & { expires_at?: string | number }>("/auth/refresh", { method: "POST" }, false);
+    const session: AuthSession = { ...payload, expiresAt: payload.expiresAt ?? (typeof payload.expires_at === "string" ? Date.parse(payload.expires_at) : payload.expires_at) ?? Date.now() + 60 * 60 * 1000 };
+    window.localStorage.setItem(AUTH_TOKEN_KEY, session.token);
+    return session;
+  }
+  override async logout() {
+    try { await this.request<void>("/auth/logout", { method: "POST" }, false); }
+    finally { window.localStorage.removeItem(AUTH_TOKEN_KEY); }
+  }
+  override async getPermissions() { return this.request<{ permissions: PermissionCode[]; buttonPermissions: ButtonPermission[] }>("/auth/permissions"); }
+
   override async getDashboard() { return this.request<DashboardData>("/admin/report"); }
+
+  private async requestList<T>(path: string): Promise<T[]> {
+    const payload = await this.request<T[] | { items: T[] }>(path);
+    return Array.isArray(payload) ? payload : payload.items;
+  }
+
+  private saveResource<T extends { id: string }>(item: T, collectionPath: string, createPath = collectionPath): Promise<T> {
+    const isNew = !item.id || item.id.startsWith("new-");
+    const { id: _clientId, ...createBody } = item;
+    const body = isNew ? createBody : item;
+    return this.request<T>(isNew ? createPath : `${collectionPath}/${encodeURIComponent(item.id)}`, {
+      method: isNew ? "POST" : "PATCH",
+      body: JSON.stringify(body),
+    });
+  }
+
+  override async listExhibitions() { return this.requestList<Exhibition>("/admin/event/exhibitions"); }
+  override async saveExhibition(item: Exhibition) { return this.saveResource(item, "/admin/event/exhibitions"); }
+  override async deleteExhibition(id: string) { await this.request(`/admin/event/exhibitions/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+  override async transitionExhibition(id: string, status: ExhibitionStatus) { return this.request<Exhibition>(`/admin/event/exhibitions/${encodeURIComponent(id)}/lifecycle`, { method: "POST", body: JSON.stringify({ status }) }); }
+
+  override async listVenues() { return this.requestList<EventVenue>("/admin/event/venues"); }
+  override async saveVenue(item: EventVenue) { return this.saveResource(item, "/admin/event/venues", `/admin/event/exhibitions/${encodeURIComponent(item.exhibitionId)}/venues`); }
+  override async deleteVenue(id: string) { await this.request(`/admin/event/venues/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+
+  override async listPoints() { return this.requestList<EventPoint>("/admin/event/points"); }
+  override async savePoint(item: EventPoint) { return this.saveResource(item, "/admin/event/points", `/admin/event/venues/${encodeURIComponent(item.venueId)}/points`); }
+  override async deletePoint(id: string) { await this.request(`/admin/event/points/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+
+  override async listRoutes() { return this.requestList<ExhibitionRoute>("/admin/event/routes"); }
+  override async saveRoute(item: ExhibitionRoute) { return this.saveResource(item, "/admin/event/routes", `/admin/event/venues/${encodeURIComponent(item.venueId)}/routes`); }
+  override async deleteRoute(id: string) { await this.request(`/admin/event/routes/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+
+  override async listExhibitors() { return this.requestList<Exhibitor>("/admin/event/exhibitors"); }
+  override async saveExhibitor(item: Exhibitor) { return this.saveResource(item, "/admin/event/exhibitors", `/admin/event/exhibitions/${encodeURIComponent(item.exhibitionId)}/exhibitors`); }
+  override async deleteExhibitor(id: string) { await this.request(`/admin/event/exhibitors/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+
+  override async listExhibits() { return this.requestList<Exhibit>("/admin/event/exhibits"); }
+  override async saveExhibit(item: Exhibit) { return this.saveResource(item, "/admin/event/exhibits", `/admin/event/exhibitions/${encodeURIComponent(item.exhibitionId)}/exhibits`); }
+  override async deleteExhibit(id: string) { await this.request(`/admin/event/exhibits/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+
+  override async listSchedules() { return this.requestList<EventSchedule>("/admin/event/schedules"); }
+  override async saveSchedule(item: EventSchedule) { return this.saveResource(item, "/admin/event/schedules", `/admin/event/exhibitions/${encodeURIComponent(item.exhibitionId)}/schedules`); }
+  override async deleteSchedule(id: string) { await this.request(`/admin/event/schedules/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+
+  override async listBroadcasts() { return this.requestList<EmergencyBroadcast>("/admin/event/emergency-broadcasts"); }
+  override async saveBroadcast(item: EmergencyBroadcast) { return this.saveResource(item, "/admin/event/emergency-broadcasts", `/admin/event/exhibitions/${encodeURIComponent(item.exhibitionId)}/emergency-broadcasts`); }
+  override async transitionBroadcast(id: string, status: EmergencyBroadcast["status"]) {
+    const action = status === "active" ? "activate" : status === "ended" ? "end" : "transition";
+    return this.request<EmergencyBroadcast>(`/admin/event/emergency-broadcasts/${encodeURIComponent(id)}/${action}`, { method: "POST", body: action === "transition" ? JSON.stringify({ status }) : undefined });
+  }
+  override async deleteBroadcast(id: string) { await this.request(`/admin/event/emergency-broadcasts/${encodeURIComponent(id)}`, { method: "DELETE" }); }
 
   override async listGifs() { return this.request<GifAssetMeta[]>("/admin/assets?kind=gif"); }
   override async deleteGif(id: string) { await this.request(`/admin/assets/${encodeURIComponent(id)}`, { method: "DELETE" }); }
