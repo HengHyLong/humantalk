@@ -8,8 +8,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
 
-import cv2
 import numpy as np
+try:
+    import cv2
+except ImportError:  # Video cache preparation is not needed by the Mock backend.
+    cv2 = None  # type: ignore[assignment]
 
 from opentalking.core.model_paths import quicktalk_asset_root, wav2lip_model_root
 

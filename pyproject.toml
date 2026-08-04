@@ -28,6 +28,8 @@ dependencies = [
   "websockets>=13",
   "loguru>=0.7",
   "PyYAML>=6",
+  "PyJWT>=2.8",
+  "argon2-cffi>=23.1",
   "opencv-python>=4.8,<4.12",
   'mediapipe==0.10.21; python_version < "3.13" and platform_machine != "aarch64"',
   'mediapipe==0.10.18; python_version < "3.13" and platform_machine == "aarch64"',

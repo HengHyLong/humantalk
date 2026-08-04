@@ -9,6 +9,10 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from apps.api.core.config import get_settings
+from apps.api.admin import AdminStore
+from apps.api.admin.middleware import AdminTraceMiddleware
+from apps.api.admin.routes import public_router as admin_public_router
+from apps.api.admin.routes import router as admin_router
 from apps.api.routes import agent, avatars, events, exports, health, memory, models, personas, runtime_config, scene_assets, sessions, tts_preview, video_clone, video_creation, voices
 from opentalking.voice.store import init_voice_store
 
@@ -18,6 +22,8 @@ async def lifespan(app: FastAPI):
     init_voice_store()
     settings = get_settings()
     app.state.settings = settings
+    if settings.admin_api_enabled:
+        app.state.admin_store = AdminStore(settings.admin_sqlite_path, settings.admin_initialize_defaults)
     r = redis.from_url(settings.redis_url, decode_responses=True)
     app.state.redis = r
     yield
@@ -34,6 +40,7 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    app.add_middleware(AdminTraceMiddleware)
     app.include_router(health.router)
     app.include_router(models.router)
     app.include_router(avatars.router)
@@ -50,6 +57,8 @@ def create_app() -> FastAPI:
     app.include_router(video_clone.router)
     app.include_router(video_creation.router)
     app.include_router(voices.router)
+    app.include_router(admin_router)
+    app.include_router(admin_public_router)
     return app
 
 

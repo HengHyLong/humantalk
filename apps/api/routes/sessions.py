@@ -604,7 +604,15 @@ async def create_session(body: CreateSessionRequest, request: Request) -> Create
         tts_provider = normalize_tts_provider(tts_provider_request, default=None)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
-    stt_provider = _effective_stt_provider(stt_provider_request, settings)
+    # The official Mock renderer can be exercised through typed text and does
+    # not require speech recognition. Keep the legacy/default STT behavior for
+    # every other model, but let an explicit Mock session omit an unconfigured
+    # STT provider instead of failing before the WebRTC session is created.
+    stt_provider = (
+        ""
+        if model == "mock" and not stt_provider_request
+        else _effective_stt_provider(stt_provider_request, settings)
+    )
     _require_audio_provider_config(
         stt_provider=stt_provider,
         tts_provider=tts_provider,

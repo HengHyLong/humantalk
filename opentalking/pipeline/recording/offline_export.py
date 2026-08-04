@@ -10,7 +10,10 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
-import cv2
+try:
+    import cv2
+except ModuleNotFoundError:  # Optional for API/admin-only startup.
+    cv2 = None  # type: ignore[assignment]
 import numpy as np
 
 from opentalking.core.config import get_settings

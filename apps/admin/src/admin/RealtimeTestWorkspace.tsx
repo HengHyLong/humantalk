@@ -61,6 +61,13 @@ function audioProviderConfigError({
   return missing.length ? `${missing.join("、")}尚未完成后端配置，请先配置服务后再启动实时测试。` : null;
 }
 
+function isSttProviderReady(provider: string, health: RuntimeHealth | null): boolean {
+  if (provider === "sensevoice") return true;
+  const status = health?.stt_providers?.[provider];
+  return status?.key_set === true
+    && (!["xiaomi_mimo", "openai_compatible"].includes(provider) || status.service_url_set === true);
+}
+
 function textFromEvent(data: unknown): string | null {
   if (typeof data === "string") return data;
   if (!data || typeof data !== "object") return null;
@@ -129,8 +136,8 @@ export function RealtimeTestWorkspace({ initialAvatarId = "" }: { initialAvatarI
         setTtsProvider(defaultTtsProvider as TtsProviderExtended);
       }
       setVoiceCatalog(voiceResponse.items ?? []);
-    }).catch(() => {
-      if (!cancelled) setError("暂时无法读取 OpenTalking 形象或模型列表，请确认服务已启动。");
+    }).catch((caught) => {
+      if (!cancelled) setError(caught instanceof Error ? caught.message : "无法连接 OpenTalking API，请确认 Unified 服务已启动。");
     });
     return () => { cancelled = true; };
   }, [requestedAvatarId]);
@@ -231,7 +238,8 @@ export function RealtimeTestWorkspace({ initialAvatarId = "" }: { initialAvatarI
       setError("请先选择一个数字人形象。");
       return;
     }
-    const configError = audioProviderConfigError({ asrProvider, ttsProvider, health });
+    const mockCanSkipStt = model === "mock" && !isSttProviderReady(asrProvider, health);
+    const configError = audioProviderConfigError({ asrProvider: mockCanSkipStt ? "sensevoice" : asrProvider, ttsProvider, health });
     if (configError) {
       setError(configError);
       setConnection("idle");
@@ -244,7 +252,7 @@ export function RealtimeTestWorkspace({ initialAvatarId = "" }: { initialAvatarI
         avatar_id: avatarId,
         model,
         tts_provider: ttsProvider,
-        stt_provider: asrProvider,
+        stt_provider: mockCanSkipStt ? undefined : asrProvider,
         tts_voice: ttsVoice || undefined,
         tts_model: ttsModel || undefined,
         user_id: "admin-test-user",

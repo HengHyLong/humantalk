@@ -11,7 +11,10 @@ from pathlib import Path
 from collections.abc import Mapping
 from typing import Any, cast, cast
 
-import cv2
+try:
+    import cv2
+except ModuleNotFoundError:  # Optional for API/admin-only startup.
+    cv2 = None  # type: ignore[assignment]
 import numpy as np
 
 from opentalking.avatar.duo_dialog import duo_dialog_summary_from_metadata, normalize_duo_dialog_payload

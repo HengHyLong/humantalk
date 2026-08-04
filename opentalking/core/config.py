@@ -505,6 +505,14 @@ class Settings(BaseSettings):
     memory_mem0_vector_store_port: int = 0
     memory_mem0_vector_store_embedding_model_dims: int = 1024
     memory_sqlite_path: str = "./data/opentalking_memory.sqlite3"
+    #: Admin/RBAC/展会运营 SQLite；与声音、记忆和知识库数据库隔离
+    admin_sqlite_path: str = "./data/opentalking_admin.sqlite3"
+    admin_api_enabled: bool = True
+    admin_jwt_secret: str = ""
+    admin_access_token_minutes: int = 30
+    admin_refresh_token_days: int = 7
+    admin_initialize_defaults: bool = True
+    admin_media_root: str = "./data/admin-assets"
 
     #: CosyVoice 复刻时，百炼需拉取公网 URL；若留空则用请求的 Host 拼 URL（内网部署请填公网可达地址）
     public_base_url: str = ""

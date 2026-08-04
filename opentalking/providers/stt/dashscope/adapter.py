@@ -15,9 +15,15 @@ import tempfile
 import threading
 import time
 from pathlib import Path
+from typing import Any
 
 import numpy as np
-from dashscope.audio.asr import Recognition, RecognitionCallback, RecognitionResult
+try:
+    from dashscope.audio.asr import Recognition, RecognitionCallback, RecognitionResult
+except ImportError:  # DashScope is optional until API STT is selected.
+    Recognition = None  # type: ignore[assignment]
+    RecognitionCallback = object  # type: ignore[assignment,misc]
+    RecognitionResult = Any  # type: ignore[assignment,misc]
 
 log = logging.getLogger(__name__)
 

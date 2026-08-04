@@ -10,7 +10,10 @@ from pathlib import Path
 from typing import Any, BinaryIO, Iterator, Literal, Mapping, cast
 
 import numpy as np
-import cv2
+try:
+    import cv2
+except ImportError:  # OpenCV is required only when rendering Light2D frames.
+    cv2 = None  # type: ignore[assignment]
 from PIL import Image, UnidentifiedImageError
 
 

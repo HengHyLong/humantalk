@@ -16,10 +16,22 @@ import time as _time
 from typing import Any
 import wave
 
-import cv2
+try:
+    import cv2
+except ModuleNotFoundError:  # Optional until a video renderer is selected.
+    cv2 = None  # type: ignore[assignment]
 import numpy as np
-from av import AudioFrame
-from av.audio.resampler import AudioResampler
+try:
+    from av import AudioFrame
+    from av.audio.resampler import AudioResampler
+except ModuleNotFoundError:  # WebRTC/media dependency is optional for API-only startup.
+    class AudioFrame:  # type: ignore[no-redef]
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            raise RuntimeError("PyAV is required for audio session rendering")
+
+    class AudioResampler:  # type: ignore[no-redef]
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            raise RuntimeError("PyAV is required for audio session rendering")
 
 from opentalking.agent.context_builder import AgentSessionConfig, build_agent_context, default_memory_store
 from opentalking.agent.prompt import inject_agent_context

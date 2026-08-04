@@ -47,7 +47,10 @@ export const openTalkingClient: OpenTalkingClient = {
     models: response.models ?? [],
     defaultModel: response.default_model ?? null,
   })),
-  listVoices: () => apiGet<{ items: VoiceCatalogItem[] }>("/voices").then((response) => response.items ?? []),
+  listVoices: () =>
+    apiGet<VoiceCatalogItem[] | { items?: VoiceCatalogItem[] }>("/voices").then((response) =>
+      Array.isArray(response) ? response : response.items ?? [],
+    ),
   deleteVoiceEntry: (entryId) => apiDelete<Record<string, unknown>>(`/voices/${entryId}`).then(() => undefined),
   createCustomAvatar: ({ file, name, baseAvatarId, model = null, personMode = "single", removeBackground = false, waitingGif, speakingGif }) => {
     const form = new FormData();

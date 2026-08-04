@@ -6,8 +6,12 @@ import json
 from pathlib import Path
 from typing import Any
 
-import cv2
 import numpy as np
+
+try:
+    import cv2
+except ImportError:  # OpenCV is only needed for custom-avatar mouth analysis.
+    cv2 = None  # type: ignore[assignment]
 
 
 @dataclass(frozen=True)
@@ -98,6 +102,8 @@ def _normalized_face_box(
 
 
 def detect_mouth_landmarks(frame: Any) -> AvatarMouthLandmarks | None:
+    if cv2 is None:
+        return None
     try:
         import mediapipe as mp  # type: ignore[import-not-found]
     except Exception:
@@ -140,6 +146,8 @@ def detect_mouth_landmarks(frame: Any) -> AvatarMouthLandmarks | None:
 
 
 def _read_image_color(path: Path) -> Any:
+    if cv2 is None:
+        return None
     try:
         buffer = np.fromfile(str(path), dtype=np.uint8)
     except OSError:

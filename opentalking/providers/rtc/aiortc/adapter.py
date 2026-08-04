@@ -7,11 +7,42 @@ import logging
 import os
 import time
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
-from aiortc import RTCConfiguration, RTCIceServer, RTCPeerConnection, RTCSessionDescription
-from aiortc.contrib.media import MediaBlackhole
-from av import AudioFrame, VideoFrame
+try:
+    from aiortc import RTCConfiguration, RTCIceServer, RTCPeerConnection, RTCSessionDescription
+    from aiortc.contrib.media import MediaBlackhole
+    from av import AudioFrame, VideoFrame
+    WEBRTC_AVAILABLE = True
+except ImportError:  # Admin/API-only startup can run without video wheels installed.
+    WEBRTC_AVAILABLE = False
+
+    @dataclass
+    class RTCIceServer:  # type: ignore[no-redef]
+        urls: str | list[str]
+        username: str | None = None
+        credential: str | None = None
+        credentialType: str = "password"
+
+    class RTCConfiguration:  # type: ignore[no-redef]
+        def __init__(self, *, iceServers: list[RTCIceServer]) -> None:
+            self.iceServers = iceServers
+
+    class RTCSessionDescription:  # type: ignore[no-redef]
+        def __init__(self, *, sdp: str, type: str) -> None:
+            self.sdp = sdp
+            self.type = type
+
+    class RTCPeerConnection:  # type: ignore[no-redef]
+        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+            raise RuntimeError("WebRTC dependencies are not installed; install av and aiortc to start a digital-human session.")
+
+    class MediaBlackhole:  # type: ignore[no-redef]
+        pass
+
+    AudioFrame = Any  # type: ignore[misc,assignment]
+    VideoFrame = Any  # type: ignore[misc,assignment]
 
 from opentalking.core.types.frames import VideoFrameData
 
@@ -140,10 +171,14 @@ def get_webrtc_ice_config_payload() -> dict[str, object]:
     }
 
 
-try:
+if WEBRTC_AVAILABLE:
     from aiortc.mediastreams import MediaStreamTrack
-except ImportError:  # pragma: no cover
-    from aiortc import MediaStreamTrack  # type: ignore
+else:
+    class MediaStreamTrack:  # type: ignore[no-redef]
+        kind = ""
+
+        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+            pass
 
 
 @dataclass

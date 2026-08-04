@@ -3,14 +3,18 @@ import react from "@vitejs/plugin-react";
 import { fileURLToPath, URL } from "node:url";
 
 const backendPort = process.env.VITE_BACKEND_PORT ?? "8000";
+const backendUrl = process.env.VITE_BACKEND_URL ?? `http://127.0.0.1:${backendPort}`;
 const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
 const allowedHosts = [".pod.compshare.cn"];
 const apiProxy = {
-  // target: `http://127.0.0.1:${backendPort}`,
-  target: `http://ai.oaii.cn:8210`,
+  target: backendUrl,
   changeOrigin: true,
   ws: true,
-  rewrite: (p: string) => p.replace(/^\/api/, ""),
+  // The admin API already lives under /api/v1, while the legacy runtime
+  // endpoints keep their original root-level paths (/models, /voices, ...).
+  // Keep the former intact and strip only the frontend compatibility prefix
+  // from the latter.
+  rewrite: (path: string) => (path.startsWith("/api/v1") ? path : path.replace(/^\/api/, "")),
   // SSE (EventSource) through proxy: avoid buffering / stale Content-Length
   configure(proxy) {
     proxy.on("proxyRes", (proxyRes, req) => {
