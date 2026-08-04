@@ -23,6 +23,9 @@ async def session_events(session_id: str, request: Request) -> StreamingResponse
         ch = events_channel(session_id)
         await pubsub.subscribe(ch)
         try:
+            # Tell browsers and reverse proxies that this is a long-lived
+            # stream and that EventSource should retry after a disconnect.
+            yield "retry: 3000\n\n"
             while True:
                 msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=30.0)
                 if msg is None:
@@ -33,7 +36,14 @@ async def session_events(session_id: str, request: Request) -> StreamingResponse
                 raw = msg.get("data")
                 if isinstance(raw, bytes):
                     raw = raw.decode("utf-8")
-                payload = json.loads(str(raw))
+                try:
+                    payload = json.loads(str(raw))
+                except (TypeError, json.JSONDecodeError):
+                    yield "event: error\ndata: {\"code\":\"invalid_event\",\"message\":\"invalid event payload\"}\n\n"
+                    continue
+                if not isinstance(payload, dict):
+                    yield "event: error\ndata: {\"code\":\"invalid_event\",\"message\":\"invalid event payload\"}\n\n"
+                    continue
                 ev = payload.get("event", "message")
                 data = json.dumps(payload.get("data", {}), ensure_ascii=False)
                 yield f"event: {ev}\ndata: {data}\n\n"
@@ -41,4 +51,11 @@ async def session_events(session_id: str, request: Request) -> StreamingResponse
             await pubsub.unsubscribe(ch)
             await pubsub.aclose()
 
-    return StreamingResponse(gen(), media_type="text/event-stream")
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+        },
+    )

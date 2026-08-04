@@ -83,6 +83,9 @@ const ASR_PROVIDER_LABELS: Record<string, string> = {
   sensevoice: "SenseVoiceSmall",
 };
 
+// The backend setting OPENTALKING_STT_DEFAULT_PROVIDER determines the initial
+// provider shown here when the user has not made a local selection.
+
 const ASR_PROVIDER_SUBTITLES: Record<string, string> = {
   dashscope: "百炼 API",
   xiaomi_mimo: "MiMo ASR",

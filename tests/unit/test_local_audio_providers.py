@@ -4,6 +4,7 @@ import asyncio
 import io
 import os
 import queue
+import shutil
 import wave
 import importlib
 import sys
@@ -27,6 +28,23 @@ def _settings(**overrides):
     }
     defaults.update(overrides)
     return SimpleNamespace(**defaults)
+
+
+def _bash_usable() -> bool:
+    bash = shutil.which("bash")
+    if not bash:
+        return False
+    try:
+        subprocess.run(
+            [bash, "-lc", "true"],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return True
 
 
 @pytest.mark.parametrize(
@@ -266,7 +284,7 @@ def test_local_indextts_resolves_bundled_system_voice_prompt(tmp_path, monkeypat
     prompt = adapter._resolve_voice_prompt("indextts-xiaoxiao-cn")
 
     assert prompt is not None
-    assert str(prompt).endswith("opentalking/assets/voices/system/indextts-xiaoxiao-cn/prompt.wav")
+    assert prompt.as_posix().endswith("opentalking/assets/voices/system/indextts-xiaoxiao-cn/prompt.wav")
 
 
 def test_local_indextts_reuses_engine_for_same_runtime_config(monkeypatch, tmp_path):
@@ -2165,6 +2183,8 @@ def test_local_f5_tts_service_module_exposes_routes(monkeypatch, tmp_path):
 
 
 def test_start_local_f5_tts_script_refuses_main_venv(tmp_path):
+    if not _bash_usable():
+        pytest.skip("a usable bash executable is not available")
     repo = Path(__file__).resolve().parents[2]
 
     result = subprocess.run(

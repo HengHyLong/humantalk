@@ -94,7 +94,6 @@ export async function startPlayback(
     if (
       pc.connectionState === "closed"
       || pc.connectionState === "failed"
-      || pc.connectionState === "disconnected"
     ) {
       cleanup();
     }
@@ -103,26 +102,34 @@ export async function startPlayback(
     if (
       pc.iceConnectionState === "closed"
       || pc.iceConnectionState === "failed"
-      || pc.iceConnectionState === "disconnected"
     ) {
       cleanup();
     }
   });
 
-  pc.addTransceiver("video", { direction: "recvonly" });
-  pc.addTransceiver("audio", { direction: "recvonly" });
+  try {
+    pc.addTransceiver("video", { direction: "recvonly" });
+    pc.addTransceiver("audio", { direction: "recvonly" });
 
-  const offer = await pc.createOffer();
-  await pc.setLocalDescription(offer);
-  await waitForIceGatheringComplete(pc);
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    await waitForIceGatheringComplete(pc);
 
-  const answer = await apiPost<{ sdp: string; type: RTCSdpType }>(
-    `/sessions/${sessionId}/webrtc/offer`,
-    { sdp: pc.localDescription?.sdp ?? "", type: pc.localDescription?.type ?? "offer" }
-  );
+    const answer = await apiPost<{ sdp: string; type: RTCSdpType }>(
+      `/sessions/${sessionId}/webrtc/offer`,
+      { sdp: pc.localDescription?.sdp ?? "", type: pc.localDescription?.type ?? "offer" }
+    );
 
-  await pc.setRemoteDescription(new RTCSessionDescription(answer));
-  ensurePlayback();
-  options.onRemoteStream?.(mediaStream);
-  return { pc, remoteStream: mediaStream };
+    await pc.setRemoteDescription(new RTCSessionDescription(answer));
+    ensurePlayback();
+    options.onRemoteStream?.(mediaStream);
+    return { pc, remoteStream: mediaStream };
+  } catch (error) {
+    // The caller only receives the handle after negotiation succeeds, so it
+    // cannot otherwise close a partially-created peer connection on failure.
+    cleanup();
+    for (const track of mediaStream.getTracks()) track.stop();
+    pc.close();
+    throw error;
+  }
 }

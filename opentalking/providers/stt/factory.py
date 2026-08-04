@@ -264,7 +264,11 @@ def _stt_model_dir(provider: str, model: str | None = None) -> str:
     provider = normalize_stt_provider(provider, default="dashscope") or "dashscope"
     direct = _provider_env(provider, "MODEL_DIR") or _settings_value(f"stt_{provider}_model_dir", "")
     if direct:
-        return str(Path(direct).expanduser().resolve())
+        # Preserve explicitly configured provider paths. Apart from avoiding
+        # surprising cwd-relative rewrites, this keeps POSIX paths usable when
+        # a config is inspected on Windows before the runtime is deployed on
+        # Linux.
+        return os.path.expanduser(direct)
     if provider in LOCAL_STT_PROVIDERS:
         return str(_local_path_for_model((model or _stt_model(provider)).strip()))
     return ""
@@ -334,7 +338,7 @@ class LocalFunASRSTTAdapter:
 
     def _runtime_model_name(self) -> str:
         if self.model_dir:
-            return str(Path(self.model_dir).expanduser().resolve())
+            return os.path.expanduser(self.model_dir)
         local_path = _local_path_for_model(self.model)
         return str(local_path)
 

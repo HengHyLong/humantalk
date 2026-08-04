@@ -1191,10 +1191,15 @@ async def speak_audio_stream_ws(websocket: WebSocket, session_id: str) -> None:
         await websocket.close(code=4400)
         return
 
-    if meta.get("type") != "meta":
+    if not isinstance(meta, dict) or meta.get("type") != "meta":
         await websocket.send_json({"error": "expected {\"type\":\"meta\", ...}"})
         await websocket.close(code=4400)
         return
+
+    # Web can defer the speak decision until it has classified the transcript
+    # (for example, navigation vs. exhibition Q&A).  The field is opt-in so
+    # existing clients keep the historical auto-speak behavior.
+    defer_speak = meta.get("defer_speak") is True
 
     try:
         v, eff_prov, tm = _normalize_voice_for_speak(
@@ -1288,6 +1293,10 @@ async def speak_audio_stream_ws(websocket: WebSocket, session_id: str) -> None:
     if not stripped:
         await websocket.send_json({"error": "未能识别有效语音，请重试。"})
         await websocket.close(code=4400)
+        return
+
+    if defer_speak:
+        await websocket.send_json({"session_id": session_id, "status": "transcribed", "text": stripped})
         return
 
     await session_service.speak(

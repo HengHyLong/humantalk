@@ -33,7 +33,11 @@ import type {
   WelcomeConfig,
   ExplainFlow,
   ShoppingStrategy,
+  ReportFilters,
+  ReportOperations,
 } from "./types";
+
+export type GifCreateInput = Omit<GifAssetMeta, "id" | "createdAt"> & { file?: File };
 
 const STORAGE_PREFIX = "opentalking-admin-";
 const now = () => new Date().toISOString();
@@ -202,9 +206,11 @@ const DEFAULT_ALERTS: AlertEvent[] = [
 
 export interface AdminApiClient {
   login(username: string, password: string): Promise<{ token: string; user: AdminUser }>;
+  logout(): Promise<void>;
   getDashboard(): Promise<DashboardData>;
+  getReport(filters?: ReportFilters): Promise<ReportOperations>;
   listGifs(): Promise<GifAssetMeta[]>;
-  createGif(input: Omit<GifAssetMeta, "id" | "createdAt">): Promise<GifAssetMeta>;
+  createGif(input: GifCreateInput): Promise<GifAssetMeta>;
   updateGif(id: string, patch: Partial<GifAssetMeta>): Promise<GifAssetMeta>;
   deleteGif(id: string): Promise<void>;
   listVoiceConfigs(): Promise<VoiceAsset[]>;
@@ -214,6 +220,7 @@ export interface AdminApiClient {
   saveSceneBindings(bindings: SceneBinding[]): Promise<SceneBinding[]>;
   listIdle(): Promise<IdleContent[]>;
   saveIdle(item: IdleContent): Promise<IdleContent>;
+  deleteIdle(id: string): Promise<void>;
   listDocuments(): Promise<KnowledgeDocument[]>;
   uploadDocument(input: Pick<KnowledgeDocument, "title" | "fileName" | "type" | "exhibition">): Promise<KnowledgeDocument>;
   updateDocument(id: string, patch: Partial<KnowledgeDocument>): Promise<KnowledgeDocument>;
@@ -345,6 +352,8 @@ export class MockAdminApiClient implements AdminApiClient {
     return { token: `mock-jwt-${Date.now()}`, user: buildUser(username, "sys_admin") };
   }
 
+  async logout() {}
+
   async getDashboard(): Promise<DashboardData> {
     const [qa, packages, documents, missPool] = await Promise.all([this.listQa(), this.listPackages(), this.listDocuments(), this.listMissPool()]);
     const pendingKnowledge = qa.filter((item) => item.status === "pending_review").length;
@@ -370,8 +379,20 @@ export class MockAdminApiClient implements AdminApiClient {
     };
   }
 
+  async getReport(): Promise<ReportOperations> {
+    return {
+      generatedAt: now(),
+      filters: {},
+      interaction: { total: 0, averageDurationMs: 0, byScene: [], byTerminal: [], byHour: [] },
+      hotspot: { items: [] },
+      hit: { total: 0, hit: 0, miss: 0, hitRate: 0, strongQaHit: 0, ragHit: 0 },
+      lead: { total: 0, converted: 0, conversionRate: 0, byStatus: [] },
+      resource: { items: [] },
+    };
+  }
+
   async listGifs() { return readStore("gifs", DEFAULT_GIFS); }
-  async createGif(input: Omit<GifAssetMeta, "id" | "createdAt">) { const item = { ...input, id: `gif-${Date.now()}`, createdAt: now() }; writeStore("gifs", [item, ...await this.listGifs()]); return item; }
+  async createGif(input: GifCreateInput) { const { file: _file, ...metadata } = input; const item = { ...metadata, id: `gif-${Date.now()}`, createdAt: now() }; writeStore("gifs", [item, ...await this.listGifs()]); return item; }
   async updateGif(id: string, patch: Partial<GifAssetMeta>) { const items = await this.listGifs(); const next = items.map((item) => item.id === id ? { ...item, ...patch } : item); writeStore("gifs", next); return next.find((item) => item.id === id) ?? items[0]; }
   async deleteGif(id: string) { writeStore("gifs", (await this.listGifs()).filter((item) => item.id !== id)); }
   async listVoiceConfigs() { return readStore<VoiceAsset[]>("voice-configs", []); }
@@ -381,6 +402,7 @@ export class MockAdminApiClient implements AdminApiClient {
   async saveSceneBindings(bindings: SceneBinding[]) { writeStore("scene-bindings", bindings); return bindings; }
   async listIdle() { return readStore<IdleContent[]>("idle", [{ id: "idle-1", type: "标语轮播", title: "西博会欢迎语", content: "欢迎来到 2026 西部博览会", interval: 8, exhibition: "2026 西部博览会", enabled: true }]); }
   async saveIdle(item: IdleContent) { const items = (await this.listIdle()).filter((candidate) => candidate.id !== item.id); const next = [item, ...items]; writeStore("idle", next); return item; }
+  async deleteIdle(id: string) { writeStore("idle", (await this.listIdle()).filter((item) => item.id !== id)); }
   async listDocuments() { return readStore("documents", DEFAULT_DOCUMENTS); }
   async uploadDocument(input: Pick<KnowledgeDocument, "title" | "fileName" | "type" | "exhibition">) { const item: KnowledgeDocument = { ...input, id: `doc-${Date.now()}`, parseStatus: "parsing", vectorStatus: "pending", chunks: 0, uploader: "当前用户", uploadedAt: now() }; writeStore("documents", [item, ...await this.listDocuments()]); window.setTimeout(() => { void this.patchDocument(item.id, { parseStatus: "parsed", vectorStatus: "indexed", chunks: 32 }); }, 1200); return item; }
   private async patchDocument(id: string, patch: Partial<KnowledgeDocument>) { const next = (await this.listDocuments()).map((item) => item.id === id ? { ...item, ...patch } : item); writeStore("documents", next); }
@@ -398,8 +420,8 @@ export class MockAdminApiClient implements AdminApiClient {
   async listExplainFlows(exhibitionId?: string) { migrateInteractionMockData(); return (await readStore<ExplainFlow[]>("explain-flows", DEFAULT_EXPLAIN_FLOWS)).filter((item) => !exhibitionId || exhibitionId === "all" || item.exhibitionId === exhibitionId); }
   async saveExplainFlow(item: ExplainFlow) { const exhibition = (await this.listExhibitions()).find((candidate) => candidate.id === item.exhibitionId); if (!exhibition) throw new Error("讲解流程所属展会不存在"); const scripts = await this.listScripts(); if (!scripts.some((script) => script.id === item.scriptId && script.scene === "explain")) throw new Error("讲解流程必须关联讲解话术"); const saved = { ...item, exhibitionName: exhibition.name, updatedAt: now() }; writeStore("explain-flows", [saved, ...(await this.listExplainFlows()).filter((candidate) => candidate.id !== item.id)]); return saved; }
   async deleteExplainFlow(id: string) { writeStore("explain-flows", (await this.listExplainFlows()).filter((item) => item.id !== id)); }
-  async listShoppingStrategies(exhibitionId?: string) { migrateInteractionMockData(); return (await readStore<ShoppingStrategy[]>("shopping-strategies", DEFAULT_SHOPPING_STRATEGIES)).map((item) => ({ ...item, exhibitIds: item.exhibitIds ?? [] })).filter((item) => !exhibitionId || exhibitionId === "all" || item.exhibitionId === exhibitionId); }
-  async saveShoppingStrategy(item: ShoppingStrategy) { const exhibition = (await this.listExhibitions()).find((candidate) => candidate.id === item.exhibitionId); if (!exhibition) throw new Error("导购策略所属展会不存在"); const exhibits = await this.listExhibits(); const exhibitIds = (item.exhibitIds || []).filter((id) => exhibits.some((exhibit) => exhibit.id === id && exhibit.exhibitionId === item.exhibitionId)); if (exhibitIds.length !== (item.exhibitIds || []).length) throw new Error("导购策略关联的展品必须属于所选展会"); const saved = { ...item, exhibitionName: exhibition.name, exhibitIds, updatedAt: now() }; writeStore("shopping-strategies", [saved, ...(await this.listShoppingStrategies()).filter((candidate) => candidate.id !== item.id)]); return saved; }
+  async listShoppingStrategies(exhibitionId?: string): Promise<ShoppingStrategy[]> { migrateInteractionMockData(); return (await readStore<ShoppingStrategy[]>("shopping-strategies", DEFAULT_SHOPPING_STRATEGIES)).map((item) => ({ ...item, exhibitIds: item.exhibitIds ?? [] })).filter((item) => !exhibitionId || exhibitionId === "all" || item.exhibitionId === exhibitionId); }
+  async saveShoppingStrategy(item: ShoppingStrategy): Promise<ShoppingStrategy> { const exhibition = (await this.listExhibitions()).find((candidate) => candidate.id === item.exhibitionId); if (!exhibition) throw new Error("导购策略所属展会不存在"); const exhibits = await this.listExhibits(); const exhibitIds = (item.exhibitIds || []).filter((id) => exhibits.some((exhibit) => exhibit.id === id && exhibit.exhibitionId === item.exhibitionId)); if (exhibitIds.length !== (item.exhibitIds || []).length) throw new Error("导购策略关联的展品必须属于所选展会"); const saved = { ...item, exhibitionName: exhibition.name, exhibitIds, updatedAt: now() }; writeStore("shopping-strategies", [saved, ...(await this.listShoppingStrategies()).filter((candidate) => candidate.id !== item.id)]); return saved; }
   async deleteShoppingStrategy(id: string) { writeStore("shopping-strategies", (await this.listShoppingStrategies()).filter((item) => item.id !== id)); }
   async listPackages() { return readStore("packages", DEFAULT_PACKAGES); }
   async createPackage(input: Pick<PublishPackage, "name" | "exhibition" | "qaCount" | "documentCount">) { const item: PublishPackage = { ...input, id: `pkg-${Date.now()}`, status: "draft", version: 1, creator: "当前用户", updatedAt: now() }; writeStore("packages", [item, ...await this.listPackages()]); return item; }
@@ -522,7 +544,7 @@ export class MockAdminApiClient implements AdminApiClient {
   async clearAuditLogs() { writeStore("audit-logs", []); }
   async getSystemMonitor() { const monitor = readStore<SystemMonitor>("system-monitor", DEFAULT_MONITOR); const refreshed = { ...monitor, refreshedAt: now() }; writeStore("system-monitor", refreshed); return refreshed; }
   async listAlerts() { return readStore<AlertEvent[]>("alerts", DEFAULT_ALERTS); }
-  async acknowledgeAlert(id: string, operator = "当前用户") { const list = await this.listAlerts(); const existing = list.find((item) => item.id === id); if (!existing) throw new Error("告警不存在"); const saved = { ...existing, status: "acknowledged" as const, acknowledgedBy: operator, acknowledgedAt: now() }; writeStore("alerts", [saved, ...list.filter((item) => item.id !== id)]); return saved; }
+  async acknowledgeAlert(id: string, operator = "当前用户"): Promise<AlertEvent> { const list = await this.listAlerts(); const existing = list.find((item) => item.id === id); if (!existing) throw new Error("告警不存在"); const saved: AlertEvent = { ...existing, status: "acknowledged", acknowledgedBy: operator, acknowledgedAt: now() }; writeStore("alerts", [saved, ...list.filter((item) => item.id !== id)]); return saved; }
 }
 
 function normalizeMenuPermissionNodes(nodes: PermissionNode[]): PermissionNode[] {
@@ -549,7 +571,8 @@ function flattenPermissionNodes(nodes: PermissionNode[]): PermissionNode[] {
 export class FetchAdminApiClient extends MockAdminApiClient {
   private async request<T>(path: string, init?: RequestInit): Promise<T> {
     const token = window.localStorage.getItem(`${STORAGE_PREFIX}token`);
-    const response = await fetch(buildAdminFetchUrl(`/v1${path}`), { ...init, headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}), ...init?.headers } });
+    const isMultipart = typeof FormData !== "undefined" && init?.body instanceof FormData;
+    const response = await fetch(buildAdminFetchUrl(`/v1${path}`), { ...init, headers: { ...(isMultipart ? {} : { "Content-Type": "application/json" }), ...(token ? { Authorization: `Bearer ${token}` } : {}), ...init?.headers } });
     if (!response.ok) throw new Error(`Admin API ${response.status}`);
     return response.json() as Promise<T>;
   }
@@ -558,10 +581,61 @@ export class FetchAdminApiClient extends MockAdminApiClient {
     return this.request<{ token: string; user: AdminUser }>("/auth/login", { method: "POST", body: JSON.stringify({ username, password }) });
   }
 
+  override async logout() { await this.request<{ ok: boolean }>("/admin/auth/logout", { method: "POST" }); }
+
   override async getDashboard() { return this.request<DashboardData>("/admin/report"); }
+  override async getReport(filters: ReportFilters = {}) {
+    const query = new URLSearchParams();
+    if (filters.exhibitionId) query.set("exhibition_id", filters.exhibitionId);
+    if (filters.scene) query.set("scene", filters.scene);
+    if (filters.terminalId) query.set("terminal_id", filters.terminalId);
+    if (filters.from) query.set("from", filters.from);
+    if (filters.to) query.set("to", filters.to);
+    const suffix = query.toString() ? `?${query.toString()}` : "";
+    return this.request<ReportOperations>(`/admin/report/operations${suffix}`);
+  }
 
   override async listGifs() { return this.request<GifAssetMeta[]>("/admin/assets?kind=gif"); }
+  override async createGif(input: GifCreateInput) {
+    const form = new FormData();
+    if (input.file) form.set("file", input.file);
+    form.set("name", input.name);
+    form.set("scene", input.scene);
+    form.set("tags", JSON.stringify(input.tags));
+    form.set("status", input.status);
+    form.set("description", input.description ?? "");
+    form.set("width", String(input.width));
+    form.set("height", String(input.height));
+    form.set("frames", String(input.frames));
+    form.set("duration_ms", String(input.durationMs));
+    return this.request<GifAssetMeta>("/admin/assets", { method: "POST", body: form });
+  }
+  override async updateGif(id: string, patch: Partial<GifAssetMeta>) { return this.request<GifAssetMeta>(`/admin/assets/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(patch) }); }
   override async deleteGif(id: string) { await this.request(`/admin/assets/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+  override async listVoiceConfigs() { return this.request<VoiceAsset[]>("/admin/assets/voice-configs"); }
+  override async saveVoiceConfig(item: VoiceAsset) {
+    return this.request<VoiceAsset>(`/admin/assets/voice-configs/${encodeURIComponent(item.id)}`, { method: "PUT", body: JSON.stringify(item) });
+  }
+  override async deleteVoiceConfig(id: string) { await this.request(`/admin/assets/voice-configs/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+  override async listSceneBindings() { return this.request<SceneBinding[]>("/admin/assets/scene-bindings"); }
+  override async saveSceneBindings(bindings: SceneBinding[]) { return this.request<SceneBinding[]>("/admin/assets/scene-bindings", { method: "PUT", body: JSON.stringify(bindings) }); }
+  override async listIdle() { return this.request<IdleContent[]>("/admin/assets/idle-contents"); }
+  override async saveIdle(item: IdleContent) { return this.request<IdleContent>(`/admin/assets/idle-contents/${encodeURIComponent(item.id)}`, { method: "PUT", body: JSON.stringify(item) }); }
+  override async deleteIdle(id: string) { await this.request(`/admin/assets/idle-contents/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+  override async listScripts() { return this.request<ScriptTemplate[]>("/admin/interaction/scripts"); }
+  override async saveScript(item: ScriptTemplate) { return this.request<ScriptTemplate>(`/admin/interaction/scripts/${encodeURIComponent(item.id)}`, { method: "PUT", body: JSON.stringify(item) }); }
+  override async deleteScript(id: string) { await this.request(`/admin/interaction/scripts/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+  override async listWelcomeConfigs(exhibitionId?: string) { return this.request<WelcomeConfig[]>(`/admin/interaction/welcome-configs${exhibitionId ? `?exhibition_id=${encodeURIComponent(exhibitionId)}` : ""}`); }
+  override async saveWelcomeConfig(item: WelcomeConfig) { return this.request<WelcomeConfig>(`/admin/interaction/welcome-configs/${encodeURIComponent(item.id)}`, { method: "PUT", body: JSON.stringify(item) }); }
+  override async listExplainFlows(exhibitionId?: string) { return this.request<ExplainFlow[]>(`/admin/interaction/explain-flows${exhibitionId ? `?exhibition_id=${encodeURIComponent(exhibitionId)}` : ""}`); }
+  override async saveExplainFlow(item: ExplainFlow) { return this.request<ExplainFlow>(`/admin/interaction/explain-flows/${encodeURIComponent(item.id)}`, { method: "PUT", body: JSON.stringify(item) }); }
+  override async deleteExplainFlow(id: string) { await this.request(`/admin/interaction/explain-flows/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+  override async listShoppingStrategies(exhibitionId?: string) { return this.request<ShoppingStrategy[]>(`/admin/interaction/shopping-strategies${exhibitionId ? `?exhibition_id=${encodeURIComponent(exhibitionId)}` : ""}`); }
+  override async saveShoppingStrategy(item: ShoppingStrategy) { return this.request<ShoppingStrategy>(`/admin/interaction/shopping-strategies/${encodeURIComponent(item.id)}`, { method: "PUT", body: JSON.stringify(item) }); }
+  override async deleteShoppingStrategy(id: string) { await this.request(`/admin/interaction/shopping-strategies/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+  override async getSystemMonitor() { return this.request<SystemMonitor>("/admin/ops/monitor"); }
+  override async listAlerts() { return this.request<AlertEvent[]>("/admin/alerts"); }
+  override async acknowledgeAlert(id: string, operator = "current-user") { return this.request<AlertEvent>(`/admin/alerts/${encodeURIComponent(id)}/acknowledge`, { method: "POST", body: JSON.stringify({ operator }) }); }
 }
 
 const runtimeEnv = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env ?? {};

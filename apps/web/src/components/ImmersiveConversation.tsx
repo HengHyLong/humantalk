@@ -19,6 +19,7 @@ type ImmersiveConversationProps = {
   edgeVoice: string;
   qwenModel: string;
   qwenVoice: string;
+  deferSpeak?: boolean;
   onExit: () => void;
   onSend: (text: string) => void;
   onSpeakAudio: (blob: Blob) => void | Promise<void>;
@@ -43,6 +44,7 @@ export function ImmersiveConversation({
   edgeVoice,
   qwenModel,
   qwenVoice,
+  deferSpeak = false,
   onExit,
   onSend,
   onSpeakAudio,
@@ -105,6 +107,7 @@ export function ImmersiveConversation({
               edgeVoice={edgeVoice}
               qwenModel={qwenModel}
               qwenVoice={qwenVoice}
+              deferSpeak={deferSpeak}
             />
           </div>
         ) : null}

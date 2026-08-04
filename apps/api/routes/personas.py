@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import tempfile
 from dataclasses import asdict
 from pathlib import Path
@@ -133,38 +134,51 @@ async def import_persona(file: UploadFile = File(...)) -> PersonaResponse:
     suffix = Path(filename).suffix.lower()
     if suffix != ".otpersona" and suffix != ".zip":
         raise HTTPException(status_code=400, detail="persona package must be .otpersona or .zip")
-    with tempfile.NamedTemporaryFile(prefix="opentalking-persona-", suffix=suffix, delete=True) as tmp:
+    tmp_fd, tmp_name = tempfile.mkstemp(prefix="opentalking-persona-", suffix=suffix)
+    os.close(tmp_fd)
+    tmp_path = Path(tmp_name)
+    try:
         total = 0
-        while True:
-            chunk = await file.read(1024 * 1024)
-            if not chunk:
-                break
-            total += len(chunk)
-            if total > 200 * 1024 * 1024:
-                raise HTTPException(status_code=413, detail="persona package is larger than 200MB")
-            tmp.write(chunk)
-        tmp.flush()
+        with tmp_path.open("wb") as tmp:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > 200 * 1024 * 1024:
+                    raise HTTPException(status_code=413, detail="persona package is larger than 200MB")
+                tmp.write(chunk)
         try:
             record = await import_persona_package(
-                tmp.name,
+                tmp_path,
                 store=default_persona_store(),
                 knowledge_store=default_knowledge_store(),
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+    finally:
+        tmp_path.unlink(missing_ok=True)
     return _persona_response(record)
 
 
 @router.post("/validate", response_model=PersonaResponse)
 async def validate_persona(file: UploadFile = File(...)) -> PersonaResponse:
-    with tempfile.NamedTemporaryFile(prefix="opentalking-persona-validate-", suffix=".otpersona", delete=True) as tmp:
-        while chunk := await file.read(1024 * 1024):
-            tmp.write(chunk)
-        tmp.flush()
+    tmp_fd, tmp_name = tempfile.mkstemp(
+        prefix="opentalking-persona-validate-",
+        suffix=".otpersona",
+    )
+    os.close(tmp_fd)
+    tmp_path = Path(tmp_name)
+    try:
+        with tmp_path.open("wb") as tmp:
+            while chunk := await file.read(1024 * 1024):
+                tmp.write(chunk)
         try:
-            manifest = validate_persona_package(tmp.name)
+            manifest = validate_persona_package(tmp_path)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+    finally:
+        tmp_path.unlink(missing_ok=True)
     return PersonaResponse(
         **{
             **asdict(manifest),

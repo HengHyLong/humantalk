@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from apps.api.core.config import get_settings
-from apps.api.routes import agent, avatars, events, exports, health, memory, models, personas, runtime_config, scene_assets, sessions, tts_preview, video_clone, video_creation, voices
+from apps.api.routes import admin_assets, admin_ops, agent, avatars, events, exports, health, memory, models, personas, runtime_config, scene_assets, sessions, tts_preview, video_clone, video_creation, voices
 from opentalking.voice.store import init_voice_store
 
 
@@ -50,6 +50,8 @@ def create_app() -> FastAPI:
     app.include_router(video_clone.router)
     app.include_router(video_creation.router)
     app.include_router(voices.router)
+    app.include_router(admin_assets.router, prefix="/api/v1")
+    app.include_router(admin_ops.router, prefix="/api/v1")
     return app
 
 

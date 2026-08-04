@@ -40,6 +40,7 @@ type DigitalHumanDisplayProps = {
   edgeVoice?: string;
   qwenModel?: string;
   qwenVoice?: string;
+  deferSpeak?: boolean;
   navigationResult?: NavigationResult | null;
   voiceIntent?: VoiceIntent | null;
   exhibitionConfigNotice?: string | null;
@@ -76,6 +77,7 @@ export function DigitalHumanDisplay({
   edgeVoice = "",
   qwenModel = "",
   qwenVoice = "",
+  deferSpeak = false,
   navigationResult = null,
   voiceIntent = null,
   exhibitionConfigNotice = null,
@@ -222,6 +224,7 @@ export function DigitalHumanDisplay({
                   edgeVoice={edgeVoice}
                   qwenModel={qwenModel}
                   qwenVoice={qwenVoice}
+                  deferSpeak={deferSpeak}
                 />
               ) : (
                 <>
