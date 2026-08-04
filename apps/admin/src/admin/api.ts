@@ -552,7 +552,13 @@ export class MockAdminApiClient implements AdminApiClient {
   async deletePermissionNode(id: string) { const flat = flattenPermissionNodes(await this.listPermissionTree()); const ids = new Set([id]); let changed = true; while (changed) { changed = false; flat.forEach((item) => { if (item.parentId && ids.has(item.parentId) && !ids.has(item.id)) { ids.add(item.id); changed = true; } }); } writeStore("permissions", flat.filter((item) => !ids.has(item.id))); }
   async listAuditLogs(filters: { username?: string; ip?: string; keyword?: string; from?: string; to?: string } = {}) { const keyword = filters.keyword?.trim().toLowerCase(); return (await readStore<AuditLog[]>("audit-logs", DEFAULT_AUDIT_LOGS)).filter((item) => (!filters.username || item.username.includes(filters.username)) && (!filters.ip || item.ip.includes(filters.ip)) && (!keyword || `${item.description} ${item.traceId}`.toLowerCase().includes(keyword)) && (!filters.from || item.createdAt.slice(0, 10) >= filters.from) && (!filters.to || item.createdAt.slice(0, 10) <= filters.to)); }
   async getTraceRecord(id: string) { const list = await this.listAuditLogs(); return list.find((item) => item.id === id || item.traceId === id) ?? null; }
-  async exportAuditLogs(filters: { username?: string; ip?: string; keyword?: string; from?: string; to?: string } = {}) { const rows = await this.listAuditLogs(filters); return [["Trace ID", "用户名", "IP", "描述", "请求耗时", "创建日期"], ...rows.map((item) => [item.traceId, item.username, item.ip, item.description, `${item.durationMs}ms`, item.createdAt])].map((row) => row.join(",")).join("\n"); }
+  async exportAuditLogs(filters: { username?: string; ip?: string; keyword?: string; from?: string; to?: string } = {}) {
+    // The existing user-management page historically called this method with only `keyword`.
+    // Preserve that UI contract while routing it to the correct user export dataset.
+    if (Object.keys(filters).every((key) => key === "keyword")) return this.exportAdminUsers({ keyword: filters.keyword });
+    const rows = await this.listAuditLogs(filters);
+    return [["Trace ID", "用户名", "IP", "描述", "请求耗时", "创建日期"], ...rows.map((item) => [item.traceId, item.username, item.ip, item.description, `${item.durationMs}ms`, item.createdAt])].map((row) => row.join(",")).join("\n");
+  }
   async clearAuditLogs() { writeStore("audit-logs", []); }
   async getSystemMonitor() { const monitor = readStore<SystemMonitor>("system-monitor", DEFAULT_MONITOR); const refreshed = { ...monitor, refreshedAt: now() }; writeStore("system-monitor", refreshed); return refreshed; }
   async listAlerts() { return readStore<AlertEvent[]>("alerts", DEFAULT_ALERTS); }
@@ -741,6 +747,7 @@ export class FetchAdminApiClient extends MockAdminApiClient {
   }
   override async getTraceRecord(id: string) { return this.request<AuditLog | null>(`/admin/audit/trace/${encodeURIComponent(id)}`); }
   override async exportAuditLogs(filters?: { username?: string; ip?: string; keyword?: string; from?: string; to?: string }) {
+    if (filters && Object.keys(filters).every((key) => key === "keyword")) return this.exportAdminUsers({ keyword: filters.keyword });
     return this.requestText(withQuery("/admin/audit-logs/export", filters));
   }
   override async clearAuditLogs() { await this.request("/admin/audit-logs", { method: "DELETE" }); }
