@@ -837,7 +837,10 @@ export class FetchAdminApiClient extends MockAdminApiClient {
 }
 
 const runtimeEnv = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env ?? {};
-export const adminApi: AdminApiClient = runtimeEnv.VITE_ADMIN_API_MODE === "real" ? new FetchAdminApiClient() : new MockAdminApiClient();
+export function createAdminApi(mode?: string): AdminApiClient {
+  return mode === "mock" ? new MockAdminApiClient() : new FetchAdminApiClient();
+}
+export const adminApi: AdminApiClient = createAdminApi(runtimeEnv.VITE_ADMIN_API_MODE);
 
 export const DEFAULT_VOICES: VoiceAsset[] = EDGE_ZH_VOICES.map((voice) => ({
   id: `voice-edge-${voice.id}`,

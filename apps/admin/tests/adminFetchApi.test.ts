@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { AdminApiError, FetchAdminApiClient } from "../src/admin/api";
+import { AdminApiError, FetchAdminApiClient, MockAdminApiClient, createAdminApi } from "../src/admin/api";
 import type { AdminUser } from "../src/admin/types";
 import type { EmergencyBroadcast, Exhibition, ExhibitionRoute } from "../src/admin/types";
 
@@ -26,6 +26,12 @@ const user: AdminUser = {
   permissions: ["dashboard:view"],
   buttonPermissions: [],
 };
+
+test("Admin API defaults to real backend and only uses Mock when explicitly requested", () => {
+  assert.equal(createAdminApi() instanceof FetchAdminApiClient, true);
+  assert.equal(createAdminApi("real") instanceof FetchAdminApiClient, true);
+  assert.equal(createAdminApi("mock") instanceof MockAdminApiClient, true);
+});
 
 test("real Admin login persists token and uses the /api/v1 prefix", async () => {
   values.clear();
