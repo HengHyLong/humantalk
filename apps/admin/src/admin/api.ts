@@ -29,6 +29,9 @@ import type {
   PermissionNode,
   AuditLog,
   SystemMonitor,
+  TerminalStatus,
+  InteractionRecord,
+  GatewayPolicy,
   AlertEvent,
   WelcomeConfig,
   ExplainFlow,
@@ -302,6 +305,11 @@ export interface AdminApiClient {
   getSystemMonitor(): Promise<SystemMonitor>;
   listAlerts(): Promise<AlertEvent[]>;
   acknowledgeAlert(id: string, operator?: string): Promise<AlertEvent>;
+  listTerminals(filters?: { exhibitionId?: string; status?: TerminalStatus["status"] }): Promise<TerminalStatus[]>;
+  listInteractionRecords(filters?: { exhibitionId?: string; terminalId?: string; from?: string; to?: string }): Promise<InteractionRecord[]>;
+  exportInteractionRecords(filters?: { exhibitionId?: string; terminalId?: string; from?: string; to?: string }): Promise<string>;
+  getGatewayPolicy(): Promise<GatewayPolicy>;
+  saveGatewayPolicy(policy: GatewayPolicy): Promise<GatewayPolicy>;
 }
 
 function buildUser(username: string, role: AdminUser["role"]): AdminUser {
@@ -543,6 +551,11 @@ export class MockAdminApiClient implements AdminApiClient {
   async getSystemMonitor() { const monitor = readStore<SystemMonitor>("system-monitor", DEFAULT_MONITOR); const refreshed = { ...monitor, refreshedAt: now() }; writeStore("system-monitor", refreshed); return refreshed; }
   async listAlerts() { return readStore<AlertEvent[]>("alerts", DEFAULT_ALERTS); }
   async acknowledgeAlert(id: string, operator = "当前用户"): Promise<AlertEvent> { const list = await this.listAlerts(); const existing = list.find((item) => item.id === id); if (!existing) throw new Error("告警不存在"); const saved = { ...existing, status: "acknowledged" as const, acknowledgedBy: operator, acknowledgedAt: now() }; writeStore("alerts", [saved, ...list.filter((item) => item.id !== id)]); return saved; }
+  async listTerminals(filters: { exhibitionId?: string; status?: TerminalStatus["status"] } = {}) { const items = (await this.getSystemMonitor()).terminals; return items.filter((item) => (!filters.exhibitionId || item.exhibitionId === filters.exhibitionId) && (!filters.status || item.status === filters.status)); }
+  async listInteractionRecords(_filters: { exhibitionId?: string; terminalId?: string; from?: string; to?: string } = {}) { return readStore<InteractionRecord[]>("interaction-records", []); }
+  async exportInteractionRecords(filters: { exhibitionId?: string; terminalId?: string; from?: string; to?: string } = {}) { const rows = await this.listInteractionRecords(filters); return [["记录ID", "展会", "终端", "会话", "意图", "知识命中", "耗时", "时间", "Trace ID"], ...rows.map((item) => [item.id, item.exhibitionId, item.terminalId, item.sessionId, item.intent, item.knowledgeHit ? "是" : "否", item.latencyMs, item.occurredAt, item.traceId])].map((row) => row.join(",")).join("\n"); }
+  async getGatewayPolicy() { return readStore<GatewayPolicy>("gateway-policy", { id: "default", name: "默认网关策略", whitelist: [], rateLimitPerMinute: 60, timeoutMs: 15000, fallbackMode: "text", enabled: true, updatedAt: now() }); }
+  async saveGatewayPolicy(policy: GatewayPolicy) { const saved = { ...policy, updatedAt: now() }; writeStore("gateway-policy", saved); return saved; }
 }
 
 function normalizeMenuPermissionNodes(nodes: PermissionNode[]): PermissionNode[] {
@@ -712,6 +725,17 @@ export class FetchAdminApiClient extends MockAdminApiClient {
   override async acknowledgeAlert(id: string, operator = "当前用户") {
     return this.request<AlertEvent>(`/admin/alerts/${encodeURIComponent(id)}/acknowledge`, { method: "POST", body: JSON.stringify({ operator }) });
   }
+  override async listTerminals(filters?: { exhibitionId?: string; status?: TerminalStatus["status"] }) {
+    return this.requestList<TerminalStatus>(withQuery("/admin/terminals", { exhibition_id: filters?.exhibitionId, status: filters?.status }));
+  }
+  override async listInteractionRecords(filters?: { exhibitionId?: string; terminalId?: string; from?: string; to?: string }) {
+    return this.requestList<InteractionRecord>(withQuery("/admin/data/interactions", { exhibition_id: filters?.exhibitionId, terminal_id: filters?.terminalId, from: filters?.from, to: filters?.to }));
+  }
+  override async exportInteractionRecords(filters?: { exhibitionId?: string; terminalId?: string; from?: string; to?: string }) {
+    return this.requestText(withQuery("/admin/data/interactions/export", { exhibition_id: filters?.exhibitionId, terminal_id: filters?.terminalId, from: filters?.from, to: filters?.to }));
+  }
+  override async getGatewayPolicy() { return this.request<GatewayPolicy>("/admin/ops/gateway-policy"); }
+  override async saveGatewayPolicy(policy: GatewayPolicy) { return this.request<GatewayPolicy>("/admin/ops/gateway-policy", { method: "PUT", body: JSON.stringify(policy) }); }
 
   override async listWelcomeConfigs(exhibitionId?: string) {
     return this.requestList<WelcomeConfig>(withQuery("/admin/interactions/welcome-configs", { exhibition_id: exhibitionId }));

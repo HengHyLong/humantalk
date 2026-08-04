@@ -128,6 +128,7 @@ test("real Admin system management maps RBAC, audit, monitor, alert and CSV endp
     calls.push({ url, method, body });
     if (url.includes("/export")) return new Response("id,name\n1,admin", { headers: { "Content-Type": "text/csv" } });
     if (url.endsWith("/admin/ops/monitor")) return Response.json({ services: [], terminals: [], cpuHistory: [], memoryHistory: [] });
+    if (url.endsWith("/admin/ops/gateway-policy") && method === "GET") return Response.json({ id: "default", whitelist: [], fallbackMode: "text" });
     if (url.includes("/admin/audit/trace/")) return Response.json({ id: "audit-1", traceId: "trace/1", spans: [] });
     if (url.endsWith("/acknowledge")) return Response.json({ id: "alert-1", status: "acknowledged", ...body });
     if (method === "DELETE" || url.endsWith("/reset-password")) return new Response(null, { status: 204 });
@@ -158,6 +159,15 @@ test("real Admin system management maps RBAC, audit, monitor, alert and CSV endp
   await api.listAlerts();
   await api.acknowledgeAlert("alert-1", "吴涓");
   assert.deepEqual(calls.at(-1)?.body, { operator: "吴涓" });
+  await api.listTerminals({ exhibitionId: "event 1", status: "online" });
+  assert.equal(calls.at(-1)?.url.includes("/admin/terminals?exhibition_id=event+1&status=online"), true);
+  await api.listInteractionRecords({ terminalId: "terminal/1", from: "2026-08-01" });
+  assert.equal(calls.at(-1)?.url.includes("terminal_id=terminal%2F1&from=2026-08-01"), true);
+  assert.match(await api.exportInteractionRecords({ exhibitionId: "event-1" }), /id,name/);
+  await api.getGatewayPolicy();
+  assert.equal(calls.at(-1)?.url.endsWith("/admin/ops/gateway-policy"), true);
+  await api.saveGatewayPolicy({ id: "default", name: "默认策略", whitelist: ["127.0.0.1"], rateLimitPerMinute: 60, timeoutMs: 15000, fallbackMode: "text", enabled: true, updatedAt: "" });
+  assert.equal(calls.at(-1)?.method, "PUT");
 });
 
 test("real Admin interaction management maps exhibition-scoped strategy endpoints", async () => {
