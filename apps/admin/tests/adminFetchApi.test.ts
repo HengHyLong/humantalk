@@ -270,3 +270,19 @@ test("real Admin knowledge workflow maps documents, QA, scripts, packages and mi
   await api.listMissPool(); assert.equal(calls.at(-1)?.url.endsWith("/admin/knowledge/miss-pool"), true);
   await api.resolveMiss("miss/1", "converted_qa"); assert.deepEqual(calls.at(-1)?.body, { status: "converted_qa" });
 });
+
+test("real Admin leads and feedback map filtering, state, export and trace workflow", async () => {
+  values.clear(); values.set("opentalking-admin-token", "lead-token");
+  const calls: Array<{ url: string; method: string; body?: Record<string, unknown> }> = [];
+  globalThis.fetch = async (input, init) => { const url = String(input); const method = init?.method ?? "GET"; const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined; calls.push({ url, method, body }); if (url.includes("/export")) return new Response("id,status\n1,new"); if (method === "GET" && /\/leads\/[^?]+$/.test(url)) return Response.json({ id: "lead-1", traceId: "trace-1" }); if (method === "GET") return Response.json({ items: [] }); return Response.json({ ...body, id: "lead-1", traceId: "trace-1" }); };
+  const api = new FetchAdminApiClient();
+  await api.listLeads({ exhibitionId: "event 1", keyword: "机器人", status: "new" });
+  assert.equal(calls.at(-1)?.url.includes("exhibition_id=event+1&keyword=%E6%9C%BA%E5%99%A8%E4%BA%BA&status=new"), true);
+  assert.equal((await api.getLead("lead/1"))?.traceId, "trace-1");
+  await api.updateLeadStatus("lead/1", "contacted", "已联系");
+  assert.equal(calls.at(-1)?.url.endsWith("/admin/leads/lead%2F1/status"), true);
+  assert.deepEqual(calls.at(-1)?.body, { status: "contacted", note: "已联系" });
+  assert.match(await api.exportLeads({ from: "2026-08-01" }), /id,status/);
+  await api.listFeedback({ status: "pending" }); assert.equal(calls.at(-1)?.url.includes("/admin/feedback?status=pending"), true);
+  await api.resolveFeedback("feedback/1", "已处理", "吴涓"); assert.deepEqual(calls.at(-1)?.body, { note: "已处理", operator: "吴涓" });
+});
