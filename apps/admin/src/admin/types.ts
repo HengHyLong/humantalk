@@ -26,8 +26,16 @@ export type PermissionCode =
   | "event:schedule"
   | "event:broadcast"
   | "lead:view"
+  | "lead:view_sensitive"
+  | "lead:export"
+  | "lead:feedback"
   | "report:interaction"
-  | "system:user";
+  | "system:user"
+  | "system:role"
+  | "system:audit"
+  | "system:ops"
+  | "audit:trace"
+  | "ops:failover";
 
 export type ButtonPermission =
   | "event:exhibition:write"
@@ -43,7 +51,16 @@ export type ButtonPermission =
   | "knowledge:qa:write"
   | "knowledge:publish:approve"
   | "knowledge:rollback"
-  | "report:export";
+  | "report:export"
+  | "lead:write"
+  | "lead:feedback:write"
+  | "system:user:write"
+  | "system:role:write"
+  | "interact:welcome:write"
+  | "interact:explain:write"
+  | "interact:shopping:write"
+  | "audit:trace"
+  | "ops:failover";
 
 export type AuthSession = {
   token: string;
@@ -335,5 +352,199 @@ export type EmergencyBroadcast = {
   effectiveAt: string;
   status: EmergencyBroadcastStatus;
   createdAt: string;
+  updatedAt: string;
+};
+
+export type LeadStatus = "new" | "contacted" | "converted" | "invalid";
+
+export type Lead = {
+  id: string;
+  exhibitionId: string;
+  exhibitionName: string;
+  terminalId: string;
+  terminalName: string;
+  companyName: string;
+  contactName: string;
+  phone: string;
+  email: string;
+  intentSummary: string;
+  status: LeadStatus;
+  interestedExhibitorIds: string[];
+  interestedExhibitIds: string[];
+  qrToken: string;
+  createdAt: string;
+  statusHistory: Array<{ status: LeadStatus; operator: string; time: string; note?: string }>;
+};
+
+export type FeedbackStatus = "pending" | "handled";
+
+export type Feedback = {
+  id: string;
+  exhibitionId: string;
+  type: "体验问题" | "内容建议" | "服务反馈" | "其他";
+  score: number;
+  content: string;
+  traceId: string;
+  status: FeedbackStatus;
+  createdAt: string;
+  handledAt?: string;
+  handledBy?: string;
+  note?: string;
+};
+
+export type AdminUserRecord = {
+  id: string;
+  username: string;
+  displayName: string;
+  gender: "男" | "女" | "未设置";
+  phone: string;
+  email: string;
+  department: string;
+  status: "active" | "inactive";
+  roleIds: string[];
+  createdAt: string;
+  lastLoginAt: string;
+  lastLoginIp: string;
+};
+
+export type RoleRecord = {
+  id: string;
+  code: string;
+  name: string;
+  dataScope: "全部数据" | "本部门" | "自定义" | "仅本人";
+  level: number;
+  description: string;
+  permissionIds: string[];
+  createdAt: string;
+};
+
+export type PermissionNode = {
+  id: string;
+  parentId: string | null;
+  name: string;
+  code: string;
+  type: "menu" | "button" | "api";
+  path: string;
+  apiPattern: string;
+  children?: PermissionNode[];
+};
+
+export type TraceSpan = {
+  id: string;
+  parentId: string | null;
+  service: string;
+  operation: string;
+  startAt: string;
+  durationMs: number;
+  status: "ok" | "error";
+  attributes: Record<string, string>;
+};
+
+export type AuditLog = {
+  id: string;
+  traceId: string;
+  username: string;
+  ip: string;
+  ipLocation: string;
+  description: string;
+  browser: string;
+  durationMs: number;
+  createdAt: string;
+  resource: string;
+  action: string;
+  before?: unknown;
+  after?: unknown;
+  spans: TraceSpan[];
+};
+
+export type ServiceHealth = {
+  id: string;
+  name: string;
+  status: "ok" | "warn" | "error";
+  latencyMs: number;
+  checkedAt: string;
+  description: string;
+};
+
+export type TerminalStatus = {
+  id: string;
+  name: string;
+  exhibitionId: string;
+  location: string;
+  status: "online" | "offline" | "disabled";
+  lastHeartbeatAt: string;
+  version: string;
+  cpuPercent: number;
+  memoryPercent: number;
+};
+
+export type AlertEvent = {
+  id: string;
+  type: string;
+  severity: "low" | "normal" | "high" | "urgent";
+  target: string;
+  content: string;
+  status: "active" | "acknowledged" | "closed";
+  occurredAt: string;
+  acknowledgedBy?: string;
+  acknowledgedAt?: string;
+};
+
+export type SystemMonitor = {
+  os: string;
+  ip: string;
+  uptime: string;
+  refreshedAt: string;
+  cpuPercent: number;
+  memoryPercent: number;
+  swapPercent: number;
+  diskPercent: number;
+  cpuHistory: number[];
+  memoryHistory: number[];
+  services: ServiceHealth[];
+  terminals: TerminalStatus[];
+};
+
+export type InteractionStatus = "active" | "inactive";
+
+export type WelcomeConfig = {
+  id: string;
+  exhibitionId: string;
+  exhibitionName: string;
+  triggers: string[];
+  scriptId: string;
+  highlights: string[];
+  checkInGuide: string;
+  notices: string;
+  routingStrategy: string;
+  status: InteractionStatus;
+  updatedAt: string;
+};
+
+export type ExplainFlow = {
+  id: string;
+  exhibitionId: string;
+  exhibitionName: string;
+  name: string;
+  keywords: string[];
+  knowledgeCategories: string[];
+  interruptionPolicy: "allow" | "block" | "sensitive_filter";
+  scriptId: string;
+  status: InteractionStatus;
+  updatedAt: string;
+};
+
+export type ShoppingStrategy = {
+  id: string;
+  exhibitionId: string;
+  exhibitionName: string;
+  name: string;
+  tags: string[];
+  tagWeight: number;
+  compareDimensions: string[];
+  intentThreshold: number;
+  exhibitCategories: string[];
+  exhibitIds?: string[];
+  status: InteractionStatus;
   updatedAt: string;
 };

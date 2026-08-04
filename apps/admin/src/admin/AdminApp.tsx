@@ -5,6 +5,9 @@ import { canAccess, canUseButton, roleLabel } from "./policy";
 import { openTalkingClient } from "./openTalkingClient";
 import { RealtimeTestWorkspace } from "./RealtimeTestWorkspace";
 import { BroadcastPage, ExhibitionDetailPage, ExhibitionPage, ExhibitorPage, ExhibitPage, PointPage, RoutePage, SchedulePage, VenuePage } from "./EventOperationsPages";
+import { LeadOperationsPage } from "./LeadOperationsPages";
+import { ExplainFlowPage, ShoppingStrategyPage, WelcomeConfigPage } from "./InteractionManagementPages";
+import { AuditLogPage, OpsMonitoringPage, PermissionManagementPage, RoleManagementPage, UserManagementPage } from "./SystemManagementPages";
 import { DocumentCenterPage, KnowledgeBasePage, MemoryCenterPage } from "./KnowledgeCenterPages";
 import {
   EnhancedAvatarPage,
@@ -52,6 +55,7 @@ const MENU_GROUPS: MenuItem[] = [
       ] },
       { id: "event-live", label: "现场运营", children: [
         { id: "event-broadcast", label: "应急播报", path: "/event/broadcast", permission: "event:broadcast" },
+        { id: "event-lead", label: "线索运营", path: "/lead", permission: "lead:view" },
       ] },
     ],
   },
@@ -73,14 +77,18 @@ const MENU_GROUPS: MenuItem[] = [
   {
     id: "interact", label: "交互管理", children: [
       { id: "interact-test", label: "实时测试", path: "/interact/test", permission: "interact:test" },
-      { id: "interact-welcome", label: "欢迎配置", path: "/interact/welcome", permission: "interact:welcome", enabled: false },
-      { id: "interact-explain", label: "讲解流程", path: "/interact/explain", permission: "interact:explain", enabled: false },
-      { id: "interact-shopping", label: "导购策略", path: "/interact/shopping", permission: "interact:shopping", enabled: false },
+      { id: "interact-welcome", label: "欢迎配置", path: "/interact/welcome", permission: "interact:welcome" },
+      { id: "interact-explain", label: "讲解流程", path: "/interact/explain", permission: "interact:explain" },
+      { id: "interact-shopping", label: "导购策略", path: "/interact/shopping", permission: "interact:shopping" },
     ],
   },
-  { id: "lead", label: "线索运营", path: "/lead", permission: "lead:view", enabled: false },
   { id: "report", label: "数据分析", path: "/report/interaction", permission: "report:interaction", enabled: false },
-  { id: "system", label: "系统管理", path: "/system/user", permission: "system:user", enabled: false },
+  { id: "system", label: "系统管理", children: [
+    { id: "system-user", label: "用户管理", path: "/system/user", permission: "system:user" },
+    { id: "system-role", label: "角色管理", path: "/system/role", permission: "system:role" },
+    { id: "system-audit", label: "审计日志", path: "/system/audit", permission: "system:audit" },
+    { id: "system-ops", label: "监控告警", path: "/system/ops", permission: "system:ops" },
+  ] },
 ];
 
 const PAGE_LABELS: Record<string, string> = {
@@ -95,6 +103,11 @@ const PAGE_LABELS: Record<string, string> = {
   "/event/route": "场地路线",
   "/event/schedule": "活动排期",
   "/event/broadcast": "应急播报",
+  "/lead": "线索运营",
+  "/system/user": "用户管理",
+  "/system/role": "角色管理",
+  "/system/audit": "审计日志",
+  "/system/ops": "监控告警",
   "/asset/avatar": "数字人形象",
   "/asset/gif": "动作素材",
   "/asset/voice": "声音配置",
@@ -107,9 +120,12 @@ const PAGE_LABELS: Record<string, string> = {
   "/knowledge/script": "官方话术",
   "/knowledge/package": "发布审核",
   "/interact/test": "实时测试",
+  "/interact/welcome": "欢迎配置",
+  "/interact/explain": "讲解流程",
+  "/interact/shopping": "导购策略",
 };
 
-const GROUP_LABELS: Record<string, string> = { event: "展会运营", asset: "数字人中心", knowledge: "知识中心", interact: "交互管理" };
+const GROUP_LABELS: Record<string, string> = { event: "展会运营", lead: "展会运营", asset: "数字人中心", knowledge: "知识中心", interact: "交互管理", system: "系统管理" };
 
 function useAdminPath(): [AdminPath, (next: string) => void] {
   const [path, setPath] = useState(() => window.location.pathname || "/dashboard");
@@ -422,15 +438,16 @@ export function AdminApp() {
   useEffect(() => { window.localStorage.setItem("opentalking-admin-sidebar-collapsed", String(collapsed)); }, [collapsed]);
   useEffect(() => { setMobileOpen(false); }, [path]);
   const login = async (username: string, password: string) => { const result = await adminApi.login(username, password); setUser(result.user); window.localStorage.setItem("opentalking-admin-session", JSON.stringify(result)); navigate("/dashboard"); };
-  const logout = () => { window.localStorage.removeItem("opentalking-admin-session"); setUser(null); };
+  const logout = () => { void adminApi.logout().finally(() => { window.localStorage.removeItem("opentalking-admin-session"); setUser(null); }); };
   if (!user) return <LoginScreen onLogin={login} />;
   const title = PAGE_LABELS[path] ?? "管理模块";
   const isKnown = Boolean(PAGE_LABELS[path]);
-  const eventCanWrite = (permission: Parameters<typeof canUseButton>[1]) => canUseButton(user.role, permission);
+  const eventCanWrite = (permission: Parameters<typeof canUseButton>[1] | "event:exhibit") => canUseButton(user.role, permission === "event:exhibit" ? "event:exhibit:write" : permission);
   const searchParams = new URLSearchParams(window.location.search);
   const exhibitionId = searchParams.get("id") ?? "";
   const initialExhibitionId = searchParams.get("exhibitionId") ?? "";
-  return <div className="flex min-h-screen bg-[#f3f7f9] text-slate-900">{mobileOpen ? <button type="button" aria-label="关闭菜单" onClick={() => setMobileOpen(false)} className="fixed inset-0 z-40 bg-slate-950/25 lg:hidden" /> : null}<Sidebar user={user} path={path} navigate={navigate} collapsed={collapsed} onCollapse={() => setCollapsed((value) => !value)} mobileOpen={mobileOpen} onClose={() => setMobileOpen(false)} /><div className="flex min-w-0 flex-1 flex-col"><header className="sticky top-0 z-30 flex h-[72px] items-center justify-between border-b border-slate-200 bg-white/95 px-5 backdrop-blur lg:px-8"><div className="flex min-w-0 items-center gap-3"><button type="button" onClick={() => setMobileOpen(true)} aria-label="打开菜单" className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 lg:hidden"><span className="text-lg">☰</span></button><div className="hidden lg:block"><p className="text-xs text-slate-400">当前工作区</p><div className="mt-1 flex items-center gap-2"><span className="text-sm font-semibold text-slate-900">{GROUP_LABELS[path.split("/")[1]] || "运营总览"}</span><span className="text-slate-300">/</span><span className="text-sm text-slate-500">{title}</span></div></div><div className="lg:hidden"><Logo /></div></div><div className="flex items-center gap-2 sm:gap-4"><button type="button" onClick={() => { window.location.search = "mode=studio"; }} className="hidden rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:border-cyan-300 hover:text-cyan-700 sm:inline-flex">旧 Studio</button><div className="hidden h-7 w-px bg-slate-200 sm:block" /><div className="flex items-center gap-2"><div className="flex h-8 w-8 items-center justify-center rounded-full bg-cyan-100 text-xs font-bold text-cyan-700">{user.displayName.slice(0, 1)}</div><div className="hidden text-right sm:block"><p className="text-xs font-semibold text-slate-800">{user.displayName}</p><p className="text-[10px] text-slate-400">{roleLabel(user.role)}</p></div></div><button type="button" onClick={logout} title="退出登录" className="rounded-xl p-2 text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Icon name="logout" /></button></div></header><MobileNav user={user} path={path} navigate={navigate} /><main className="min-h-0 flex-1 overflow-auto">{!isKnown ? <ComingSoonPage title={title} /> : path === "/dashboard" || path === "/dashboard/todo" ? <DashboardPage navigate={navigate} /> : path === "/event/exhibition/detail" ? <ExhibitionDetailPage exhibitionId={exhibitionId} canWrite={eventCanWrite("event:exhibition:write")} onBack={() => navigate("/event/exhibition")} onNavigate={navigate} /> : path === "/event/exhibition" ? <ExhibitionPage canWrite={eventCanWrite("event:exhibition:write")} onOpenDetail={(id) => navigate(`/event/exhibition/detail?id=${encodeURIComponent(id)}`)} /> : path === "/event/exhibitor" ? <ExhibitorPage canWrite={eventCanWrite("event:exhibitor:write")} initialExhibitionId={initialExhibitionId} /> : path === "/event/exhibit" ? <ExhibitPage canWrite={eventCanWrite("event:exhibit:write")} initialExhibitionId={initialExhibitionId} /> : path === "/event/venue" ? <VenuePage canWrite={eventCanWrite("event:venue:write")} initialExhibitionId={initialExhibitionId} /> : path === "/event/point" ? <PointPage canWrite={eventCanWrite("event:point:write")} initialExhibitionId={initialExhibitionId} /> : path === "/event/route" ? <RoutePage canWrite={eventCanWrite("event:route:write")} initialExhibitionId={initialExhibitionId} /> : path === "/event/schedule" ? <SchedulePage canWrite={eventCanWrite("event:schedule:write")} initialExhibitionId={initialExhibitionId} /> : path === "/event/broadcast" ? <BroadcastPage canWrite={eventCanWrite("event:broadcast:write")} initialExhibitionId={initialExhibitionId} /> : path === "/asset/avatar" ? <EnhancedAvatarPage onDebug={(avatarId) => navigate(`/interact/test?avatarId=${encodeURIComponent(avatarId)}`)} /> : path === "/asset/gif" ? <EnhancedGifPage /> : path === "/asset/voice" ? <EnhancedVoicePage /> : path === "/asset/scene" ? <EnhancedScenePage /> : path === "/asset/idle" ? <EnhancedIdlePage /> : path === "/knowledge/document" ? <DocumentCenterPage /> : path === "/knowledge/base" ? <KnowledgeBasePage /> : path === "/knowledge/memory" ? <MemoryCenterPage /> : path === "/knowledge/qa" ? <EnhancedQaPage /> : path === "/knowledge/script" ? <EnhancedScriptPage /> : path === "/knowledge/package" ? <EnhancedPackagePage /> : path === "/interact/test" ? <RealtimeTestWorkspace /> : <ComingSoonPage title={title} />}</main></div></div>;
+  const leadId = searchParams.get("id") ?? "";
+  return <div className="flex min-h-screen bg-[#f3f7f9] text-slate-900">{mobileOpen ? <button type="button" aria-label="关闭菜单" onClick={() => setMobileOpen(false)} className="fixed inset-0 z-40 bg-slate-950/25 lg:hidden" /> : null}<Sidebar user={user} path={path} navigate={navigate} collapsed={collapsed} onCollapse={() => setCollapsed((value) => !value)} mobileOpen={mobileOpen} onClose={() => setMobileOpen(false)} /><div className="flex min-w-0 flex-1 flex-col"><header className="sticky top-0 z-30 flex h-[72px] items-center justify-between border-b border-slate-200 bg-white/95 px-5 backdrop-blur lg:px-8"><div className="flex min-w-0 items-center gap-3"><button type="button" onClick={() => setMobileOpen(true)} aria-label="打开菜单" className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 lg:hidden"><span className="text-lg">☰</span></button><div className="hidden lg:block"><p className="text-xs text-slate-400">当前工作区</p><div className="mt-1 flex items-center gap-2"><span className="text-sm font-semibold text-slate-900">{GROUP_LABELS[path.split("/")[1]] || "运营总览"}</span><span className="text-slate-300">/</span><span className="text-sm text-slate-500">{title}</span></div></div><div className="lg:hidden"><Logo /></div></div><div className="flex items-center gap-2 sm:gap-4"><button type="button" onClick={() => { window.location.search = "mode=studio"; }} className="hidden rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:border-cyan-300 hover:text-cyan-700 sm:inline-flex">旧 Studio</button><div className="hidden h-7 w-px bg-slate-200 sm:block" /><div className="flex items-center gap-2"><div className="flex h-8 w-8 items-center justify-center rounded-full bg-cyan-100 text-xs font-bold text-cyan-700">{user.displayName.slice(0, 1)}</div><div className="hidden text-right sm:block"><p className="text-xs font-semibold text-slate-800">{user.displayName}</p><p className="text-[10px] text-slate-400">{roleLabel(user.role)}</p></div></div><button type="button" onClick={logout} title="退出登录" className="rounded-xl p-2 text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Icon name="logout" /></button></div></header><MobileNav user={user} path={path} navigate={navigate} /><main className="min-h-0 flex-1 overflow-auto">{!isKnown ? <ComingSoonPage title={title} /> : path === "/dashboard" || path === "/dashboard/todo" ? <DashboardPage navigate={navigate} /> : path === "/lead" ? <LeadOperationsPage user={user} canWrite={eventCanWrite("lead:write")} canExport={canAccess(user.role, "lead:export")} canSensitive={canAccess(user.role, "lead:view_sensitive")} canFeedback={canAccess(user.role, "lead:feedback")} initialLeadId={leadId} initialExhibitionId={initialExhibitionId} onNavigate={navigate} /> : path === "/system/user" ? <UserManagementPage user={user} canWrite={eventCanWrite("system:user:write")} /> : path === "/system/role" ? <RoleManagementPage user={user} canWrite={eventCanWrite("system:role:write")} /> : path === "/system/permission" ? <PermissionManagementPage user={user} canWrite={eventCanWrite("system:role:write")} /> : path === "/system/audit" ? <AuditLogPage user={user} canWrite={false} canTrace={canAccess(user.role, "audit:trace")} onNavigate={navigate} /> : path === "/system/ops" ? <OpsMonitoringPage user={user} canWrite={false} canFailover={eventCanWrite("ops:failover")} /> : path === "/event/exhibition/detail" ? <ExhibitionDetailPage exhibitionId={exhibitionId} canWrite={eventCanWrite("event:exhibition:write")} onBack={() => navigate("/event/exhibition")} onNavigate={navigate} /> : path === "/event/exhibition" ? <ExhibitionPage canWrite={eventCanWrite("event:exhibition:write")} onOpenDetail={(id) => navigate(`/event/exhibition/detail?id=${encodeURIComponent(id)}`)} /> : path === "/event/exhibitor" ? <ExhibitorPage canWrite={eventCanWrite("event:exhibitor:write")} initialExhibitionId={initialExhibitionId} /> : path === "/event/exhibit" ? <ExhibitPage canWrite={eventCanWrite("event:exhibit")} initialExhibitionId={initialExhibitionId} /> : path === "/event/venue" ? <VenuePage canWrite={eventCanWrite("event:venue:write")} initialExhibitionId={initialExhibitionId} /> : path === "/event/point" ? <PointPage canWrite={eventCanWrite("event:point:write")} initialExhibitionId={initialExhibitionId} /> : path === "/event/route" ? <RoutePage canWrite={eventCanWrite("event:route:write")} initialExhibitionId={initialExhibitionId} /> : path === "/event/schedule" ? <SchedulePage canWrite={eventCanWrite("event:schedule:write")} initialExhibitionId={initialExhibitionId} /> : path === "/event/broadcast" ? <BroadcastPage canWrite={eventCanWrite("event:broadcast:write")} initialExhibitionId={initialExhibitionId} /> : path === "/asset/avatar" ? <EnhancedAvatarPage onDebug={(avatarId) => navigate(`/interact/test?avatarId=${encodeURIComponent(avatarId)}`)} /> : path === "/asset/gif" ? <EnhancedGifPage /> : path === "/asset/voice" ? <EnhancedVoicePage /> : path === "/asset/scene" ? <EnhancedScenePage /> : path === "/asset/idle" ? <EnhancedIdlePage /> : path === "/knowledge/document" ? <DocumentCenterPage /> : path === "/knowledge/base" ? <KnowledgeBasePage /> : path === "/knowledge/memory" ? <MemoryCenterPage /> : path === "/knowledge/qa" ? <EnhancedQaPage /> : path === "/knowledge/script" ? <EnhancedScriptPage /> : path === "/knowledge/package" ? <EnhancedPackagePage /> : path === "/interact/test" ? <RealtimeTestWorkspace /> : path === "/interact/welcome" ? <WelcomeConfigPage user={user} canWrite={eventCanWrite("interact:welcome:write")} initialExhibitionId={initialExhibitionId} /> : path === "/interact/explain" ? <ExplainFlowPage user={user} canWrite={eventCanWrite("interact:explain:write")} initialExhibitionId={initialExhibitionId} /> : path === "/interact/shopping" ? <ShoppingStrategyPage user={user} canWrite={eventCanWrite("interact:shopping:write")} initialExhibitionId={initialExhibitionId} /> : <ComingSoonPage title={title} />}</main></div></div>;
 }
 
 export function adminRoleCanWrite(user: AdminUser, permission: Parameters<typeof canUseButton>[1]): boolean { return canUseButton(user.role, permission); }
