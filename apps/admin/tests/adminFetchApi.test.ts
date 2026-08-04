@@ -178,6 +178,8 @@ test("real Admin system management maps RBAC, audit, monitor, alert and CSV endp
   assert.equal((await api.getTraceRecord("trace/1"))?.traceId, "trace/1");
   assert.equal(calls.at(-1)?.url.endsWith("/admin/audit/trace/trace%2F1"), true);
   assert.match(await api.exportAuditLogs({ username: "admin" }), /id,name/);
+  await api.exportAuditLogs({ keyword: "张三" });
+  assert.equal(calls.at(-1)?.url.includes("/admin/rbac/user/export?keyword="), true);
   await api.getSystemMonitor();
   assert.equal(calls.at(-1)?.url.endsWith("/admin/ops/monitor"), true);
   await api.listAlerts();
