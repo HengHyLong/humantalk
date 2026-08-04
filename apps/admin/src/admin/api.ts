@@ -47,6 +47,11 @@ function buildAdminFetchUrl(path: string): string {
   return new URL(`/api${path}`, base).toString();
 }
 
+function withQuery(path: string, params?: Record<string, string | undefined>): string {
+  const query = new URLSearchParams(Object.entries(params ?? {}).filter((entry): entry is [string, string] => Boolean(entry[1])));
+  return query.size ? `${path}?${query.toString()}` : path;
+}
+
 function readStore<T>(key: string, fallback: T): T {
   try {
     const raw = window.localStorage.getItem(`${STORAGE_PREFIX}${key}`);
@@ -523,7 +528,7 @@ export class MockAdminApiClient implements AdminApiClient {
   async listAdminUsers(filters: { keyword?: string; status?: AdminUserRecord["status"] } = {}) { const keyword = filters.keyword?.trim().toLowerCase(); return (await readStore<AdminUserRecord[]>("admin-users", DEFAULT_ADMIN_USERS)).filter((item) => (!filters.status || item.status === filters.status) && (!keyword || [item.username, item.displayName, item.email].some((value) => value.toLowerCase().includes(keyword)))); }
   async saveAdminUser(item: AdminUserRecord) { const saved = { ...item, updatedAt: now() } as AdminUserRecord; writeStore("admin-users", [saved, ...(await this.listAdminUsers()).filter((candidate) => candidate.id !== item.id)]); return saved; }
   async deleteAdminUser(id: string) { writeStore("admin-users", (await this.listAdminUsers()).filter((item) => item.id !== id)); }
-  async resetAdminPassword(_id: string) { return undefined; }
+  async resetAdminPassword(_id: string): Promise<void> { return undefined; }
   async exportAdminUsers(filters: { keyword?: string; status?: AdminUserRecord["status"] } = {}) { const rows = await this.listAdminUsers(filters); return [["用户名", "昵称", "邮箱", "部门", "状态", "创建日期"], ...rows.map((item) => [item.username, item.displayName, item.email, item.department, item.status, item.createdAt])].map((row) => row.join(",")).join("\n"); }
   async listRoles() { const stored = readStore<RoleRecord[]>("roles", DEFAULT_ROLES); if (stored.some((role) => role.permissionIds.some((permission) => permission.startsWith("permission-")))) { writeStore("roles", DEFAULT_ROLES); return DEFAULT_ROLES; } return stored; }
   async saveRole(item: RoleRecord) { const saved = { ...item, updatedAt: now() } as RoleRecord; writeStore("roles", [saved, ...(await this.listRoles()).filter((candidate) => candidate.id !== item.id)]); return saved; }
@@ -537,7 +542,7 @@ export class MockAdminApiClient implements AdminApiClient {
   async clearAuditLogs() { writeStore("audit-logs", []); }
   async getSystemMonitor() { const monitor = readStore<SystemMonitor>("system-monitor", DEFAULT_MONITOR); const refreshed = { ...monitor, refreshedAt: now() }; writeStore("system-monitor", refreshed); return refreshed; }
   async listAlerts() { return readStore<AlertEvent[]>("alerts", DEFAULT_ALERTS); }
-  async acknowledgeAlert(id: string, operator = "当前用户") { const list = await this.listAlerts(); const existing = list.find((item) => item.id === id); if (!existing) throw new Error("告警不存在"); const saved = { ...existing, status: "acknowledged" as const, acknowledgedBy: operator, acknowledgedAt: now() }; writeStore("alerts", [saved, ...list.filter((item) => item.id !== id)]); return saved; }
+  async acknowledgeAlert(id: string, operator = "当前用户"): Promise<AlertEvent> { const list = await this.listAlerts(); const existing = list.find((item) => item.id === id); if (!existing) throw new Error("告警不存在"); const saved = { ...existing, status: "acknowledged" as const, acknowledgedBy: operator, acknowledgedAt: now() }; writeStore("alerts", [saved, ...list.filter((item) => item.id !== id)]); return saved; }
 }
 
 function normalizeMenuPermissionNodes(nodes: PermissionNode[]): PermissionNode[] {
@@ -617,8 +622,19 @@ export class FetchAdminApiClient extends MockAdminApiClient {
     return Array.isArray(payload) ? payload : payload.items;
   }
 
+  private async requestText(path: string, retryAuth = true): Promise<string> {
+    const token = window.localStorage.getItem(AUTH_TOKEN_KEY);
+    const response = await fetch(buildAdminFetchUrl(`/v1${path}`), { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+    if (response.status === 401 && retryAuth) {
+      await this.refreshAuth();
+      return this.requestText(path, false);
+    }
+    if (!response.ok) throw new AdminApiError(`请求失败（HTTP ${response.status}）`, response.status, undefined, response.headers.get("X-Trace-ID") ?? undefined);
+    return response.text();
+  }
+
   private saveResource<T extends { id: string }>(item: T, collectionPath: string, createPath = collectionPath): Promise<T> {
-    const isNew = !item.id || item.id.startsWith("new-");
+    const isNew = !item.id || item.id.startsWith("new-") || /^(user|role|permission)-\d{10,}$/.test(item.id);
     const { id: _clientId, ...createBody } = item;
     const body = isNew ? createBody : item;
     return this.request<T>(isNew ? createPath : `${collectionPath}/${encodeURIComponent(item.id)}`, {
@@ -663,6 +679,39 @@ export class FetchAdminApiClient extends MockAdminApiClient {
     return this.request<EmergencyBroadcast>(`/admin/event/emergency-broadcasts/${encodeURIComponent(id)}/${action}`, { method: "POST", body: action === "transition" ? JSON.stringify({ status }) : undefined });
   }
   override async deleteBroadcast(id: string) { await this.request(`/admin/event/emergency-broadcasts/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+
+  override async listAdminUsers(filters?: { keyword?: string; status?: AdminUserRecord["status"] }) {
+    return this.requestList<AdminUserRecord>(withQuery("/admin/rbac/user", filters));
+  }
+  override async saveAdminUser(item: AdminUserRecord) { return this.saveResource(item, "/admin/rbac/user"); }
+  override async deleteAdminUser(id: string) { await this.request(`/admin/rbac/user/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+  override async resetAdminPassword(id: string) { await this.request(`/admin/rbac/user/${encodeURIComponent(id)}/reset-password`, { method: "POST" }); }
+  override async exportAdminUsers(filters?: { keyword?: string; status?: AdminUserRecord["status"] }) {
+    return this.requestText(withQuery("/admin/rbac/user/export", filters));
+  }
+
+  override async listRoles() { return this.requestList<RoleRecord>("/admin/rbac/role"); }
+  override async saveRole(item: RoleRecord) { return this.saveResource(item, "/admin/rbac/role"); }
+  override async deleteRole(id: string) { await this.request(`/admin/rbac/role/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+
+  override async listPermissionTree() { return this.requestList<PermissionNode>("/admin/rbac/permission"); }
+  override async savePermissionNode(item: PermissionNode) { return this.saveResource(item, "/admin/rbac/permission"); }
+  override async deletePermissionNode(id: string) { await this.request(`/admin/rbac/permission/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+
+  override async listAuditLogs(filters?: { username?: string; ip?: string; keyword?: string; from?: string; to?: string }) {
+    return this.requestList<AuditLog>(withQuery("/admin/audit-logs", filters));
+  }
+  override async getTraceRecord(id: string) { return this.request<AuditLog | null>(`/admin/audit/trace/${encodeURIComponent(id)}`); }
+  override async exportAuditLogs(filters?: { username?: string; ip?: string; keyword?: string; from?: string; to?: string }) {
+    return this.requestText(withQuery("/admin/audit-logs/export", filters));
+  }
+  override async clearAuditLogs() { await this.request("/admin/audit-logs", { method: "DELETE" }); }
+
+  override async getSystemMonitor() { return this.request<SystemMonitor>("/admin/ops/monitor"); }
+  override async listAlerts() { return this.requestList<AlertEvent>("/admin/alerts"); }
+  override async acknowledgeAlert(id: string, operator = "当前用户") {
+    return this.request<AlertEvent>(`/admin/alerts/${encodeURIComponent(id)}/acknowledge`, { method: "POST", body: JSON.stringify({ operator }) });
+  }
 
   override async listGifs() { return this.request<GifAssetMeta[]>("/admin/assets?kind=gif"); }
   override async deleteGif(id: string) { await this.request(`/admin/assets/${encodeURIComponent(id)}`, { method: "DELETE" }); }
