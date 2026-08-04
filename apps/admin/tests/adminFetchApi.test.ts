@@ -116,3 +116,46 @@ test("real Admin event operations map list, create, update, lifecycle and activa
   await api.deleteBroadcast(broadcast.id);
   assert.equal(calls.at(-1)?.method, "DELETE");
 });
+
+test("real Admin system management maps RBAC, audit, monitor, alert and CSV endpoints", async () => {
+  values.clear();
+  values.set("opentalking-admin-token", "system-token");
+  const calls: Array<{ url: string; method: string; body?: Record<string, unknown> }> = [];
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    const method = init?.method ?? "GET";
+    const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined;
+    calls.push({ url, method, body });
+    if (url.includes("/export")) return new Response("id,name\n1,admin", { headers: { "Content-Type": "text/csv" } });
+    if (url.endsWith("/admin/ops/monitor")) return Response.json({ services: [], terminals: [], cpuHistory: [], memoryHistory: [] });
+    if (url.includes("/admin/audit/trace/")) return Response.json({ id: "audit-1", traceId: "trace/1", spans: [] });
+    if (url.endsWith("/acknowledge")) return Response.json({ id: "alert-1", status: "acknowledged", ...body });
+    if (method === "DELETE" || url.endsWith("/reset-password")) return new Response(null, { status: 204 });
+    if (method === "POST" || method === "PATCH") return Response.json({ ...body, id: "saved-1" });
+    return Response.json({ items: [{ id: "item-1" }], total: 1, page: 1, page_size: 9 });
+  };
+
+  const api = new FetchAdminApiClient();
+  await api.listAdminUsers({ keyword: "张 三", status: "active" });
+  assert.equal(calls.at(-1)?.url.includes("keyword=%E5%BC%A0+%E4%B8%89&status=active"), true);
+  await api.saveAdminUser({ id: "user-1722780000000", username: "test", displayName: "测试", gender: "未设置", phone: "", email: "", department: "研发部", status: "active", roleIds: [], createdAt: "2026-08-04", lastLoginAt: "-", lastLoginIp: "-" });
+  assert.equal(calls.at(-1)?.url.endsWith("/admin/rbac/user"), true);
+  assert.equal(calls.at(-1)?.method, "POST");
+  assert.equal(calls.at(-1)?.body?.id, undefined);
+  await api.resetAdminPassword("user/a");
+  assert.equal(calls.at(-1)?.url.endsWith("/admin/rbac/user/user%2Fa/reset-password"), true);
+  await api.listRoles();
+  assert.equal(calls.at(-1)?.url.endsWith("/admin/rbac/role"), true);
+  await api.listPermissionTree();
+  assert.equal(calls.at(-1)?.url.endsWith("/admin/rbac/permission"), true);
+  await api.listAuditLogs({ keyword: "登录失败" });
+  assert.equal(calls.at(-1)?.url.includes("/admin/audit-logs?keyword="), true);
+  assert.equal((await api.getTraceRecord("trace/1"))?.traceId, "trace/1");
+  assert.equal(calls.at(-1)?.url.endsWith("/admin/audit/trace/trace%2F1"), true);
+  assert.match(await api.exportAuditLogs({ username: "admin" }), /id,name/);
+  await api.getSystemMonitor();
+  assert.equal(calls.at(-1)?.url.endsWith("/admin/ops/monitor"), true);
+  await api.listAlerts();
+  await api.acknowledgeAlert("alert-1", "吴涓");
+  assert.deepEqual(calls.at(-1)?.body, { operator: "吴涓" });
+});
