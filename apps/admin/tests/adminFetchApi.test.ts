@@ -225,3 +225,31 @@ test("real Admin interaction management maps exhibition-scoped strategy endpoint
   await api.deleteShoppingStrategy("strategy/1");
   assert.equal(calls.at(-1)?.url.endsWith("/admin/interactions/shopping-strategies/strategy%2F1"), true);
 });
+
+test("real Admin digital assets never fall back to Mock storage", async () => {
+  values.clear();
+  values.set("opentalking-admin-token", "asset-token");
+  const calls: Array<{ url: string; method: string; body?: Record<string, unknown> }> = [];
+  globalThis.fetch = async (input, init) => {
+    const url = String(input); const method = init?.method ?? "GET";
+    const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined;
+    calls.push({ url, method, body });
+    if (method === "DELETE") return new Response(null, { status: 204 });
+    if (method === "GET") return Response.json({ items: [] });
+    if (url.endsWith("/scene-bindings")) return Response.json(body?.bindings ?? []);
+    return Response.json({ ...body, id: "saved-asset" });
+  };
+  const api = new FetchAdminApiClient();
+  await api.listGifs();
+  assert.equal(calls.at(-1)?.url.endsWith("/admin/assets?kind=gif"), true);
+  await api.updateGif("gif/1", { status: "inactive" });
+  assert.equal(calls.at(-1)?.url.endsWith("/admin/assets/gif%2F1"), true);
+  await api.listVoiceConfigs();
+  assert.equal(calls.at(-1)?.url.endsWith("/admin/voice-configs"), true);
+  await api.deleteVoiceConfig("voice/1");
+  assert.equal(calls.at(-1)?.url.endsWith("/admin/voice-configs/voice%2F1"), true);
+  await api.saveSceneBindings([{ scene: "welcome", assets: [] }]);
+  assert.equal(calls.at(-1)?.method, "PUT");
+  await api.listIdle();
+  assert.equal(calls.at(-1)?.url.endsWith("/admin/idle-content"), true);
+});

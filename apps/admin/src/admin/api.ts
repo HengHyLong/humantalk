@@ -796,8 +796,17 @@ export class FetchAdminApiClient extends MockAdminApiClient {
     await this.request(`/admin/interactions/shopping-strategies/${encodeURIComponent(id)}`, { method: "DELETE" });
   }
 
-  override async listGifs() { return this.request<GifAssetMeta[]>("/admin/assets?kind=gif"); }
+  override async listGifs() { return this.requestList<GifAssetMeta>("/admin/assets?kind=gif"); }
+  override async createGif(input: Omit<GifAssetMeta, "id" | "createdAt">) { return this.request<GifAssetMeta>("/admin/assets", { method: "POST", body: JSON.stringify(input) }); }
+  override async updateGif(id: string, patch: Partial<GifAssetMeta>) { return this.request<GifAssetMeta>(`/admin/assets/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(patch) }); }
   override async deleteGif(id: string) { await this.request(`/admin/assets/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+  override async listVoiceConfigs() { return this.requestList<VoiceAsset>("/admin/voice-configs"); }
+  override async saveVoiceConfig(item: VoiceAsset) { return this.saveResource(item, "/admin/voice-configs"); }
+  override async deleteVoiceConfig(id: string) { await this.request(`/admin/voice-configs/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+  override async listSceneBindings() { return this.requestList<SceneBinding>("/admin/scene-bindings"); }
+  override async saveSceneBindings(bindings: SceneBinding[]) { return this.request<SceneBinding[]>("/admin/scene-bindings", { method: "PUT", body: JSON.stringify({ bindings }) }); }
+  override async listIdle() { return this.requestList<IdleContent>("/admin/idle-content"); }
+  override async saveIdle(item: IdleContent) { return this.saveResource(item, "/admin/idle-content"); }
 }
 
 const runtimeEnv = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env ?? {};
