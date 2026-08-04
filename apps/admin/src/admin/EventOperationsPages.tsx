@@ -176,7 +176,7 @@ export function ExhibitionDetailPage({ exhibitionId, canWrite = true, onBack, on
     const selectedVoice = voices.find((voice) => voice.voiceId === selection.voiceId && (!selection.category || voiceCategoryOf(voice) === selection.category));
     setSaving(true);
     try {
-      setExhibition(await adminApi.saveExhibition({
+      setExhibition(await adminApi.saveExhibitionRuntimeConfig({
         ...exhibition,
         boundAvatarId: avatarId || null,
         boundModel: model,
