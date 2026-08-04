@@ -256,6 +256,7 @@ export interface AdminApiClient {
   resolveMiss(id: string, status: MissPoolItem["status"]): Promise<MissPoolItem>;
   listExhibitions(): Promise<Exhibition[]>;
   saveExhibition(item: Exhibition): Promise<Exhibition>;
+  saveExhibitionRuntimeConfig(item: Exhibition): Promise<Exhibition>;
   deleteExhibition(id: string): Promise<void>;
   transitionExhibition(id: string, status: ExhibitionStatus): Promise<Exhibition>;
   listVenues(): Promise<EventVenue[]>;
@@ -452,6 +453,7 @@ export class MockAdminApiClient implements AdminApiClient {
     writeStore("exhibitions", [saved, ...list.filter((candidate) => candidate.id !== item.id)]);
     return saved;
   }
+  async saveExhibitionRuntimeConfig(item: Exhibition) { return this.saveExhibition(item); }
   async transitionExhibition(id: string, status: Exhibition["status"]): Promise<Exhibition> {
     const list = await this.listExhibitions();
     const current = list.find((item) => item.id === id);
@@ -663,6 +665,22 @@ export class FetchAdminApiClient extends MockAdminApiClient {
 
   override async listExhibitions() { return this.requestList<Exhibition>("/admin/event/exhibitions"); }
   override async saveExhibition(item: Exhibition) { return this.saveResource(item, "/admin/event/exhibitions"); }
+  override async saveExhibitionRuntimeConfig(item: Exhibition) {
+    return this.request<Exhibition>(`/admin/event/exhibitions/${encodeURIComponent(item.id)}/runtime-config`, {
+      method: "PUT",
+      body: JSON.stringify({
+        boundAvatarId: item.boundAvatarId,
+        boundModel: item.boundModel,
+        boundVoiceId: item.boundVoiceId,
+        boundVoiceProvider: item.boundVoiceProvider,
+        boundVoiceModel: item.boundVoiceModel,
+        boundSttProvider: item.boundSttProvider,
+        boundSttModel: item.boundSttModel,
+        boundScene: item.boundScene,
+        knowledgeBaseIds: item.knowledgeBaseIds,
+      }),
+    });
+  }
   override async deleteExhibition(id: string) { await this.request(`/admin/event/exhibitions/${encodeURIComponent(id)}`, { method: "DELETE" }); }
   override async transitionExhibition(id: string, status: ExhibitionStatus) { return this.request<Exhibition>(`/admin/event/exhibitions/${encodeURIComponent(id)}/lifecycle`, { method: "POST", body: JSON.stringify({ status }) }); }
 

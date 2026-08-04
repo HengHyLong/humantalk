@@ -104,6 +104,11 @@ test("real Admin event operations map list, create, update, lifecycle and activa
   assert.equal(calls.at(-1)?.method, "PATCH");
   await api.transitionExhibition("event-1", "setup");
   assert.deepEqual(calls.at(-1)?.body, { status: "setup" });
+  await api.saveExhibitionRuntimeConfig({ ...exhibition, id: "event-1", boundAvatarId: "avatar-1", knowledgeBaseIds: ["kb-1"] });
+  assert.equal(calls.at(-1)?.url.endsWith("/admin/event/exhibitions/event-1/runtime-config"), true);
+  assert.equal(calls.at(-1)?.method, "PUT");
+  assert.equal(calls.at(-1)?.body?.name, undefined);
+  assert.deepEqual(calls.at(-1)?.body?.knowledgeBaseIds, ["kb-1"]);
 
   const route = { id: "new-route", venueId: "venue A/1", name: "入口路线", type: "navigation", pointIds: ["p1", "p2"], directions: ["直行"], estimatedMinutes: 2, description: "", status: "draft", createdAt: "", updatedAt: "" } satisfies ExhibitionRoute;
   await api.saveRoute(route);
