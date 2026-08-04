@@ -112,7 +112,7 @@ function LifecycleProgress({ exhibition, canWrite, onTransition }: { exhibition:
   const next = nextLifecycleStatus(exhibition.status);
   const labels: Array<{ key: Exhibition["status"]; label: string }> = [{ key: "preparing", label: "筹备就绪" }, { key: "setup", label: "布展搭建" }, { key: "operating", label: "现场运营" }, { key: "teardown", label: "撤场收尾" }];
   const currentIndex = labels.findIndex((item) => item.key === exhibition.status);
-  return <Card className="p-5"><div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-xs text-slate-400">展会生命周期</p><h2 className="mt-1 text-lg font-semibold text-slate-950">{statusLabel(exhibition.status)}</h2></div>{next && canWrite ? <Button onClick={() => onTransition(next)}>推进至{statusLabel(next)}</Button> : null}</div><div className="mt-5 grid gap-2 sm:grid-cols-4">{labels.map((item, index) => <div key={item.key} className={`rounded-xl border p-3 ${index <= currentIndex ? "border-cyan-200 bg-cyan-50 text-cyan-700" : "border-slate-200 bg-slate-50 text-slate-400"}`}><div className="flex items-center gap-2 text-xs font-semibold"><span className="flex h-5 w-5 items-center justify-center rounded-full bg-white text-[10px]">{index + 1}</span>{item.label}</div></div>)}</div></Card>;
+  return <Card className="p-6"><div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-sm font-medium text-slate-400">展会生命周期</p><h2 className="mt-1 text-xl font-bold text-slate-950">{statusLabel(exhibition.status)}</h2></div>{next && canWrite ? <Button onClick={() => onTransition(next)}>推进至{statusLabel(next)}</Button> : null}</div><div className="mt-7 grid gap-3 sm:grid-cols-4">{labels.map((item, index) => <div key={item.key} className={`rounded-2xl border px-4 py-4 ${index <= currentIndex ? "border-cyan-300 bg-cyan-50 text-cyan-700" : "border-slate-200 bg-white text-slate-400"}`}><div className="flex items-center gap-3 text-sm font-semibold"><span className="flex h-6 w-6 items-center justify-center rounded-full bg-white text-xs shadow-sm">{index + 1}</span>{item.label}</div></div>)}</div></Card>;
 }
 
 export function ExhibitionPage({ canWrite = true, onOpenDetail }: ExhibitionPageProps) {
@@ -176,7 +176,7 @@ export function ExhibitionDetailPage({ exhibitionId, canWrite = true, onBack, on
     const selectedVoice = voices.find((voice) => voice.voiceId === selection.voiceId && (!selection.category || voiceCategoryOf(voice) === selection.category));
     setSaving(true);
     try {
-      setExhibition(await adminApi.saveExhibition({
+      setExhibition(await adminApi.saveExhibitionRuntimeConfig({
         ...exhibition,
         boundAvatarId: avatarId || null,
         boundModel: model,

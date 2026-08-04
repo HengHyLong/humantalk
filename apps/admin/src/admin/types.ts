@@ -277,6 +277,7 @@ export type Exhibit = {
   category: string;
   modelNo: string;
   description: string;
+  imageUrls?: string[];
   status: ExhibitStatus;
   createdAt: string;
   updatedAt: string;
@@ -327,6 +328,7 @@ export type ExhibitionRoute = {
   directions: string[];
   estimatedMinutes: number;
   description: string;
+  imageUrl?: string | null;
   status: RouteStatus;
   createdAt: string;
   updatedAt: string;
@@ -515,6 +517,29 @@ export type SystemMonitor = {
   memoryHistory: number[];
   services: ServiceHealth[];
   terminals: TerminalStatus[];
+};
+
+export type InteractionRecord = {
+  id: string;
+  exhibitionId: string;
+  terminalId: string;
+  sessionId: string;
+  intent: string;
+  knowledgeHit: boolean;
+  latencyMs: number;
+  occurredAt: string;
+  traceId: string;
+};
+
+export type GatewayPolicy = {
+  id: string;
+  name: string;
+  whitelist: string[];
+  rateLimitPerMinute: number;
+  timeoutMs: number;
+  fallbackMode: "text" | "cached" | "offline";
+  enabled: boolean;
+  updatedAt: string;
 };
 
 export type InteractionStatus = "active" | "inactive";

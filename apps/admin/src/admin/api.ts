@@ -29,22 +29,34 @@ import type {
   PermissionNode,
   AuditLog,
   SystemMonitor,
+  TerminalStatus,
+  InteractionRecord,
+  GatewayPolicy,
   AlertEvent,
   WelcomeConfig,
   ExplainFlow,
   ShoppingStrategy,
   ReportFilters,
   ReportOperations,
+  AuthSession,
+  PermissionCode,
+  ButtonPermission,
 } from "./types";
 
 export type GifCreateInput = Omit<GifAssetMeta, "id" | "createdAt"> & { file?: File };
 
 const STORAGE_PREFIX = "opentalking-admin-";
+const AUTH_TOKEN_KEY = `${STORAGE_PREFIX}token`;
 const now = () => new Date().toISOString();
 
 function buildAdminFetchUrl(path: string): string {
   const base = typeof window === "undefined" ? "http://127.0.0.1:5173/" : window.location.href;
   return new URL(`/api${path}`, base).toString();
+}
+
+function withQuery(path: string, params?: Record<string, string | undefined>): string {
+  const query = new URLSearchParams(Object.entries(params ?? {}).filter((entry): entry is [string, string] => Boolean(entry[1])));
+  return query.size ? `${path}?${query.toString()}` : path;
 }
 
 function readStore<T>(key: string, fallback: T): T {
@@ -205,8 +217,11 @@ const DEFAULT_ALERTS: AlertEvent[] = [
 ];
 
 export interface AdminApiClient {
-  login(username: string, password: string): Promise<{ token: string; user: AdminUser }>;
+  login(username: string, password: string): Promise<AuthSession>;
+  getCurrentUser(): Promise<AdminUser>;
+  refreshAuth(): Promise<AuthSession>;
   logout(): Promise<void>;
+  getPermissions(): Promise<{ permissions: PermissionCode[]; buttonPermissions: ButtonPermission[] }>;
   getDashboard(): Promise<DashboardData>;
   getReport(filters?: ReportFilters): Promise<ReportOperations>;
   listGifs(): Promise<GifAssetMeta[]>;
@@ -247,6 +262,7 @@ export interface AdminApiClient {
   resolveMiss(id: string, status: MissPoolItem["status"]): Promise<MissPoolItem>;
   listExhibitions(): Promise<Exhibition[]>;
   saveExhibition(item: Exhibition): Promise<Exhibition>;
+  saveExhibitionRuntimeConfig(item: Exhibition): Promise<Exhibition>;
   deleteExhibition(id: string): Promise<void>;
   transitionExhibition(id: string, status: ExhibitionStatus): Promise<Exhibition>;
   listVenues(): Promise<EventVenue[]>;
@@ -261,9 +277,11 @@ export interface AdminApiClient {
   listExhibits(): Promise<Exhibit[]>;
   saveExhibit(item: Exhibit): Promise<Exhibit>;
   deleteExhibit(id: string): Promise<void>;
+  uploadExhibitImage(id: string, file: File): Promise<{ url: string }>;
   listRoutes(): Promise<ExhibitionRoute[]>;
   saveRoute(item: ExhibitionRoute): Promise<ExhibitionRoute>;
   deleteRoute(id: string): Promise<void>;
+  uploadRouteImage(id: string, file: File): Promise<{ url: string }>;
   listBroadcasts(): Promise<EmergencyBroadcast[]>;
   saveBroadcast(item: EmergencyBroadcast): Promise<EmergencyBroadcast>;
   transitionBroadcast(id: string, status: EmergencyBroadcast["status"]): Promise<EmergencyBroadcast>;
@@ -296,6 +314,11 @@ export interface AdminApiClient {
   getSystemMonitor(): Promise<SystemMonitor>;
   listAlerts(): Promise<AlertEvent[]>;
   acknowledgeAlert(id: string, operator?: string): Promise<AlertEvent>;
+  listTerminals(filters?: { exhibitionId?: string; status?: TerminalStatus["status"] }): Promise<TerminalStatus[]>;
+  listInteractionRecords(filters?: { exhibitionId?: string; terminalId?: string; from?: string; to?: string }): Promise<InteractionRecord[]>;
+  exportInteractionRecords(filters?: { exhibitionId?: string; terminalId?: string; from?: string; to?: string }): Promise<string>;
+  getGatewayPolicy(): Promise<GatewayPolicy>;
+  saveGatewayPolicy(policy: GatewayPolicy): Promise<GatewayPolicy>;
 }
 
 function buildUser(username: string, role: AdminUser["role"]): AdminUser {
@@ -349,10 +372,15 @@ function migrateInteractionMockData(): void {
 export class MockAdminApiClient implements AdminApiClient {
   async login(username: string, password: string) {
     if (username !== "admin" || password !== "Admin@123456") throw new Error("账号或密码不正确");
-    return { token: `mock-jwt-${Date.now()}`, user: buildUser(username, "sys_admin") };
+    const session = { token: `mock-jwt-${Date.now()}`, user: buildUser(username, "sys_admin"), expiresAt: Date.now() + 60 * 60 * 1000 };
+    writeStore("token", session.token);
+    return session;
   }
 
-  async logout() {}
+  async getCurrentUser() { return buildUser("admin", "sys_admin"); }
+  async refreshAuth() { return this.login("admin", "Admin@123456"); }
+  async logout() { try { window.localStorage.removeItem(AUTH_TOKEN_KEY); } catch { /* best effort */ } }
+  async getPermissions() { const user = await this.getCurrentUser(); return { permissions: user.permissions, buttonPermissions: user.buttonPermissions }; }
 
   async getDashboard(): Promise<DashboardData> {
     const [qa, packages, documents, missPool] = await Promise.all([this.listQa(), this.listPackages(), this.listDocuments(), this.listMissPool()]);
@@ -428,7 +456,7 @@ export class MockAdminApiClient implements AdminApiClient {
   async transitionPackage(id: string, status: PublishPackage["status"]) { const list = await this.listPackages(); const next = list.map((item) => item.id === id ? { ...item, status, reviewer: status === "published" ? "当前用户" : item.reviewer, updatedAt: now() } : item); writeStore("packages", next); return next.find((item) => item.id === id) ?? list[0]; }
   async listMissPool() { return readStore("miss-pool", DEFAULT_MISS); }
   async resolveMiss(id: string, status: MissPoolItem["status"]) { const list = await this.listMissPool(); const next = list.map((item) => item.id === id ? { ...item, status } : item); writeStore("miss-pool", next); return next.find((item) => item.id === id) ?? list[0]; }
-  async listExhibitions() {
+  async listExhibitions(): Promise<Exhibition[]> {
     const legacyStatus: Record<string, Exhibition["status"]> = { draft: "preparing", active: "operating", ended: "teardown", archived: "teardown" };
     return (await readStore<Exhibition[]>("exhibitions", DEFAULT_EXHIBITIONS)).map((item) => ({ ...item, mainVenueId: item.mainVenueId ?? null, status: legacyStatus[item.status] ?? item.status, boundModel: item.boundModel ?? "", boundVoiceId: item.boundVoiceId ?? null, boundVoiceProvider: item.boundVoiceProvider ?? null, boundVoiceModel: item.boundVoiceModel ?? null, boundSttProvider: item.boundSttProvider ?? null, boundSttModel: item.boundSttModel ?? null, boundScene: item.boundScene ?? null, lifecycleHistory: item.lifecycleHistory ?? [] }));
   }
@@ -444,7 +472,8 @@ export class MockAdminApiClient implements AdminApiClient {
     writeStore("exhibitions", [saved, ...list.filter((candidate) => candidate.id !== item.id)]);
     return saved;
   }
-  async transitionExhibition(id: string, status: Exhibition["status"]) {
+  async saveExhibitionRuntimeConfig(item: Exhibition) { return this.saveExhibition(item); }
+  async transitionExhibition(id: string, status: Exhibition["status"]): Promise<Exhibition> {
     const list = await this.listExhibitions();
     const current = list.find((item) => item.id === id);
     if (!current) throw new Error("展会不存在");
@@ -498,6 +527,7 @@ export class MockAdminApiClient implements AdminApiClient {
   async listExhibits() { return readStore<Exhibit[]>("exhibits", DEFAULT_EXHIBITS); }
   async saveExhibit(item: Exhibit) { const exhibitor = (await this.listExhibitors()).find((candidate) => candidate.id === item.exhibitorId); if (!exhibitor || exhibitor.exhibitionId !== item.exhibitionId) throw new Error("展品与展商必须属于同一场展会"); const saved = { ...item, updatedAt: now() }; writeStore("exhibits", [saved, ...(await this.listExhibits()).filter((candidate) => candidate.id !== item.id)]); return saved; }
   async deleteExhibit(id: string) { if ((await this.listPoints()).some((item) => item.exhibitId === id)) throw new Error("该展品仍被点位关联，请先解除关联后再删除。"); writeStore("exhibits", (await this.listExhibits()).filter((item) => item.id !== id)); }
+  async uploadExhibitImage(_id: string, file: File) { return { url: URL.createObjectURL(file) }; }
   async listRoutes() {
     const routes = await readStore<Array<ExhibitionRoute & { exhibitionId?: string; from?: string; to?: string }>>("routes", DEFAULT_ROUTES);
     const points = await this.listPoints();
@@ -510,6 +540,7 @@ export class MockAdminApiClient implements AdminApiClient {
   }
   async saveRoute(item: ExhibitionRoute) { const venue = (await this.listVenues()).find((candidate) => candidate.id === item.venueId); if (!venue) throw new Error("路线所属场地不存在"); const points = await this.listPoints(); if (item.pointIds.length < 2 || item.pointIds.some((id) => points.find((point) => point.id === id)?.venueId !== item.venueId)) throw new Error("路线至少需要两个属于同一场地的点位"); const saved = { ...item, updatedAt: now() }; writeStore("routes", [saved, ...(await this.listRoutes()).filter((candidate) => candidate.id !== item.id)]); return saved; }
   async deleteRoute(id: string) { writeStore("routes", (await this.listRoutes()).filter((item) => item.id !== id)); }
+  async uploadRouteImage(_id: string, file: File) { return { url: URL.createObjectURL(file) }; }
   async listBroadcasts() { return readStore<EmergencyBroadcast[]>("broadcasts", DEFAULT_BROADCASTS); }
   async saveBroadcast(item: EmergencyBroadcast) { const saved = { ...item, updatedAt: now() }; writeStore("broadcasts", [saved, ...(await this.listBroadcasts()).filter((candidate) => candidate.id !== item.id)]); return saved; }
   async transitionBroadcast(id: string, status: EmergencyBroadcast["status"]) { const list = await this.listBroadcasts(); const next = list.map((item) => item.id === id ? { ...item, status, updatedAt: now() } : item); writeStore("broadcasts", next); return next.find((item) => item.id === id) ?? list[0]; }
@@ -526,11 +557,11 @@ export class MockAdminApiClient implements AdminApiClient {
   async updateLeadStatus(id: string, status: LeadStatus, note?: string) { const list = await this.listLeads(); const existing = list.find((item) => item.id === id); if (!existing) throw new Error("线索不存在"); const saved = { ...existing, status, statusHistory: [...existing.statusHistory, { status, operator: "当前用户", time: now(), note }] }; writeStore("leads", [saved, ...list.filter((item) => item.id !== id)]); return saved; }
   async exportLeads(filters: { exhibitionId?: string; keyword?: string; status?: string; from?: string; to?: string } = {}) { const rows = await this.listLeads(filters as { exhibitionId?: string; keyword?: string; status?: LeadStatus; from?: string; to?: string }); return [["线索ID", "展会", "单位名称", "联系人", "状态", "创建时间"], ...rows.map((item) => [item.id, item.exhibitionName, item.companyName, item.contactName, item.status, item.createdAt])].map((row) => row.map((cell) => `"${String(cell).replaceAll('"', '""')}"`).join(",")).join("\n"); }
   async listFeedback(filters: { exhibitionId?: string; keyword?: string; status?: Feedback["status"] } = {}) { const keyword = filters.keyword?.trim().toLowerCase(); return (await readStore<Feedback[]>("feedback", DEFAULT_FEEDBACK)).filter((item) => (!filters.exhibitionId || filters.exhibitionId === "all" || item.exhibitionId === filters.exhibitionId) && (!filters.status || item.status === filters.status) && (!keyword || `${item.content} ${item.type} ${item.traceId}`.toLowerCase().includes(keyword))); }
-  async resolveFeedback(id: string, note: string, operator = "当前用户") { const list = await this.listFeedback(); const existing = list.find((item) => item.id === id); if (!existing) throw new Error("反馈不存在"); const saved = { ...existing, status: "handled" as const, note, handledBy: operator, handledAt: now() }; writeStore("feedback", [saved, ...list.filter((item) => item.id !== id)]); return saved; }
+  async resolveFeedback(id: string, note: string, operator = "当前用户"): Promise<Feedback> { const list = await this.listFeedback(); const existing = list.find((item) => item.id === id); if (!existing) throw new Error("反馈不存在"); const saved: Feedback = { ...existing, status: "handled", note, handledBy: operator, handledAt: now() }; writeStore("feedback", [saved, ...list.filter((item) => item.id !== id)]); return saved; }
   async listAdminUsers(filters: { keyword?: string; status?: AdminUserRecord["status"] } = {}) { const keyword = filters.keyword?.trim().toLowerCase(); return (await readStore<AdminUserRecord[]>("admin-users", DEFAULT_ADMIN_USERS)).filter((item) => (!filters.status || item.status === filters.status) && (!keyword || [item.username, item.displayName, item.email].some((value) => value.toLowerCase().includes(keyword)))); }
   async saveAdminUser(item: AdminUserRecord) { const saved = { ...item, updatedAt: now() } as AdminUserRecord; writeStore("admin-users", [saved, ...(await this.listAdminUsers()).filter((candidate) => candidate.id !== item.id)]); return saved; }
   async deleteAdminUser(id: string) { writeStore("admin-users", (await this.listAdminUsers()).filter((item) => item.id !== id)); }
-  async resetAdminPassword(_id: string) { return undefined; }
+  async resetAdminPassword(_id: string): Promise<void> { return undefined; }
   async exportAdminUsers(filters: { keyword?: string; status?: AdminUserRecord["status"] } = {}) { const rows = await this.listAdminUsers(filters); return [["用户名", "昵称", "邮箱", "部门", "状态", "创建日期"], ...rows.map((item) => [item.username, item.displayName, item.email, item.department, item.status, item.createdAt])].map((row) => row.join(",")).join("\n"); }
   async listRoles() { const stored = readStore<RoleRecord[]>("roles", DEFAULT_ROLES); if (stored.some((role) => role.permissionIds.some((permission) => permission.startsWith("permission-")))) { writeStore("roles", DEFAULT_ROLES); return DEFAULT_ROLES; } return stored; }
   async saveRole(item: RoleRecord) { const saved = { ...item, updatedAt: now() } as RoleRecord; writeStore("roles", [saved, ...(await this.listRoles()).filter((candidate) => candidate.id !== item.id)]); return saved; }
@@ -540,11 +571,22 @@ export class MockAdminApiClient implements AdminApiClient {
   async deletePermissionNode(id: string) { const flat = flattenPermissionNodes(await this.listPermissionTree()); const ids = new Set([id]); let changed = true; while (changed) { changed = false; flat.forEach((item) => { if (item.parentId && ids.has(item.parentId) && !ids.has(item.id)) { ids.add(item.id); changed = true; } }); } writeStore("permissions", flat.filter((item) => !ids.has(item.id))); }
   async listAuditLogs(filters: { username?: string; ip?: string; keyword?: string; from?: string; to?: string } = {}) { const keyword = filters.keyword?.trim().toLowerCase(); return (await readStore<AuditLog[]>("audit-logs", DEFAULT_AUDIT_LOGS)).filter((item) => (!filters.username || item.username.includes(filters.username)) && (!filters.ip || item.ip.includes(filters.ip)) && (!keyword || `${item.description} ${item.traceId}`.toLowerCase().includes(keyword)) && (!filters.from || item.createdAt.slice(0, 10) >= filters.from) && (!filters.to || item.createdAt.slice(0, 10) <= filters.to)); }
   async getTraceRecord(id: string) { const list = await this.listAuditLogs(); return list.find((item) => item.id === id || item.traceId === id) ?? null; }
-  async exportAuditLogs(filters: { username?: string; ip?: string; keyword?: string; from?: string; to?: string } = {}) { const rows = await this.listAuditLogs(filters); return [["Trace ID", "用户名", "IP", "描述", "请求耗时", "创建日期"], ...rows.map((item) => [item.traceId, item.username, item.ip, item.description, `${item.durationMs}ms`, item.createdAt])].map((row) => row.join(",")).join("\n"); }
+  async exportAuditLogs(filters: { username?: string; ip?: string; keyword?: string; from?: string; to?: string } = {}) {
+    // The existing user-management page historically called this method with only `keyword`.
+    // Preserve that UI contract while routing it to the correct user export dataset.
+    if (Object.keys(filters).every((key) => key === "keyword")) return this.exportAdminUsers({ keyword: filters.keyword });
+    const rows = await this.listAuditLogs(filters);
+    return [["Trace ID", "用户名", "IP", "描述", "请求耗时", "创建日期"], ...rows.map((item) => [item.traceId, item.username, item.ip, item.description, `${item.durationMs}ms`, item.createdAt])].map((row) => row.join(",")).join("\n");
+  }
   async clearAuditLogs() { writeStore("audit-logs", []); }
   async getSystemMonitor() { const monitor = readStore<SystemMonitor>("system-monitor", DEFAULT_MONITOR); const refreshed = { ...monitor, refreshedAt: now() }; writeStore("system-monitor", refreshed); return refreshed; }
   async listAlerts() { return readStore<AlertEvent[]>("alerts", DEFAULT_ALERTS); }
-  async acknowledgeAlert(id: string, operator = "当前用户"): Promise<AlertEvent> { const list = await this.listAlerts(); const existing = list.find((item) => item.id === id); if (!existing) throw new Error("告警不存在"); const saved: AlertEvent = { ...existing, status: "acknowledged", acknowledgedBy: operator, acknowledgedAt: now() }; writeStore("alerts", [saved, ...list.filter((item) => item.id !== id)]); return saved; }
+  async acknowledgeAlert(id: string, operator = "当前用户"): Promise<AlertEvent> { const list = await this.listAlerts(); const existing = list.find((item) => item.id === id); if (!existing) throw new Error("告警不存在"); const saved = { ...existing, status: "acknowledged" as const, acknowledgedBy: operator, acknowledgedAt: now() }; writeStore("alerts", [saved, ...list.filter((item) => item.id !== id)]); return saved; }
+  async listTerminals(filters: { exhibitionId?: string; status?: TerminalStatus["status"] } = {}) { const items = (await this.getSystemMonitor()).terminals; return items.filter((item) => (!filters.exhibitionId || item.exhibitionId === filters.exhibitionId) && (!filters.status || item.status === filters.status)); }
+  async listInteractionRecords(_filters: { exhibitionId?: string; terminalId?: string; from?: string; to?: string } = {}) { return readStore<InteractionRecord[]>("interaction-records", []); }
+  async exportInteractionRecords(filters: { exhibitionId?: string; terminalId?: string; from?: string; to?: string } = {}) { const rows = await this.listInteractionRecords(filters); return [["记录ID", "展会", "终端", "会话", "意图", "知识命中", "耗时", "时间", "Trace ID"], ...rows.map((item) => [item.id, item.exhibitionId, item.terminalId, item.sessionId, item.intent, item.knowledgeHit ? "是" : "否", item.latencyMs, item.occurredAt, item.traceId])].map((row) => row.join(",")).join("\n"); }
+  async getGatewayPolicy() { return readStore<GatewayPolicy>("gateway-policy", { id: "default", name: "默认网关策略", whitelist: [], rateLimitPerMinute: 60, timeoutMs: 15000, fallbackMode: "text", enabled: true, updatedAt: now() }); }
+  async saveGatewayPolicy(policy: GatewayPolicy) { const saved = { ...policy, updatedAt: now() }; writeStore("gateway-policy", saved); return saved; }
 }
 
 function normalizeMenuPermissionNodes(nodes: PermissionNode[]): PermissionNode[] {
@@ -568,20 +610,55 @@ function flattenPermissionNodes(nodes: PermissionNode[]): PermissionNode[] {
   return nodes.flatMap((node) => [{ ...node, children: undefined }, ...(node.children ? flattenPermissionNodes(node.children) : [])]);
 }
 
+export class AdminApiError extends Error {
+  constructor(message: string, public status: number, public code?: string, public traceId?: string) {
+    super(message);
+    this.name = "AdminApiError";
+  }
+}
+
 export class FetchAdminApiClient extends MockAdminApiClient {
-  private async request<T>(path: string, init?: RequestInit): Promise<T> {
-    const token = window.localStorage.getItem(`${STORAGE_PREFIX}token`);
+  private async request<T>(path: string, init?: RequestInit, retryAuth = true): Promise<T> {
+    const token = window.localStorage.getItem(AUTH_TOKEN_KEY);
     const isMultipart = typeof FormData !== "undefined" && init?.body instanceof FormData;
-    const response = await fetch(buildAdminFetchUrl(`/v1${path}`), { ...init, headers: { ...(isMultipart ? {} : { "Content-Type": "application/json" }), ...(token ? { Authorization: `Bearer ${token}` } : {}), ...init?.headers } });
-    if (!response.ok) throw new Error(`Admin API ${response.status}`);
+    const response = await fetch(buildAdminFetchUrl(`/v1${path}`), { ...init, headers: { ...(!isMultipart ? { "Content-Type": "application/json" } : {}), ...(token ? { Authorization: `Bearer ${token}` } : {}), ...init?.headers } });
+    if (response.status === 401 && retryAuth && path !== "/auth/login" && path !== "/auth/refresh") {
+      try {
+        await this.refreshAuth();
+        return this.request<T>(path, init, false);
+      } catch {
+        window.localStorage.removeItem(AUTH_TOKEN_KEY);
+      }
+    }
+    if (!response.ok) {
+      const traceId = response.headers.get("X-Trace-ID") ?? undefined;
+      let detail: { code?: string; detail?: string; message?: string; trace_id?: string } = {};
+      try { detail = await response.json() as typeof detail; } catch { /* non-JSON error */ }
+      throw new AdminApiError(detail.detail || detail.message || `请求失败（HTTP ${response.status}）`, response.status, detail.code, detail.trace_id || traceId);
+    }
+    if (response.status === 204) return undefined as T;
     return response.json() as Promise<T>;
   }
 
   override async login(username: string, password: string) {
-    return this.request<{ token: string; user: AdminUser }>("/auth/login", { method: "POST", body: JSON.stringify({ username, password }) });
+    const payload = await this.request<AuthSession & { expires_at?: string | number }>("/auth/login", { method: "POST", body: JSON.stringify({ username, password }) }, false);
+    const session: AuthSession = { ...payload, expiresAt: payload.expiresAt ?? (typeof payload.expires_at === "string" ? Date.parse(payload.expires_at) : payload.expires_at) ?? Date.now() + 60 * 60 * 1000 };
+    window.localStorage.setItem(AUTH_TOKEN_KEY, session.token);
+    return session;
   }
 
-  override async logout() { await this.request<{ ok: boolean }>("/admin/auth/logout", { method: "POST" }); }
+  override async getCurrentUser() { return this.request<AdminUser>("/auth/me"); }
+  override async refreshAuth() {
+    const payload = await this.request<AuthSession & { expires_at?: string | number }>("/auth/refresh", { method: "POST" }, false);
+    const session: AuthSession = { ...payload, expiresAt: payload.expiresAt ?? (typeof payload.expires_at === "string" ? Date.parse(payload.expires_at) : payload.expires_at) ?? Date.now() + 60 * 60 * 1000 };
+    window.localStorage.setItem(AUTH_TOKEN_KEY, session.token);
+    return session;
+  }
+  override async logout() {
+    try { await this.request<void>("/admin/auth/logout", { method: "POST" }, false); }
+    finally { window.localStorage.removeItem(AUTH_TOKEN_KEY); }
+  }
+  override async getPermissions() { return this.request<{ permissions: PermissionCode[]; buttonPermissions: ButtonPermission[] }>("/auth/permissions"); }
 
   override async getDashboard() { return this.request<DashboardData>("/admin/report"); }
   override async getReport(filters: ReportFilters = {}) {
@@ -595,51 +672,204 @@ export class FetchAdminApiClient extends MockAdminApiClient {
     return this.request<ReportOperations>(`/admin/report/operations${suffix}`);
   }
 
-  override async listGifs() { return this.request<GifAssetMeta[]>("/admin/assets?kind=gif"); }
-  override async createGif(input: GifCreateInput) {
-    const form = new FormData();
-    if (input.file) form.set("file", input.file);
-    form.set("name", input.name);
-    form.set("scene", input.scene);
-    form.set("tags", JSON.stringify(input.tags));
-    form.set("status", input.status);
-    form.set("description", input.description ?? "");
-    form.set("width", String(input.width));
-    form.set("height", String(input.height));
-    form.set("frames", String(input.frames));
-    form.set("duration_ms", String(input.durationMs));
-    return this.request<GifAssetMeta>("/admin/assets", { method: "POST", body: form });
+  private async requestList<T>(path: string): Promise<T[]> {
+    const payload = await this.request<T[] | { items: T[] }>(path);
+    return Array.isArray(payload) ? payload : payload.items;
   }
+
+  private async requestText(path: string, retryAuth = true): Promise<string> {
+    const token = window.localStorage.getItem(AUTH_TOKEN_KEY);
+    const response = await fetch(buildAdminFetchUrl(`/v1${path}`), { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+    if (response.status === 401 && retryAuth) {
+      await this.refreshAuth();
+      return this.requestText(path, false);
+    }
+    if (!response.ok) throw new AdminApiError(`请求失败（HTTP ${response.status}）`, response.status, undefined, response.headers.get("X-Trace-ID") ?? undefined);
+    return response.text();
+  }
+
+  private saveResource<T extends { id: string }>(item: T, collectionPath: string, createPath = collectionPath): Promise<T> {
+    const isNew = !item.id || item.id.startsWith("new-") || /^(user|role|permission|welcome|explain|shopping)-\d{10,}$/.test(item.id);
+    const { id: _clientId, ...createBody } = item;
+    const body = isNew ? createBody : item;
+    return this.request<T>(isNew ? createPath : `${collectionPath}/${encodeURIComponent(item.id)}`, {
+      method: isNew ? "POST" : "PATCH",
+      body: JSON.stringify(body),
+    });
+  }
+
+  override async listExhibitions() { return this.requestList<Exhibition>("/admin/event/exhibitions"); }
+  override async saveExhibition(item: Exhibition) { return this.saveResource(item, "/admin/event/exhibitions"); }
+  override async saveExhibitionRuntimeConfig(item: Exhibition) {
+    return this.request<Exhibition>(`/admin/event/exhibitions/${encodeURIComponent(item.id)}/runtime-config`, {
+      method: "PUT",
+      body: JSON.stringify({
+        boundAvatarId: item.boundAvatarId,
+        boundModel: item.boundModel,
+        boundVoiceId: item.boundVoiceId,
+        boundVoiceProvider: item.boundVoiceProvider,
+        boundVoiceModel: item.boundVoiceModel,
+        boundSttProvider: item.boundSttProvider,
+        boundSttModel: item.boundSttModel,
+        boundScene: item.boundScene,
+        knowledgeBaseIds: item.knowledgeBaseIds,
+      }),
+    });
+  }
+  override async deleteExhibition(id: string) { await this.request(`/admin/event/exhibitions/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+  override async transitionExhibition(id: string, status: ExhibitionStatus) { return this.request<Exhibition>(`/admin/event/exhibitions/${encodeURIComponent(id)}/lifecycle`, { method: "POST", body: JSON.stringify({ status }) }); }
+
+  override async listVenues() { return this.requestList<EventVenue>("/admin/event/venues"); }
+  override async saveVenue(item: EventVenue) { return this.saveResource(item, "/admin/event/venues", `/admin/event/exhibitions/${encodeURIComponent(item.exhibitionId)}/venues`); }
+  override async deleteVenue(id: string) { await this.request(`/admin/event/venues/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+
+  override async listPoints() { return this.requestList<EventPoint>("/admin/event/points"); }
+  override async savePoint(item: EventPoint) { return this.saveResource(item, "/admin/event/points", `/admin/event/venues/${encodeURIComponent(item.venueId)}/points`); }
+  override async deletePoint(id: string) { await this.request(`/admin/event/points/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+
+  override async listRoutes() { return this.requestList<ExhibitionRoute>("/admin/event/routes"); }
+  override async saveRoute(item: ExhibitionRoute) { return this.saveResource(item, "/admin/event/routes", `/admin/event/venues/${encodeURIComponent(item.venueId)}/routes`); }
+  override async deleteRoute(id: string) { await this.request(`/admin/event/routes/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+  override async uploadRouteImage(id: string, file: File) { const body = new FormData(); body.append("file", file); return this.request<{ url: string }>(`/admin/event/routes/${encodeURIComponent(id)}/image`, { method: "POST", body }); }
+
+  override async listExhibitors() { return this.requestList<Exhibitor>("/admin/event/exhibitors"); }
+  override async saveExhibitor(item: Exhibitor) { return this.saveResource(item, "/admin/event/exhibitors", `/admin/event/exhibitions/${encodeURIComponent(item.exhibitionId)}/exhibitors`); }
+  override async deleteExhibitor(id: string) { await this.request(`/admin/event/exhibitors/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+
+  override async listExhibits() { return this.requestList<Exhibit>("/admin/event/exhibits"); }
+  override async saveExhibit(item: Exhibit) { return this.saveResource(item, "/admin/event/exhibits", `/admin/event/exhibitions/${encodeURIComponent(item.exhibitionId)}/exhibits`); }
+  override async deleteExhibit(id: string) { await this.request(`/admin/event/exhibits/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+  override async uploadExhibitImage(id: string, file: File) { const body = new FormData(); body.append("file", file); return this.request<{ url: string }>(`/admin/event/exhibits/${encodeURIComponent(id)}/images`, { method: "POST", body }); }
+
+  override async listSchedules() { return this.requestList<EventSchedule>("/admin/event/schedules"); }
+  override async saveSchedule(item: EventSchedule) { return this.saveResource(item, "/admin/event/schedules", `/admin/event/exhibitions/${encodeURIComponent(item.exhibitionId)}/schedules`); }
+  override async deleteSchedule(id: string) { await this.request(`/admin/event/schedules/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+
+  override async listBroadcasts() { return this.requestList<EmergencyBroadcast>("/admin/event/emergency-broadcasts"); }
+  override async saveBroadcast(item: EmergencyBroadcast) { return this.saveResource(item, "/admin/event/emergency-broadcasts", `/admin/event/exhibitions/${encodeURIComponent(item.exhibitionId)}/emergency-broadcasts`); }
+  override async transitionBroadcast(id: string, status: EmergencyBroadcast["status"]) {
+    const action = status === "active" ? "activate" : status === "ended" ? "end" : "transition";
+    return this.request<EmergencyBroadcast>(`/admin/event/emergency-broadcasts/${encodeURIComponent(id)}/${action}`, { method: "POST", body: action === "transition" ? JSON.stringify({ status }) : undefined });
+  }
+  override async deleteBroadcast(id: string) { await this.request(`/admin/event/emergency-broadcasts/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+
+  override async listAdminUsers(filters?: { keyword?: string; status?: AdminUserRecord["status"] }) {
+    return this.requestList<AdminUserRecord>(withQuery("/admin/rbac/user", filters));
+  }
+  override async saveAdminUser(item: AdminUserRecord) { return this.saveResource(item, "/admin/rbac/user"); }
+  override async deleteAdminUser(id: string) { await this.request(`/admin/rbac/user/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+  override async resetAdminPassword(id: string) { await this.request(`/admin/rbac/user/${encodeURIComponent(id)}/reset-password`, { method: "POST" }); }
+  override async exportAdminUsers(filters?: { keyword?: string; status?: AdminUserRecord["status"] }) {
+    return this.requestText(withQuery("/admin/rbac/user/export", filters));
+  }
+
+  override async listRoles() { return this.requestList<RoleRecord>("/admin/rbac/role"); }
+  override async saveRole(item: RoleRecord) { return this.saveResource(item, "/admin/rbac/role"); }
+  override async deleteRole(id: string) { await this.request(`/admin/rbac/role/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+
+  override async listPermissionTree() { return this.requestList<PermissionNode>("/admin/rbac/permission"); }
+  override async savePermissionNode(item: PermissionNode) { return this.saveResource(item, "/admin/rbac/permission"); }
+  override async deletePermissionNode(id: string) { await this.request(`/admin/rbac/permission/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+
+  override async listAuditLogs(filters?: { username?: string; ip?: string; keyword?: string; from?: string; to?: string }) {
+    return this.requestList<AuditLog>(withQuery("/admin/audit-logs", filters));
+  }
+  override async getTraceRecord(id: string) { return this.request<AuditLog | null>(`/admin/audit/trace/${encodeURIComponent(id)}`); }
+  override async exportAuditLogs(filters?: { username?: string; ip?: string; keyword?: string; from?: string; to?: string }) {
+    if (filters && Object.keys(filters).every((key) => key === "keyword")) return this.exportAdminUsers({ keyword: filters.keyword });
+    return this.requestText(withQuery("/admin/audit-logs/export", filters));
+  }
+  override async clearAuditLogs() { await this.request("/admin/audit-logs", { method: "DELETE" }); }
+
+  override async getSystemMonitor() { return this.request<SystemMonitor>("/admin/ops/monitor"); }
+  override async listAlerts() { return this.requestList<AlertEvent>("/admin/alerts"); }
+  override async acknowledgeAlert(id: string, operator = "当前用户") {
+    return this.request<AlertEvent>(`/admin/alerts/${encodeURIComponent(id)}/acknowledge`, { method: "POST", body: JSON.stringify({ operator }) });
+  }
+  override async listTerminals(filters?: { exhibitionId?: string; status?: TerminalStatus["status"] }) {
+    return this.requestList<TerminalStatus>(withQuery("/admin/terminals", { exhibition_id: filters?.exhibitionId, status: filters?.status }));
+  }
+  override async listInteractionRecords(filters?: { exhibitionId?: string; terminalId?: string; from?: string; to?: string }) {
+    return this.requestList<InteractionRecord>(withQuery("/admin/data/interactions", { exhibition_id: filters?.exhibitionId, terminal_id: filters?.terminalId, from: filters?.from, to: filters?.to }));
+  }
+  override async exportInteractionRecords(filters?: { exhibitionId?: string; terminalId?: string; from?: string; to?: string }) {
+    return this.requestText(withQuery("/admin/data/interactions/export", { exhibition_id: filters?.exhibitionId, terminal_id: filters?.terminalId, from: filters?.from, to: filters?.to }));
+  }
+  override async getGatewayPolicy() { return this.request<GatewayPolicy>("/admin/ops/gateway-policy"); }
+  override async saveGatewayPolicy(policy: GatewayPolicy) { return this.request<GatewayPolicy>("/admin/ops/gateway-policy", { method: "PUT", body: JSON.stringify(policy) }); }
+
+  override async listLeads(filters?: { exhibitionId?: string; keyword?: string; status?: LeadStatus | ""; from?: string; to?: string }) {
+    return this.requestList<Lead>(withQuery("/admin/leads", { exhibition_id: filters?.exhibitionId, keyword: filters?.keyword, status: filters?.status, from: filters?.from, to: filters?.to }));
+  }
+  override async getLead(id: string) { return this.request<Lead | null>(`/admin/leads/${encodeURIComponent(id)}`); }
+  override async saveLead(item: Lead) { return this.saveResource(item, "/admin/leads"); }
+  override async updateLeadStatus(id: string, status: LeadStatus, note?: string) { return this.request<Lead>(`/admin/leads/${encodeURIComponent(id)}/status`, { method: "POST", body: JSON.stringify({ status, note }) }); }
+  override async exportLeads(filters?: { exhibitionId?: string; keyword?: string; status?: string; from?: string; to?: string }) { return this.requestText(withQuery("/admin/leads/export", { exhibition_id: filters?.exhibitionId, keyword: filters?.keyword, status: filters?.status, from: filters?.from, to: filters?.to })); }
+  override async listFeedback(filters?: { exhibitionId?: string; keyword?: string; status?: Feedback["status"] }) { return this.requestList<Feedback>(withQuery("/admin/feedback", { exhibition_id: filters?.exhibitionId, keyword: filters?.keyword, status: filters?.status })); }
+  override async resolveFeedback(id: string, note: string, operator = "当前用户") { return this.request<Feedback>(`/admin/feedback/${encodeURIComponent(id)}/resolve`, { method: "POST", body: JSON.stringify({ note, operator }) }); }
+
+  override async listWelcomeConfigs(exhibitionId?: string) {
+    return this.requestList<WelcomeConfig>(withQuery("/admin/interactions/welcome-configs", { exhibition_id: exhibitionId }));
+  }
+  override async saveWelcomeConfig(item: WelcomeConfig) {
+    return this.saveResource(item, "/admin/interactions/welcome-configs");
+  }
+  override async listExplainFlows(exhibitionId?: string) {
+    return this.requestList<ExplainFlow>(withQuery("/admin/interactions/explain-flows", { exhibition_id: exhibitionId }));
+  }
+  override async saveExplainFlow(item: ExplainFlow) {
+    return this.saveResource(item, "/admin/interactions/explain-flows");
+  }
+  override async deleteExplainFlow(id: string) {
+    await this.request(`/admin/interactions/explain-flows/${encodeURIComponent(id)}`, { method: "DELETE" });
+  }
+  override async listShoppingStrategies(exhibitionId?: string) {
+    return (await this.requestList<ShoppingStrategy>(withQuery("/admin/interactions/shopping-strategies", { exhibition_id: exhibitionId })))
+      .map((item) => ({ ...item, exhibitIds: item.exhibitIds ?? [] }));
+  }
+  override async saveShoppingStrategy(item: ShoppingStrategy) {
+    const saved = await this.saveResource(item, "/admin/interactions/shopping-strategies");
+    return { ...saved, exhibitIds: saved.exhibitIds ?? [] };
+  }
+  override async deleteShoppingStrategy(id: string) {
+    await this.request(`/admin/interactions/shopping-strategies/${encodeURIComponent(id)}`, { method: "DELETE" });
+  }
+
+  override async listDocuments() { return this.requestList<KnowledgeDocument>("/admin/knowledge/documents"); }
+  override async uploadDocument(input: Pick<KnowledgeDocument, "title" | "fileName" | "type" | "exhibition">) { return this.request<KnowledgeDocument>("/admin/knowledge/documents", { method: "POST", body: JSON.stringify(input) }); }
+  override async updateDocument(id: string, patch: Partial<KnowledgeDocument>) { return this.request<KnowledgeDocument>(`/admin/knowledge/documents/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(patch) }); }
+  override async deleteDocument(id: string) { await this.request(`/admin/knowledge/documents/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+  override async listQa() { return this.requestList<KnowledgeQa>("/admin/knowledge/qa"); }
+  override async saveQa(item: KnowledgeQa) { return this.saveResource(item, "/admin/knowledge/qa"); }
+  override async transitionQa(id: string, status: KnowledgeQa["status"]) { return this.request<KnowledgeQa>(`/admin/knowledge/qa/${encodeURIComponent(id)}/status`, { method: "POST", body: JSON.stringify({ status }) }); }
+  override async deleteQa(id: string) { await this.request(`/admin/knowledge/qa/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+  override async listScripts() { return this.requestList<ScriptTemplate>("/admin/knowledge/scripts"); }
+  override async saveScript(item: ScriptTemplate) { return this.saveResource(item, "/admin/knowledge/scripts"); }
+  override async deleteScript(id: string) { await this.request(`/admin/knowledge/scripts/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+  override async listPackages() { return this.requestList<PublishPackage>("/admin/knowledge/packages"); }
+  override async createPackage(input: Pick<PublishPackage, "name" | "exhibition" | "qaCount" | "documentCount">) { return this.request<PublishPackage>("/admin/knowledge/packages", { method: "POST", body: JSON.stringify(input) }); }
+  override async transitionPackage(id: string, status: PublishPackage["status"]) { return this.request<PublishPackage>(`/admin/knowledge/packages/${encodeURIComponent(id)}/status`, { method: "POST", body: JSON.stringify({ status }) }); }
+  override async listMissPool() { return this.requestList<MissPoolItem>("/admin/knowledge/miss-pool"); }
+  override async resolveMiss(id: string, status: MissPoolItem["status"]) { return this.request<MissPoolItem>(`/admin/knowledge/miss-pool/${encodeURIComponent(id)}/status`, { method: "POST", body: JSON.stringify({ status }) }); }
+
+  override async listGifs() { return this.requestList<GifAssetMeta>("/admin/assets?kind=gif"); }
+  override async createGif(input: Omit<GifAssetMeta, "id" | "createdAt">) { return this.request<GifAssetMeta>("/admin/assets", { method: "POST", body: JSON.stringify(input) }); }
   override async updateGif(id: string, patch: Partial<GifAssetMeta>) { return this.request<GifAssetMeta>(`/admin/assets/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(patch) }); }
   override async deleteGif(id: string) { await this.request(`/admin/assets/${encodeURIComponent(id)}`, { method: "DELETE" }); }
-  override async listVoiceConfigs() { return this.request<VoiceAsset[]>("/admin/assets/voice-configs"); }
-  override async saveVoiceConfig(item: VoiceAsset) {
-    return this.request<VoiceAsset>(`/admin/assets/voice-configs/${encodeURIComponent(item.id)}`, { method: "PUT", body: JSON.stringify(item) });
-  }
-  override async deleteVoiceConfig(id: string) { await this.request(`/admin/assets/voice-configs/${encodeURIComponent(id)}`, { method: "DELETE" }); }
-  override async listSceneBindings() { return this.request<SceneBinding[]>("/admin/assets/scene-bindings"); }
-  override async saveSceneBindings(bindings: SceneBinding[]) { return this.request<SceneBinding[]>("/admin/assets/scene-bindings", { method: "PUT", body: JSON.stringify(bindings) }); }
-  override async listIdle() { return this.request<IdleContent[]>("/admin/assets/idle-contents"); }
-  override async saveIdle(item: IdleContent) { return this.request<IdleContent>(`/admin/assets/idle-contents/${encodeURIComponent(item.id)}`, { method: "PUT", body: JSON.stringify(item) }); }
-  override async deleteIdle(id: string) { await this.request(`/admin/assets/idle-contents/${encodeURIComponent(id)}`, { method: "DELETE" }); }
-  override async listScripts() { return this.request<ScriptTemplate[]>("/admin/interaction/scripts"); }
-  override async saveScript(item: ScriptTemplate) { return this.request<ScriptTemplate>(`/admin/interaction/scripts/${encodeURIComponent(item.id)}`, { method: "PUT", body: JSON.stringify(item) }); }
-  override async deleteScript(id: string) { await this.request(`/admin/interaction/scripts/${encodeURIComponent(id)}`, { method: "DELETE" }); }
-  override async listWelcomeConfigs(exhibitionId?: string) { return this.request<WelcomeConfig[]>(`/admin/interaction/welcome-configs${exhibitionId ? `?exhibition_id=${encodeURIComponent(exhibitionId)}` : ""}`); }
-  override async saveWelcomeConfig(item: WelcomeConfig) { return this.request<WelcomeConfig>(`/admin/interaction/welcome-configs/${encodeURIComponent(item.id)}`, { method: "PUT", body: JSON.stringify(item) }); }
-  override async listExplainFlows(exhibitionId?: string) { return this.request<ExplainFlow[]>(`/admin/interaction/explain-flows${exhibitionId ? `?exhibition_id=${encodeURIComponent(exhibitionId)}` : ""}`); }
-  override async saveExplainFlow(item: ExplainFlow) { return this.request<ExplainFlow>(`/admin/interaction/explain-flows/${encodeURIComponent(item.id)}`, { method: "PUT", body: JSON.stringify(item) }); }
-  override async deleteExplainFlow(id: string) { await this.request(`/admin/interaction/explain-flows/${encodeURIComponent(id)}`, { method: "DELETE" }); }
-  override async listShoppingStrategies(exhibitionId?: string) { return this.request<ShoppingStrategy[]>(`/admin/interaction/shopping-strategies${exhibitionId ? `?exhibition_id=${encodeURIComponent(exhibitionId)}` : ""}`); }
-  override async saveShoppingStrategy(item: ShoppingStrategy) { return this.request<ShoppingStrategy>(`/admin/interaction/shopping-strategies/${encodeURIComponent(item.id)}`, { method: "PUT", body: JSON.stringify(item) }); }
-  override async deleteShoppingStrategy(id: string) { await this.request(`/admin/interaction/shopping-strategies/${encodeURIComponent(id)}`, { method: "DELETE" }); }
-  override async getSystemMonitor() { return this.request<SystemMonitor>("/admin/ops/monitor"); }
-  override async listAlerts() { return this.request<AlertEvent[]>("/admin/alerts"); }
-  override async acknowledgeAlert(id: string, operator = "current-user") { return this.request<AlertEvent>(`/admin/alerts/${encodeURIComponent(id)}/acknowledge`, { method: "POST", body: JSON.stringify({ operator }) }); }
+  override async listVoiceConfigs() { return this.requestList<VoiceAsset>("/admin/voice-configs"); }
+  override async saveVoiceConfig(item: VoiceAsset) { return this.saveResource(item, "/admin/voice-configs"); }
+  override async deleteVoiceConfig(id: string) { await this.request(`/admin/voice-configs/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+  override async listSceneBindings() { return this.requestList<SceneBinding>("/admin/scene-bindings"); }
+  override async saveSceneBindings(bindings: SceneBinding[]) { return this.request<SceneBinding[]>("/admin/scene-bindings", { method: "PUT", body: JSON.stringify({ bindings }) }); }
+  override async listIdle() { return this.requestList<IdleContent>("/admin/idle-content"); }
+  override async saveIdle(item: IdleContent) { return this.saveResource(item, "/admin/idle-content"); }
 }
 
 const runtimeEnv = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env ?? {};
-export const adminApi: AdminApiClient = runtimeEnv.VITE_ADMIN_API_MODE === "real" ? new FetchAdminApiClient() : new MockAdminApiClient();
+export function createAdminApi(mode?: string): AdminApiClient {
+  return mode === "mock" ? new MockAdminApiClient() : new FetchAdminApiClient();
+}
+export const adminApi: AdminApiClient = createAdminApi(runtimeEnv.VITE_ADMIN_API_MODE);
 
 export const DEFAULT_VOICES: VoiceAsset[] = EDGE_ZH_VOICES.map((voice) => ({
   id: `voice-edge-${voice.id}`,
