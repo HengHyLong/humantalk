@@ -270,9 +270,11 @@ export interface AdminApiClient {
   listExhibits(): Promise<Exhibit[]>;
   saveExhibit(item: Exhibit): Promise<Exhibit>;
   deleteExhibit(id: string): Promise<void>;
+  uploadExhibitImage(id: string, file: File): Promise<{ url: string }>;
   listRoutes(): Promise<ExhibitionRoute[]>;
   saveRoute(item: ExhibitionRoute): Promise<ExhibitionRoute>;
   deleteRoute(id: string): Promise<void>;
+  uploadRouteImage(id: string, file: File): Promise<{ url: string }>;
   listBroadcasts(): Promise<EmergencyBroadcast[]>;
   saveBroadcast(item: EmergencyBroadcast): Promise<EmergencyBroadcast>;
   transitionBroadcast(id: string, status: EmergencyBroadcast["status"]): Promise<EmergencyBroadcast>;
@@ -504,6 +506,7 @@ export class MockAdminApiClient implements AdminApiClient {
   async listExhibits() { return readStore<Exhibit[]>("exhibits", DEFAULT_EXHIBITS); }
   async saveExhibit(item: Exhibit) { const exhibitor = (await this.listExhibitors()).find((candidate) => candidate.id === item.exhibitorId); if (!exhibitor || exhibitor.exhibitionId !== item.exhibitionId) throw new Error("展品与展商必须属于同一场展会"); const saved = { ...item, updatedAt: now() }; writeStore("exhibits", [saved, ...(await this.listExhibits()).filter((candidate) => candidate.id !== item.id)]); return saved; }
   async deleteExhibit(id: string) { if ((await this.listPoints()).some((item) => item.exhibitId === id)) throw new Error("该展品仍被点位关联，请先解除关联后再删除。"); writeStore("exhibits", (await this.listExhibits()).filter((item) => item.id !== id)); }
+  async uploadExhibitImage(_id: string, file: File) { return { url: URL.createObjectURL(file) }; }
   async listRoutes() {
     const routes = await readStore<Array<ExhibitionRoute & { exhibitionId?: string; from?: string; to?: string }>>("routes", DEFAULT_ROUTES);
     const points = await this.listPoints();
@@ -516,6 +519,7 @@ export class MockAdminApiClient implements AdminApiClient {
   }
   async saveRoute(item: ExhibitionRoute) { const venue = (await this.listVenues()).find((candidate) => candidate.id === item.venueId); if (!venue) throw new Error("路线所属场地不存在"); const points = await this.listPoints(); if (item.pointIds.length < 2 || item.pointIds.some((id) => points.find((point) => point.id === id)?.venueId !== item.venueId)) throw new Error("路线至少需要两个属于同一场地的点位"); const saved = { ...item, updatedAt: now() }; writeStore("routes", [saved, ...(await this.listRoutes()).filter((candidate) => candidate.id !== item.id)]); return saved; }
   async deleteRoute(id: string) { writeStore("routes", (await this.listRoutes()).filter((item) => item.id !== id)); }
+  async uploadRouteImage(_id: string, file: File) { return { url: URL.createObjectURL(file) }; }
   async listBroadcasts() { return readStore<EmergencyBroadcast[]>("broadcasts", DEFAULT_BROADCASTS); }
   async saveBroadcast(item: EmergencyBroadcast) { const saved = { ...item, updatedAt: now() }; writeStore("broadcasts", [saved, ...(await this.listBroadcasts()).filter((candidate) => candidate.id !== item.id)]); return saved; }
   async transitionBroadcast(id: string, status: EmergencyBroadcast["status"]) { const list = await this.listBroadcasts(); const next = list.map((item) => item.id === id ? { ...item, status, updatedAt: now() } : item); writeStore("broadcasts", next); return next.find((item) => item.id === id) ?? list[0]; }
@@ -589,7 +593,8 @@ export class AdminApiError extends Error {
 export class FetchAdminApiClient extends MockAdminApiClient {
   private async request<T>(path: string, init?: RequestInit, retryAuth = true): Promise<T> {
     const token = window.localStorage.getItem(AUTH_TOKEN_KEY);
-    const response = await fetch(buildAdminFetchUrl(`/v1${path}`), { ...init, headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}), ...init?.headers } });
+    const isMultipart = typeof FormData !== "undefined" && init?.body instanceof FormData;
+    const response = await fetch(buildAdminFetchUrl(`/v1${path}`), { ...init, headers: { ...(!isMultipart ? { "Content-Type": "application/json" } : {}), ...(token ? { Authorization: `Bearer ${token}` } : {}), ...init?.headers } });
     if (response.status === 401 && retryAuth && path !== "/auth/login" && path !== "/auth/refresh") {
       try {
         await this.refreshAuth();
@@ -672,6 +677,7 @@ export class FetchAdminApiClient extends MockAdminApiClient {
   override async listRoutes() { return this.requestList<ExhibitionRoute>("/admin/event/routes"); }
   override async saveRoute(item: ExhibitionRoute) { return this.saveResource(item, "/admin/event/routes", `/admin/event/venues/${encodeURIComponent(item.venueId)}/routes`); }
   override async deleteRoute(id: string) { await this.request(`/admin/event/routes/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+  override async uploadRouteImage(id: string, file: File) { const body = new FormData(); body.append("file", file); return this.request<{ url: string }>(`/admin/event/routes/${encodeURIComponent(id)}/image`, { method: "POST", body }); }
 
   override async listExhibitors() { return this.requestList<Exhibitor>("/admin/event/exhibitors"); }
   override async saveExhibitor(item: Exhibitor) { return this.saveResource(item, "/admin/event/exhibitors", `/admin/event/exhibitions/${encodeURIComponent(item.exhibitionId)}/exhibitors`); }
@@ -680,6 +686,7 @@ export class FetchAdminApiClient extends MockAdminApiClient {
   override async listExhibits() { return this.requestList<Exhibit>("/admin/event/exhibits"); }
   override async saveExhibit(item: Exhibit) { return this.saveResource(item, "/admin/event/exhibits", `/admin/event/exhibitions/${encodeURIComponent(item.exhibitionId)}/exhibits`); }
   override async deleteExhibit(id: string) { await this.request(`/admin/event/exhibits/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+  override async uploadExhibitImage(id: string, file: File) { const body = new FormData(); body.append("file", file); return this.request<{ url: string }>(`/admin/event/exhibits/${encodeURIComponent(id)}/images`, { method: "POST", body }); }
 
   override async listSchedules() { return this.requestList<EventSchedule>("/admin/event/schedules"); }
   override async saveSchedule(item: EventSchedule) { return this.saveResource(item, "/admin/event/schedules", `/admin/event/exhibitions/${encodeURIComponent(item.exhibitionId)}/schedules`); }

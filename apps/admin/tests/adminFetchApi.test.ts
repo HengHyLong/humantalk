@@ -117,6 +117,25 @@ test("real Admin event operations map list, create, update, lifecycle and activa
   assert.equal(calls.at(-1)?.method, "DELETE");
 });
 
+test("real Admin uploads route and exhibit images as multipart without forcing JSON content type", async () => {
+  values.clear();
+  values.set("opentalking-admin-token", "upload-token");
+  const calls: Array<{ url: string; contentType: string | null; body: FormData }> = [];
+  globalThis.fetch = async (input, init) => {
+    calls.push({ url: String(input), contentType: new Headers(init?.headers).get("Content-Type"), body: init?.body as FormData });
+    return Response.json({ url: "https://cdn.example.test/image.png" });
+  };
+  const file = new File(["image"], "导航图.png", { type: "image/png" });
+  const api = new FetchAdminApiClient();
+  await api.uploadRouteImage("route/1", file);
+  assert.equal(calls.at(-1)?.url.endsWith("/admin/event/routes/route%2F1/image"), true);
+  assert.equal(calls.at(-1)?.contentType, null);
+  assert.equal(calls.at(-1)?.body.get("file"), file);
+  await api.uploadExhibitImage("exhibit/1", file);
+  assert.equal(calls.at(-1)?.url.endsWith("/admin/event/exhibits/exhibit%2F1/images"), true);
+  assert.equal(calls.at(-1)?.contentType, null);
+});
+
 test("real Admin system management maps RBAC, audit, monitor, alert and CSV endpoints", async () => {
   values.clear();
   values.set("opentalking-admin-token", "system-token");

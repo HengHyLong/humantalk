@@ -265,6 +265,7 @@ export type Exhibit = {
   category: string;
   modelNo: string;
   description: string;
+  imageUrls?: string[];
   status: ExhibitStatus;
   createdAt: string;
   updatedAt: string;
@@ -315,6 +316,7 @@ export type ExhibitionRoute = {
   directions: string[];
   estimatedMinutes: number;
   description: string;
+  imageUrl?: string | null;
   status: RouteStatus;
   createdAt: string;
   updatedAt: string;
