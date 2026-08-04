@@ -18,3 +18,14 @@ test("readonly users cannot use write buttons", () => {
   assert.equal(canUseButton("content_ops", "asset:gif:write"), true);
   assert.equal(canUseButton("sys_admin", "knowledge:rollback"), true);
 });
+
+test("lead and system permissions follow the planned role matrix", () => {
+  assert.equal(canAccess("sys_admin", "lead:view_sensitive"), true);
+  assert.equal(canAccess("content_ops", "lead:feedback"), true);
+  assert.equal(canAccess("data_viewer", "lead:export"), true);
+  assert.equal(canAccess("data_viewer", "lead:view_sensitive"), false);
+  assert.equal(canAccess("security_audit", "audit:trace"), true);
+  assert.equal(canAccess("security_audit", "system:ops"), false);
+  assert.equal(canUseButton("readonly", "lead:write"), false);
+  assert.equal(canUseButton("sys_admin", "ops:failover"), true);
+});

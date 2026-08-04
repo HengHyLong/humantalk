@@ -94,3 +94,44 @@ test("Mock Admin API covers event operations CRUD and relationships", async () =
   assert.equal((await api.listExhibits()).some((item) => item.id === exhibit.id), false);
   assert.equal((await api.listExhibitors()).some((item) => item.id === exhibitor.id), false);
 });
+
+test("Mock Admin API covers lead filtering, state flow, role permissions, trace and alerts", async () => {
+  const api = new MockAdminApiClient();
+  assert.equal((await api.listLeads({ exhibitionId: "exhibition-1" })).every((item) => item.exhibitionId === "exhibition-1"), true);
+  const lead = (await api.listLeads())[0];
+  assert.equal((await api.updateLeadStatus(lead.id, "contacted", "已电话联系")).status, "contacted");
+  assert.equal((await api.getLead(lead.id))?.statusHistory.at(-1)?.note, "已电话联系");
+  assert.match(await api.exportLeads({ exhibitionId: "exhibition-1" }), /线索ID/);
+  const feedback = (await api.listFeedback({ status: "pending" }))[0];
+  assert.equal((await api.resolveFeedback(feedback.id, "已跟进", "测试人员")).status, "handled");
+  const roles = await api.listRoles();
+  const permissions = await api.listPermissionTree();
+  assert.ok(roles.some((role) => role.code === "sys_admin"));
+  const collectMenus = (nodes: typeof permissions): typeof permissions => nodes.flatMap((node) => [node, ...(node.children ? collectMenus(node.children) : [])]);
+  const menuNodes = collectMenus(permissions);
+  assert.ok(menuNodes.some((node) => node.code === "system:user"));
+  assert.equal(menuNodes.some((node) => node.code === "system:permission"), false);
+  assert.equal(menuNodes.every((node) => node.type === "menu"), true);
+  assert.ok(menuNodes.find((node) => node.code === "event:group:live")?.children?.some((node) => node.code === "lead:view"));
+  assert.equal((await api.getTraceRecord("trace-20260803-001"))?.spans.length, 2);
+  const alert = (await api.listAlerts()).find((item) => item.status === "active");
+  assert.equal((await api.acknowledgeAlert(alert!.id, "测试人员")).status, "acknowledged");
+  assert.equal((await api.getSystemMonitor()).services.length > 0, true);
+});
+
+test("Mock Admin API covers interaction strategy configuration", async () => {
+  const api = new MockAdminApiClient();
+  const scripts = await api.listScripts();
+  assert.ok(scripts.some((item) => item.id === "script-3" && item.scene === "explain"));
+  const welcome = (await api.listWelcomeConfigs("exhibition-1"))[0];
+  assert.ok(welcome.triggers.includes("终端启动"));
+  assert.equal((await api.listWelcomeConfigs("exhibition-2")).length, 0);
+  assert.equal((await api.saveWelcomeConfig({ ...welcome, notices: "请有序参观" })).notices, "请有序参观");
+  const flow = (await api.listExplainFlows("exhibition-1"))[0];
+  assert.equal(flow.exhibitionId, "exhibition-1");
+  assert.equal((await api.saveExplainFlow({ ...flow, status: "inactive" })).status, "inactive");
+  const strategy = (await api.listShoppingStrategies("exhibition-1"))[0];
+  assert.deepEqual(strategy.exhibitIds, ["exhibit-1"]);
+  assert.equal(strategy.exhibitCategories.includes("工业软件"), false);
+  assert.equal((await api.saveShoppingStrategy({ ...strategy, intentThreshold: 80 })).intentThreshold, 80);
+});

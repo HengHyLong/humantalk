@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, type MouseEvent, type ReactNode } from "react";
 import { ApiError, apiGet, type AvatarSummary, type SceneBackgroundAsset, type SceneComposition } from "../lib/api";
 import { DEFAULT_VOICES, adminApi } from "./api";
 import { openTalkingClient } from "./openTalkingClient";
@@ -11,12 +11,12 @@ type TtsHealthSummary = {
   tts_enabled_providers?: string[];
 };
 
-function Badge({ children, tone = "slate" }: { children: ReactNode; tone?: Tone }) {
+export function Badge({ children, tone = "slate" }: { children: ReactNode; tone?: Tone }) {
   const styles: Record<Tone, string> = { slate: "bg-slate-100 text-slate-600", cyan: "bg-cyan-50 text-cyan-700", green: "bg-emerald-50 text-emerald-700", amber: "bg-amber-50 text-amber-700", rose: "bg-rose-50 text-rose-700", violet: "bg-violet-50 text-violet-700" };
   return <span className={`inline-flex rounded-full px-2 py-1 text-[11px] font-semibold ${styles[tone]}`}>{children}</span>;
 }
 
-export function Button({ children, onClick, variant = "primary", disabled = false, className = "" }: { children: ReactNode; onClick?: () => void; variant?: "primary" | "secondary" | "ghost" | "danger"; disabled?: boolean; className?: string }) {
+export function Button({ children, onClick, variant = "primary", disabled = false, className = "" }: { children: ReactNode; onClick?: (event: MouseEvent<HTMLButtonElement>) => void; variant?: "primary" | "secondary" | "ghost" | "danger"; disabled?: boolean; className?: string }) {
   const styles = { primary: "bg-cyan-600 text-white hover:bg-cyan-700", secondary: "border border-slate-200 bg-white text-slate-700 hover:border-cyan-300 hover:text-cyan-700", ghost: "text-slate-500 hover:bg-slate-100 hover:text-slate-800", danger: "border border-rose-200 bg-white text-rose-600 hover:bg-rose-50" };
   return <button type="button" onClick={onClick} disabled={disabled} className={`inline-flex items-center justify-center gap-2 rounded-xl px-3.5 py-2 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-45 ${styles[variant]} ${className}`}>{children}</button>;
 }

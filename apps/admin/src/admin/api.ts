@@ -21,6 +21,18 @@ import type {
   ScriptTemplate,
   VoiceAsset,
   ExhibitionStatus,
+  Lead,
+  LeadStatus,
+  Feedback,
+  AdminUserRecord,
+  RoleRecord,
+  PermissionNode,
+  AuditLog,
+  SystemMonitor,
+  AlertEvent,
+  WelcomeConfig,
+  ExplainFlow,
+  ShoppingStrategy,
 } from "./types";
 
 const STORAGE_PREFIX = "opentalking-admin-";
@@ -69,6 +81,20 @@ const DEFAULT_QA: KnowledgeQa[] = [
 const DEFAULT_SCRIPTS: ScriptTemplate[] = [
   { id: "script-1", name: "标准迎宾", scene: "welcome", content: "您好，欢迎来到{exhibition_name}。我是数字人讲解员，很高兴为您服务。", exhibition: "2026 西部博览会", status: "active", updatedAt: "2026-08-02" },
   { id: "script-2", name: "展区讲解开场", scene: "explain", content: "这里是{booth_code}展区，我可以为您介绍展商和展品信息。", exhibition: "2026 西部博览会", status: "active", updatedAt: "2026-08-01" },
+  { id: "script-3", name: "论坛活动介绍", scene: "explain", content: "本届展会围绕产业协同与技术创新安排了主题论坛和现场活动，我可以为您介绍活动时间、地点和议程。", exhibition: "2026 西部博览会", status: "active", updatedAt: "2026-08-03" },
+];
+
+const DEFAULT_WELCOME_CONFIGS: WelcomeConfig[] = [
+  { id: "welcome-config-1", exhibitionId: "exhibition-1", exhibitionName: "2026 西部博览会", triggers: ["终端启动", "用户靠近", "唤醒词：你好小展"], scriptId: "script-1", highlights: ["智能制造展区", "主论坛活动", "现场签到服务"], checkInGuide: "请前往1号入口签到台，出示预约二维码完成入场。", notices: "请按照现场工作人员指引有序参观，保管好随身物品。", routingStrategy: "按时段优先推荐当前开放展馆", status: "active", updatedAt: "2026-08-03 16:20:00" },
+];
+
+const DEFAULT_EXPLAIN_FLOWS: ExplainFlow[] = [
+  { id: "explain-flow-1", exhibitionId: "exhibition-1", exhibitionName: "2026 西部博览会", name: "智能制造展区讲解", keywords: ["协作机器人", "智能制造", "A1馆"], knowledgeCategories: ["展商", "展品", "活动排期"], interruptionPolicy: "sensitive_filter", scriptId: "script-2", status: "active", updatedAt: "2026-08-03 15:10:00" },
+  { id: "explain-flow-2", exhibitionId: "exhibition-1", exhibitionName: "2026 西部博览会", name: "论坛活动讲解", keywords: ["主论坛", "开幕式", "活动排期"], knowledgeCategories: ["活动排期", "展区"], interruptionPolicy: "allow", scriptId: "script-3", status: "inactive", updatedAt: "2026-08-02 11:30:00" },
+];
+
+const DEFAULT_SHOPPING_STRATEGIES: ShoppingStrategy[] = [
+  { id: "shopping-strategy-1", exhibitionId: "exhibition-1", exhibitionName: "2026 西部博览会", name: "协作机器人展品推荐", tags: ["协作机器人", "智能制造", "产线"], tagWeight: 0.7, compareDimensions: ["适用场景", "部署周期", "服务能力"], intentThreshold: 70, exhibitCategories: ["智能装备"], exhibitIds: ["exhibit-1"], status: "active", updatedAt: "2026-08-03 14:40:00" },
 ];
 
 const DEFAULT_PACKAGES: PublishPackage[] = [
@@ -121,6 +147,59 @@ const DEFAULT_BROADCASTS: EmergencyBroadcast[] = [
   { id: "broadcast-1", exhibitionId: "exhibition-1", title: "现场安全提示", content: "请观众按照现场工作人员指引有序参观。", priority: "normal", targetTerminals: "全部终端", effectiveAt: "2026-10-15 08:00", status: "draft", createdAt: "2026-08-02 09:00", updatedAt: "2026-08-02 09:00" },
 ];
 
+const DEFAULT_LEADS: Lead[] = [
+  { id: "lead-1001", exhibitionId: "exhibition-1", exhibitionName: "2026 西部博览会", terminalId: "terminal-a01", terminalName: "A馆迎宾终端", companyName: "成都未来智造有限公司", contactName: "李明", phone: "13800138000", email: "liming@example.com", intentSummary: "关注协作机器人和数字化产线方案，希望安排商务洽谈。", status: "new", interestedExhibitorIds: ["exhibitor-1"], interestedExhibitIds: ["exhibit-1"], qrToken: "qr-lead-1001", createdAt: "2026-08-03 10:24:00", statusHistory: [{ status: "new", operator: "系统", time: "2026-08-03 10:24:00" }] },
+  { id: "lead-1002", exhibitionId: "exhibition-1", exhibitionName: "2026 西部博览会", terminalId: "terminal-b02", terminalName: "B馆服务终端", companyName: "重庆文旅发展集团", contactName: "周芳", phone: "13900139000", email: "zhoufang@example.com", intentSummary: "希望了解智慧文旅导览平台的合作模式。", status: "contacted", interestedExhibitorIds: ["exhibitor-2"], interestedExhibitIds: ["exhibit-2"], qrToken: "qr-lead-1002", createdAt: "2026-08-02 15:12:00", statusHistory: [{ status: "new", operator: "系统", time: "2026-08-02 15:12:00" }, { status: "contacted", operator: "张运营", time: "2026-08-03 09:30:00", note: "已发送产品资料" }] },
+  { id: "lead-1003", exhibitionId: "exhibition-2", exhibitionName: "2027 智能制造专题展", terminalId: "terminal-preview", terminalName: "专题展预览终端", companyName: "绵阳工业服务中心", contactName: "王凯", phone: "13700137000", email: "wangkai@example.com", intentSummary: "预约专题展展商入驻咨询。", status: "converted", interestedExhibitorIds: [], interestedExhibitIds: [], qrToken: "qr-lead-1003", createdAt: "2026-08-01 11:08:00", statusHistory: [{ status: "new", operator: "系统", time: "2026-08-01 11:08:00" }, { status: "converted", operator: "李运营", time: "2026-08-02 14:20:00" }] },
+];
+
+const DEFAULT_FEEDBACK: Feedback[] = [
+  { id: "feedback-1", exhibitionId: "exhibition-1", type: "服务反馈", score: 5, content: "咨询转人工很顺畅，资料很有帮助。", traceId: "trace-20260803-001", status: "pending", createdAt: "2026-08-03 10:31:00" },
+  { id: "feedback-2", exhibitionId: "exhibition-1", type: "体验问题", score: 3, content: "B馆终端扫码后页面加载稍慢。", traceId: "trace-20260802-018", status: "handled", createdAt: "2026-08-02 16:14:00", handledAt: "2026-08-03 09:00:00", handledBy: "系统管理员", note: "已纳入终端网络巡检" },
+];
+
+const DEFAULT_ADMIN_USERS: AdminUserRecord[] = [
+  { id: "admin-user-1", username: "admin", displayName: "系统管理员", gender: "男", phone: "18888888888", email: "admin@example.com", department: "研发部", status: "active", roleIds: ["role-admin"], createdAt: "2026-07-20 09:00:00", lastLoginAt: "2026-08-04 09:45:42", lastLoginIp: "117.176.129.180" },
+  { id: "admin-user-2", username: "content.ops", displayName: "内容运营", gender: "女", phone: "13900001111", email: "content@example.com", department: "运营部", status: "active", roleIds: ["role-content"], createdAt: "2026-07-22 14:20:00", lastLoginAt: "2026-08-04 09:20:12", lastLoginIp: "34.150.63.218" },
+  { id: "admin-user-3", username: "audit", displayName: "安全审计", gender: "男", phone: "13600002222", email: "audit@example.com", department: "安全部", status: "active", roleIds: ["role-audit"], createdAt: "2026-07-23 11:12:00", lastLoginAt: "2026-08-03 18:10:02", lastLoginIp: "10.0.0.18" },
+];
+
+const DEFAULT_ROLES: RoleRecord[] = [
+  { id: "role-admin", code: "sys_admin", name: "系统管理员", dataScope: "全部数据", level: 1, description: "拥有全部管理权限", permissionIds: ["dashboard:view", "event:exhibition", "event:exhibitor", "event:exhibit", "event:schedule", "event:venue", "event:point", "event:route", "event:broadcast", "lead:view", "asset:avatar", "asset:voice", "asset:scene", "asset:idle", "knowledge:document", "knowledge:base", "knowledge:memory", "interact:test", "report:interaction", "system:user", "system:role", "system:audit", "system:ops"], createdAt: "2026-07-20 09:00:00" },
+  { id: "role-content", code: "content_ops", name: "内容运营", dataScope: "自定义", level: 2, description: "负责展会内容和线索运营", permissionIds: ["dashboard:view", "event:exhibition", "event:exhibitor", "event:exhibit", "event:schedule", "event:venue", "event:point", "event:route", "event:broadcast", "lead:view", "asset:avatar", "asset:voice", "asset:scene", "asset:idle", "knowledge:document", "knowledge:base", "knowledge:memory", "interact:test"], createdAt: "2026-07-22 14:20:00" },
+  { id: "role-audit", code: "security_audit", name: "安全审计", dataScope: "全部数据", level: 3, description: "查看审计日志与调用链路", permissionIds: ["dashboard:view", "report:interaction", "system:audit"], createdAt: "2026-07-23 11:12:00" },
+];
+
+const DEFAULT_PERMISSION_TREE: PermissionNode[] = [
+  { id: "menu-dashboard", parentId: null, name: "首页", code: "dashboard:view", type: "menu", path: "/dashboard", apiPattern: "" },
+  { id: "menu-event", parentId: null, name: "展会运营", code: "event:view", type: "menu", path: "/event", apiPattern: "" },
+  ...[
+    ["展会列表", "event:exhibition", "/event/exhibition"], ["展商管理", "event:exhibitor", "/event/exhibitor"], ["展品管理", "event:exhibit", "/event/exhibit"], ["活动排期", "event:schedule", "/event/schedule"], ["场地管理", "event:venue", "/event/venue"], ["点位管理", "event:point", "/event/point"], ["路线规划", "event:route", "/event/route"], ["应急播报", "event:broadcast", "/event/broadcast"], ["线索运营", "lead:view", "/lead"],
+  ].map(([name, code, path]) => ({ id: `menu-${code}`, parentId: "menu-event", name, code, type: "menu" as const, path, apiPattern: "" })),
+  { id: "menu-asset", parentId: null, name: "数字人中心", code: "asset:view", type: "menu", path: "/asset", apiPattern: "" },
+  ...[["数字人形象", "asset:avatar", "/asset/avatar"], ["声音配置", "asset:voice", "/asset/voice"], ["场景绑定", "asset:scene", "/asset/scene"], ["待机内容", "asset:idle", "/asset/idle"]].map(([name, code, path]) => ({ id: `menu-${code}`, parentId: "menu-asset", name, code, type: "menu" as const, path, apiPattern: "" })),
+  { id: "menu-knowledge", parentId: null, name: "知识中心", code: "knowledge:view", type: "menu", path: "/knowledge", apiPattern: "" },
+  ...[["文档资料", "knowledge:document", "/knowledge/document"], ["知识库", "knowledge:base", "/knowledge/base"], ["记忆库", "knowledge:memory", "/knowledge/memory"], ["问答知识", "knowledge:qa", "/knowledge/qa"], ["官方话术", "knowledge:script", "/knowledge/script"], ["发布审核", "knowledge:package", "/knowledge/package"]].map(([name, code, path]) => ({ id: `menu-${code}`, parentId: "menu-knowledge", name, code, type: "menu" as const, path, apiPattern: "" })),
+  { id: "menu-interact", parentId: null, name: "交互管理", code: "interact:view", type: "menu", path: "/interact", apiPattern: "" },
+  ...[["实时测试", "interact:test", "/interact/test"], ["欢迎配置", "interact:welcome", "/interact/welcome"], ["讲解流程", "interact:explain", "/interact/explain"], ["导购策略", "interact:shopping", "/interact/shopping"]].map(([name, code, path]) => ({ id: `menu-${code}`, parentId: "menu-interact", name, code, type: "menu" as const, path, apiPattern: "" })),
+  { id: "menu-report", parentId: null, name: "数据分析", code: "report:interaction", type: "menu", path: "/report/interaction", apiPattern: "" },
+  { id: "menu-system", parentId: null, name: "系统管理", code: "system:view", type: "menu", path: "/system", apiPattern: "" },
+  ...[["用户管理", "system:user", "/system/user"], ["角色管理", "system:role", "/system/role"], ["审计日志", "system:audit", "/system/audit"], ["监控告警", "system:ops", "/system/ops"]].map(([name, code, path]) => ({ id: `menu-${code}`, parentId: "menu-system", name, code, type: "menu" as const, path, apiPattern: "" })),
+];
+
+const DEFAULT_AUDIT_LOGS: AuditLog[] = [
+  { id: "audit-1", traceId: "trace-20260803-001", username: "admin", ip: "117.176.129.180", ipLocation: "中国四川省成都市", description: "用户登录", browser: "Chrome 150", durationMs: 78, createdAt: "2026-08-04 09:45:42", resource: "认证服务", action: "login", spans: [{ id: "span-1", parentId: null, service: "gateway", operation: "POST /auth/login", startAt: "2026-08-04 09:45:42.012", durationMs: 78, status: "ok", attributes: { method: "POST", path: "/api/v1/auth/login" } }, { id: "span-2", parentId: "span-1", service: "user-service", operation: "查询用户", startAt: "2026-08-04 09:45:42.026", durationMs: 41, status: "ok", attributes: { user: "admin" } }] },
+  { id: "audit-2", traceId: "trace-20260802-018", username: "content.ops", ip: "34.150.63.218", ipLocation: "美国德克萨斯州奥斯汀", description: "新增线索", browser: "Chrome 150", durationMs: 9, createdAt: "2026-08-04 09:43:01", resource: "线索管理", action: "create", after: { leadId: "lead-1001", status: "new" }, spans: [{ id: "span-3", parentId: null, service: "lead-service", operation: "POST /leads", startAt: "2026-08-04 09:43:01.102", durationMs: 9, status: "ok", attributes: { exhibitionId: "exhibition-1" } }] },
+  { id: "audit-3", traceId: "trace-20260802-017", username: "admin", ip: "34.150.63.218", ipLocation: "美国德克萨斯州奥斯汀", description: "更新菜单权限", browser: "Chrome 150", durationMs: 75, createdAt: "2026-08-04 09:42:12", resource: "角色管理", action: "update", before: { permissionCount: 4 }, after: { permissionCount: 8 }, spans: [{ id: "span-4", parentId: null, service: "admin-service", operation: "PUT /roles/role-admin", startAt: "2026-08-04 09:42:12.210", durationMs: 75, status: "ok", attributes: { role: "sys_admin" } }] },
+];
+
+const DEFAULT_MONITOR: SystemMonitor = { os: "GNU/Linux Debian GNU/Linux 11 (bullseye) build 5.10.0-44-cloud-amd64", ip: "172.17.0.1", uptime: "56天18小时", refreshedAt: "2026-08-04 09:46:31", cpuPercent: 8, memoryPercent: 82.18, swapPercent: 6.65, diskPercent: 43.96, cpuHistory: [4, 2, 7, 1, 1], memoryHistory: [82, 82, 82, 82, 82], services: [{ id: "svc-admin", name: "管理后台", status: "ok", latencyMs: 32, checkedAt: "2026-08-04 09:46:31", description: "管理 API 与权限服务" }, { id: "svc-lead", name: "线索服务", status: "ok", latencyMs: 48, checkedAt: "2026-08-04 09:46:30", description: "线索采集与反馈服务" }, { id: "svc-knowledge", name: "知识服务", status: "warn", latencyMs: 126, checkedAt: "2026-08-04 09:46:29", description: "知识检索服务" }], terminals: [{ id: "terminal-a01", name: "A馆迎宾终端", exhibitionId: "exhibition-1", location: "A馆 1号入口", status: "online", lastHeartbeatAt: "2026-08-04 09:46:28", version: "1.4.2", cpuPercent: 18, memoryPercent: 46 }, { id: "terminal-b02", name: "B馆服务终端", exhibitionId: "exhibition-1", location: "B馆 服务台", status: "online", lastHeartbeatAt: "2026-08-04 09:46:27", version: "1.4.2", cpuPercent: 24, memoryPercent: 52 }, { id: "terminal-preview", name: "专题展预览终端", exhibitionId: "exhibition-2", location: "运营中心", status: "offline", lastHeartbeatAt: "2026-08-04 09:38:10", version: "1.3.8", cpuPercent: 0, memoryPercent: 0 }] };
+
+const DEFAULT_ALERTS: AlertEvent[] = [
+  { id: "alert-1", type: "服务延迟", severity: "normal", target: "知识服务", content: "近 5 分钟平均响应时间超过 100ms", status: "active", occurredAt: "2026-08-04 09:40:12" },
+  { id: "alert-2", type: "终端离线", severity: "high", target: "专题展预览终端", content: "超过 5 分钟未收到心跳", status: "acknowledged", occurredAt: "2026-08-04 09:20:08", acknowledgedBy: "admin", acknowledgedAt: "2026-08-04 09:22:31" },
+];
+
 export interface AdminApiClient {
   login(username: string, password: string): Promise<{ token: string; user: AdminUser }>;
   getDashboard(): Promise<DashboardData>;
@@ -146,6 +225,14 @@ export interface AdminApiClient {
   listScripts(): Promise<ScriptTemplate[]>;
   saveScript(item: ScriptTemplate): Promise<ScriptTemplate>;
   deleteScript(id: string): Promise<void>;
+  listWelcomeConfigs(exhibitionId?: string): Promise<WelcomeConfig[]>;
+  saveWelcomeConfig(item: WelcomeConfig): Promise<WelcomeConfig>;
+  listExplainFlows(exhibitionId?: string): Promise<ExplainFlow[]>;
+  saveExplainFlow(item: ExplainFlow): Promise<ExplainFlow>;
+  deleteExplainFlow(id: string): Promise<void>;
+  listShoppingStrategies(exhibitionId?: string): Promise<ShoppingStrategy[]>;
+  saveShoppingStrategy(item: ShoppingStrategy): Promise<ShoppingStrategy>;
+  deleteShoppingStrategy(id: string): Promise<void>;
   listPackages(): Promise<PublishPackage[]>;
   createPackage(input: Pick<PublishPackage, "name" | "exhibition" | "qaCount" | "documentCount">): Promise<PublishPackage>;
   transitionPackage(id: string, status: PublishPackage["status"]): Promise<PublishPackage>;
@@ -177,10 +264,79 @@ export interface AdminApiClient {
   listSchedules(): Promise<EventSchedule[]>;
   saveSchedule(item: EventSchedule): Promise<EventSchedule>;
   deleteSchedule(id: string): Promise<void>;
+  listLeads(filters?: { exhibitionId?: string; keyword?: string; status?: LeadStatus | ""; from?: string; to?: string }): Promise<Lead[]>;
+  getLead(id: string): Promise<Lead | null>;
+  saveLead(item: Lead): Promise<Lead>;
+  updateLeadStatus(id: string, status: LeadStatus, note?: string): Promise<Lead>;
+  exportLeads(filters?: { exhibitionId?: string; keyword?: string; status?: string; from?: string; to?: string }): Promise<string>;
+  listFeedback(filters?: { exhibitionId?: string; keyword?: string; status?: Feedback["status"] }): Promise<Feedback[]>;
+  resolveFeedback(id: string, note: string, operator?: string): Promise<Feedback>;
+  listAdminUsers(filters?: { keyword?: string; status?: AdminUserRecord["status"] }): Promise<AdminUserRecord[]>;
+  saveAdminUser(item: AdminUserRecord): Promise<AdminUserRecord>;
+  deleteAdminUser(id: string): Promise<void>;
+  resetAdminPassword(id: string): Promise<void>;
+  exportAdminUsers(filters?: { keyword?: string; status?: AdminUserRecord["status"] }): Promise<string>;
+  listRoles(): Promise<RoleRecord[]>;
+  saveRole(item: RoleRecord): Promise<RoleRecord>;
+  deleteRole(id: string): Promise<void>;
+  listPermissionTree(): Promise<PermissionNode[]>;
+  savePermissionNode(item: PermissionNode): Promise<PermissionNode>;
+  deletePermissionNode(id: string): Promise<void>;
+  listAuditLogs(filters?: { username?: string; ip?: string; keyword?: string; from?: string; to?: string }): Promise<AuditLog[]>;
+  getTraceRecord(id: string): Promise<AuditLog | null>;
+  exportAuditLogs(filters?: { username?: string; ip?: string; keyword?: string; from?: string; to?: string }): Promise<string>;
+  clearAuditLogs(): Promise<void>;
+  getSystemMonitor(): Promise<SystemMonitor>;
+  listAlerts(): Promise<AlertEvent[]>;
+  acknowledgeAlert(id: string, operator?: string): Promise<AlertEvent>;
 }
 
 function buildUser(username: string, role: AdminUser["role"]): AdminUser {
   return { id: `user-${username}`, username, displayName: username === "admin" ? "管理员" : username, role, permissions: ROLE_PERMISSIONS[role], buttonPermissions: ROLE_BUTTON_PERMISSIONS[role] };
+}
+
+const INTERACTION_MOCK_VERSION = "2026-08-04-v2";
+
+function migrateInteractionMockData(): void {
+  if (readStore<string>("interaction-mock-version", "") === INTERACTION_MOCK_VERSION) return;
+  const exhibitions = readStore<Exhibition[]>("exhibitions", DEFAULT_EXHIBITIONS);
+  const exhibitionName = new Map(exhibitions.map((item) => [item.id, item.name]));
+  const fallbackExhibitionId = exhibitions.find((item) => item.status === "operating")?.id || exhibitions[0]?.id || "exhibition-1";
+  const scripts = readStore<ScriptTemplate[]>("scripts", DEFAULT_SCRIPTS);
+  const nextScripts = [...scripts, ...DEFAULT_SCRIPTS.filter((item) => !scripts.some((current) => current.id === item.id))];
+  const scriptById = new Map(nextScripts.map((item) => [item.id, item]));
+  const welcomeScriptId = nextScripts.find((item) => item.scene === "welcome")?.id || "";
+  const explainScriptId = nextScripts.find((item) => item.scene === "explain")?.id || "";
+  const normalizeExhibition = (id: string | undefined) => exhibitionName.has(id || "") ? id as string : fallbackExhibitionId;
+  const welcomeConfigs = readStore<WelcomeConfig[]>("welcome-configs", DEFAULT_WELCOME_CONFIGS).map((item) => {
+    const itemExhibitionId = normalizeExhibition(item.exhibitionId);
+    return { ...item, exhibitionId: itemExhibitionId, exhibitionName: exhibitionName.get(itemExhibitionId) || item.exhibitionName, scriptId: scriptById.get(item.scriptId)?.scene === "welcome" ? item.scriptId : welcomeScriptId };
+  });
+  const explainFlows = readStore<ExplainFlow[]>("explain-flows", DEFAULT_EXPLAIN_FLOWS).map((item) => ({
+    ...item,
+    exhibitionId: normalizeExhibition(item.exhibitionId),
+    exhibitionName: exhibitionName.get(normalizeExhibition(item.exhibitionId)) || item.exhibitionName,
+    scriptId: item.id === "explain-flow-2" && item.scriptId === "script-2" ? "script-3" : scriptById.get(item.scriptId)?.scene === "explain" ? item.scriptId : explainScriptId,
+    knowledgeCategories: item.id === "explain-flow-2" && item.knowledgeCategories.includes("论坛") ? ["活动排期", "展区"] : item.knowledgeCategories,
+  }));
+  const exhibitById = new Map(readStore<Exhibit[]>("exhibits", DEFAULT_EXHIBITS).map((item) => [item.id, item]));
+  const shoppingStrategies = readStore<ShoppingStrategy[]>("shopping-strategies", DEFAULT_SHOPPING_STRATEGIES).map((item) => {
+    const itemExhibitionId = normalizeExhibition(item.exhibitionId);
+    const validExhibitIds = (item.exhibitIds || []).filter((id) => exhibitById.get(id)?.exhibitionId === itemExhibitionId);
+    return {
+      ...item,
+      exhibitionId: itemExhibitionId,
+      exhibitionName: exhibitionName.get(itemExhibitionId) || item.exhibitionName,
+      exhibitIds: validExhibitIds,
+      exhibitCategories: item.id === "shopping-strategy-1" && item.exhibitCategories.includes("工业软件") ? ["智能装备"] : item.exhibitCategories,
+      tags: item.id === "shopping-strategy-1" && item.tags.includes("机器人") ? ["协作机器人", "智能制造", "产线"] : item.tags,
+    };
+  });
+  writeStore("scripts", nextScripts);
+  writeStore("welcome-configs", welcomeConfigs);
+  writeStore("explain-flows", explainFlows);
+  writeStore("shopping-strategies", shoppingStrategies);
+  writeStore("interaction-mock-version", INTERACTION_MOCK_VERSION);
 }
 
 export class MockAdminApiClient implements AdminApiClient {
@@ -234,9 +390,17 @@ export class MockAdminApiClient implements AdminApiClient {
   async saveQa(item: KnowledgeQa) { const list = await this.listQa(); const next = [item, ...list.filter((candidate) => candidate.id !== item.id)]; writeStore("qa", next); return item; }
   async transitionQa(id: string, status: KnowledgeQa["status"]) { const list = await this.listQa(); const next = list.map((item) => item.id === id ? { ...item, status, reviewer: status === "published" ? "当前用户" : item.reviewer, updatedAt: now() } : item); writeStore("qa", next); return next.find((item) => item.id === id) ?? list[0]; }
   async deleteQa(id: string) { await this.transitionQa(id, "archived"); }
-  async listScripts() { return readStore("scripts", DEFAULT_SCRIPTS); }
+  async listScripts() { migrateInteractionMockData(); return readStore("scripts", DEFAULT_SCRIPTS); }
   async saveScript(item: ScriptTemplate) { const next = [item, ...(await this.listScripts()).filter((candidate) => candidate.id !== item.id)]; writeStore("scripts", next); return item; }
   async deleteScript(id: string) { writeStore("scripts", (await this.listScripts()).filter((item) => item.id !== id)); }
+  async listWelcomeConfigs(exhibitionId?: string) { migrateInteractionMockData(); return (await readStore<WelcomeConfig[]>("welcome-configs", DEFAULT_WELCOME_CONFIGS)).filter((item) => !exhibitionId || exhibitionId === "all" || item.exhibitionId === exhibitionId); }
+  async saveWelcomeConfig(item: WelcomeConfig) { const exhibition = (await this.listExhibitions()).find((candidate) => candidate.id === item.exhibitionId); if (!exhibition) throw new Error("欢迎配置所属展会不存在"); const scripts = await this.listScripts(); if (!scripts.some((script) => script.id === item.scriptId && script.scene === "welcome")) throw new Error("欢迎配置必须关联迎宾话术"); const saved = { ...item, exhibitionName: exhibition.name, updatedAt: now() }; writeStore("welcome-configs", [saved, ...(await this.listWelcomeConfigs()).filter((candidate) => candidate.id !== item.id)]); return saved; }
+  async listExplainFlows(exhibitionId?: string) { migrateInteractionMockData(); return (await readStore<ExplainFlow[]>("explain-flows", DEFAULT_EXPLAIN_FLOWS)).filter((item) => !exhibitionId || exhibitionId === "all" || item.exhibitionId === exhibitionId); }
+  async saveExplainFlow(item: ExplainFlow) { const exhibition = (await this.listExhibitions()).find((candidate) => candidate.id === item.exhibitionId); if (!exhibition) throw new Error("讲解流程所属展会不存在"); const scripts = await this.listScripts(); if (!scripts.some((script) => script.id === item.scriptId && script.scene === "explain")) throw new Error("讲解流程必须关联讲解话术"); const saved = { ...item, exhibitionName: exhibition.name, updatedAt: now() }; writeStore("explain-flows", [saved, ...(await this.listExplainFlows()).filter((candidate) => candidate.id !== item.id)]); return saved; }
+  async deleteExplainFlow(id: string) { writeStore("explain-flows", (await this.listExplainFlows()).filter((item) => item.id !== id)); }
+  async listShoppingStrategies(exhibitionId?: string) { migrateInteractionMockData(); return (await readStore<ShoppingStrategy[]>("shopping-strategies", DEFAULT_SHOPPING_STRATEGIES)).map((item) => ({ ...item, exhibitIds: item.exhibitIds ?? [] })).filter((item) => !exhibitionId || exhibitionId === "all" || item.exhibitionId === exhibitionId); }
+  async saveShoppingStrategy(item: ShoppingStrategy) { const exhibition = (await this.listExhibitions()).find((candidate) => candidate.id === item.exhibitionId); if (!exhibition) throw new Error("导购策略所属展会不存在"); const exhibits = await this.listExhibits(); const exhibitIds = (item.exhibitIds || []).filter((id) => exhibits.some((exhibit) => exhibit.id === id && exhibit.exhibitionId === item.exhibitionId)); if (exhibitIds.length !== (item.exhibitIds || []).length) throw new Error("导购策略关联的展品必须属于所选展会"); const saved = { ...item, exhibitionName: exhibition.name, exhibitIds, updatedAt: now() }; writeStore("shopping-strategies", [saved, ...(await this.listShoppingStrategies()).filter((candidate) => candidate.id !== item.id)]); return saved; }
+  async deleteShoppingStrategy(id: string) { writeStore("shopping-strategies", (await this.listShoppingStrategies()).filter((item) => item.id !== id)); }
   async listPackages() { return readStore("packages", DEFAULT_PACKAGES); }
   async createPackage(input: Pick<PublishPackage, "name" | "exhibition" | "qaCount" | "documentCount">) { const item: PublishPackage = { ...input, id: `pkg-${Date.now()}`, status: "draft", version: 1, creator: "当前用户", updatedAt: now() }; writeStore("packages", [item, ...await this.listPackages()]); return item; }
   async transitionPackage(id: string, status: PublishPackage["status"]) { const list = await this.listPackages(); const next = list.map((item) => item.id === id ? { ...item, status, reviewer: status === "published" ? "当前用户" : item.reviewer, updatedAt: now() } : item); writeStore("packages", next); return next.find((item) => item.id === id) ?? list[0]; }
@@ -331,6 +495,55 @@ export class MockAdminApiClient implements AdminApiClient {
   async listSchedules() { return readStore<EventSchedule[]>("schedules", DEFAULT_SCHEDULES); }
   async saveSchedule(item: EventSchedule) { if (!(await this.listExhibitions()).some((exhibition) => exhibition.id === item.exhibitionId)) throw new Error("活动所属展会不存在"); if (item.venueId) { const venue = (await this.listVenues()).find((candidate) => candidate.id === item.venueId); if (!venue || venue.exhibitionId !== item.exhibitionId) throw new Error("活动场地必须属于所属展会"); if (item.pointId && !(await this.listPoints()).some((point) => point.id === item.pointId && point.venueId === item.venueId)) throw new Error("活动点位必须属于所选场地"); } else if (item.pointId) throw new Error("选择活动点位前必须先选择场地"); const saved = { ...item, updatedAt: now() }; writeStore("schedules", [saved, ...(await this.listSchedules()).filter((candidate) => candidate.id !== item.id)]); return saved; }
   async deleteSchedule(id: string) { writeStore("schedules", (await this.listSchedules()).filter((item) => item.id !== id)); }
+  async listLeads(filters: { exhibitionId?: string; keyword?: string; status?: LeadStatus | ""; from?: string; to?: string } = {}) {
+    const keyword = filters.keyword?.trim().toLowerCase();
+    return (await readStore<Lead[]>("leads", DEFAULT_LEADS)).filter((item) => (!filters.exhibitionId || filters.exhibitionId === "all" || item.exhibitionId === filters.exhibitionId) && (!filters.status || item.status === filters.status) && (!keyword || [item.id, item.companyName, item.contactName].some((value) => value.toLowerCase().includes(keyword))) && (!filters.from || item.createdAt.slice(0, 10) >= filters.from) && (!filters.to || item.createdAt.slice(0, 10) <= filters.to));
+  }
+  async getLead(id: string) { return (await this.listLeads()).find((item) => item.id === id) ?? null; }
+  async saveLead(item: Lead) { const saved = { ...item, updatedAt: now() } as Lead; writeStore("leads", [saved, ...(await this.listLeads()).filter((candidate) => candidate.id !== item.id)]); return saved; }
+  async updateLeadStatus(id: string, status: LeadStatus, note?: string) { const list = await this.listLeads(); const existing = list.find((item) => item.id === id); if (!existing) throw new Error("线索不存在"); const saved = { ...existing, status, statusHistory: [...existing.statusHistory, { status, operator: "当前用户", time: now(), note }] }; writeStore("leads", [saved, ...list.filter((item) => item.id !== id)]); return saved; }
+  async exportLeads(filters: { exhibitionId?: string; keyword?: string; status?: string; from?: string; to?: string } = {}) { const rows = await this.listLeads(filters as { exhibitionId?: string; keyword?: string; status?: LeadStatus; from?: string; to?: string }); return [["线索ID", "展会", "单位名称", "联系人", "状态", "创建时间"], ...rows.map((item) => [item.id, item.exhibitionName, item.companyName, item.contactName, item.status, item.createdAt])].map((row) => row.map((cell) => `"${String(cell).replaceAll('"', '""')}"`).join(",")).join("\n"); }
+  async listFeedback(filters: { exhibitionId?: string; keyword?: string; status?: Feedback["status"] } = {}) { const keyword = filters.keyword?.trim().toLowerCase(); return (await readStore<Feedback[]>("feedback", DEFAULT_FEEDBACK)).filter((item) => (!filters.exhibitionId || filters.exhibitionId === "all" || item.exhibitionId === filters.exhibitionId) && (!filters.status || item.status === filters.status) && (!keyword || `${item.content} ${item.type} ${item.traceId}`.toLowerCase().includes(keyword))); }
+  async resolveFeedback(id: string, note: string, operator = "当前用户") { const list = await this.listFeedback(); const existing = list.find((item) => item.id === id); if (!existing) throw new Error("反馈不存在"); const saved = { ...existing, status: "handled" as const, note, handledBy: operator, handledAt: now() }; writeStore("feedback", [saved, ...list.filter((item) => item.id !== id)]); return saved; }
+  async listAdminUsers(filters: { keyword?: string; status?: AdminUserRecord["status"] } = {}) { const keyword = filters.keyword?.trim().toLowerCase(); return (await readStore<AdminUserRecord[]>("admin-users", DEFAULT_ADMIN_USERS)).filter((item) => (!filters.status || item.status === filters.status) && (!keyword || [item.username, item.displayName, item.email].some((value) => value.toLowerCase().includes(keyword)))); }
+  async saveAdminUser(item: AdminUserRecord) { const saved = { ...item, updatedAt: now() } as AdminUserRecord; writeStore("admin-users", [saved, ...(await this.listAdminUsers()).filter((candidate) => candidate.id !== item.id)]); return saved; }
+  async deleteAdminUser(id: string) { writeStore("admin-users", (await this.listAdminUsers()).filter((item) => item.id !== id)); }
+  async resetAdminPassword(_id: string) { return undefined; }
+  async exportAdminUsers(filters: { keyword?: string; status?: AdminUserRecord["status"] } = {}) { const rows = await this.listAdminUsers(filters); return [["用户名", "昵称", "邮箱", "部门", "状态", "创建日期"], ...rows.map((item) => [item.username, item.displayName, item.email, item.department, item.status, item.createdAt])].map((row) => row.join(",")).join("\n"); }
+  async listRoles() { const stored = readStore<RoleRecord[]>("roles", DEFAULT_ROLES); if (stored.some((role) => role.permissionIds.some((permission) => permission.startsWith("permission-")))) { writeStore("roles", DEFAULT_ROLES); return DEFAULT_ROLES; } return stored; }
+  async saveRole(item: RoleRecord) { const saved = { ...item, updatedAt: now() } as RoleRecord; writeStore("roles", [saved, ...(await this.listRoles()).filter((candidate) => candidate.id !== item.id)]); return saved; }
+  async deleteRole(id: string) { writeStore("roles", (await this.listRoles()).filter((item) => item.id !== id)); }
+  async listPermissionTree() { const stored = readStore<PermissionNode[]>("permissions", DEFAULT_PERMISSION_TREE); const base = stored.some((item) => item.type !== "menu" || item.code === "system:permission" || item.id.startsWith("permission-")) ? DEFAULT_PERMISSION_TREE : stored; const flat = normalizeMenuPermissionNodes(base); if (flat !== stored) writeStore("permissions", flat); const children = (parentId: string | null): PermissionNode[] => flat.filter((item) => item.parentId === parentId).map((item) => ({ ...item, children: children(item.id) })); return children(null); }
+  async savePermissionNode(item: PermissionNode) { const flat = flattenPermissionNodes(await this.listPermissionTree()); const saved = { ...item, updatedAt: now() } as PermissionNode; writeStore("permissions", [saved, ...flat.filter((candidate) => candidate.id !== item.id)]); return saved; }
+  async deletePermissionNode(id: string) { const flat = flattenPermissionNodes(await this.listPermissionTree()); const ids = new Set([id]); let changed = true; while (changed) { changed = false; flat.forEach((item) => { if (item.parentId && ids.has(item.parentId) && !ids.has(item.id)) { ids.add(item.id); changed = true; } }); } writeStore("permissions", flat.filter((item) => !ids.has(item.id))); }
+  async listAuditLogs(filters: { username?: string; ip?: string; keyword?: string; from?: string; to?: string } = {}) { const keyword = filters.keyword?.trim().toLowerCase(); return (await readStore<AuditLog[]>("audit-logs", DEFAULT_AUDIT_LOGS)).filter((item) => (!filters.username || item.username.includes(filters.username)) && (!filters.ip || item.ip.includes(filters.ip)) && (!keyword || `${item.description} ${item.traceId}`.toLowerCase().includes(keyword)) && (!filters.from || item.createdAt.slice(0, 10) >= filters.from) && (!filters.to || item.createdAt.slice(0, 10) <= filters.to)); }
+  async getTraceRecord(id: string) { const list = await this.listAuditLogs(); return list.find((item) => item.id === id || item.traceId === id) ?? null; }
+  async exportAuditLogs(filters: { username?: string; ip?: string; keyword?: string; from?: string; to?: string } = {}) { const rows = await this.listAuditLogs(filters); return [["Trace ID", "用户名", "IP", "描述", "请求耗时", "创建日期"], ...rows.map((item) => [item.traceId, item.username, item.ip, item.description, `${item.durationMs}ms`, item.createdAt])].map((row) => row.join(",")).join("\n"); }
+  async clearAuditLogs() { writeStore("audit-logs", []); }
+  async getSystemMonitor() { const monitor = readStore<SystemMonitor>("system-monitor", DEFAULT_MONITOR); const refreshed = { ...monitor, refreshedAt: now() }; writeStore("system-monitor", refreshed); return refreshed; }
+  async listAlerts() { return readStore<AlertEvent[]>("alerts", DEFAULT_ALERTS); }
+  async acknowledgeAlert(id: string, operator = "当前用户") { const list = await this.listAlerts(); const existing = list.find((item) => item.id === id); if (!existing) throw new Error("告警不存在"); const saved = { ...existing, status: "acknowledged" as const, acknowledgedBy: operator, acknowledgedAt: now() }; writeStore("alerts", [saved, ...list.filter((item) => item.id !== id)]); return saved; }
+}
+
+function normalizeMenuPermissionNodes(nodes: PermissionNode[]): PermissionNode[] {
+  if (nodes.some((node) => node.id === "menu-event-core")) return nodes;
+  const groups: Array<[string, string, string, string, string[]]> = [
+    ["menu-event-core", "menu-event", "展会管理", "event:group:core", ["event:exhibition"]],
+    ["menu-event-content", "menu-event", "参展内容", "event:group:content", ["event:exhibitor", "event:exhibit", "event:schedule"]],
+    ["menu-event-space", "menu-event", "空间导览", "event:group:space", ["event:venue", "event:point", "event:route"]],
+    ["menu-event-live", "menu-event", "现场运营", "event:group:live", ["event:broadcast", "lead:view"]],
+  ];
+  const eventCodes = new Set(groups.flatMap((group) => group[4]));
+  const children = groups.map(([id, parentId, name, code]) => ({ id, parentId, name, code, type: "menu" as const, path: "", apiPattern: "" }));
+  const reassigned = nodes.map((node) => {
+    const group = groups.find((candidate) => candidate[4].includes(node.code));
+    return group ? { ...node, parentId: group[0] } : node;
+  });
+  return [...reassigned.filter((node) => !(node.parentId === "menu-event" && eventCodes.has(node.code))), ...children];
+}
+
+function flattenPermissionNodes(nodes: PermissionNode[]): PermissionNode[] {
+  return nodes.flatMap((node) => [{ ...node, children: undefined }, ...(node.children ? flattenPermissionNodes(node.children) : [])]);
 }
 
 export class FetchAdminApiClient extends MockAdminApiClient {
