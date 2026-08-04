@@ -253,3 +253,20 @@ test("real Admin digital assets never fall back to Mock storage", async () => {
   await api.listIdle();
   assert.equal(calls.at(-1)?.url.endsWith("/admin/idle-content"), true);
 });
+
+test("real Admin knowledge workflow maps documents, QA, scripts, packages and miss pool", async () => {
+  values.clear(); values.set("opentalking-admin-token", "knowledge-token");
+  const calls: Array<{ url: string; method: string; body?: Record<string, unknown> }> = [];
+  globalThis.fetch = async (input, init) => { const url = String(input); const method = init?.method ?? "GET"; const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined; calls.push({ url, method, body }); if (method === "DELETE") return new Response(null, { status: 204 }); if (method === "GET") return Response.json({ items: [] }); return Response.json({ ...body, id: "saved-knowledge" }); };
+  const api = new FetchAdminApiClient();
+  await api.listDocuments(); assert.equal(calls.at(-1)?.url.endsWith("/admin/knowledge/documents"), true);
+  await api.uploadDocument({ title: "展会手册", fileName: "manual.pdf", type: "PDF", exhibition: "测试展" }); assert.equal(calls.at(-1)?.method, "POST");
+  await api.updateDocument("doc/1", { parseStatus: "failed" }); assert.equal(calls.at(-1)?.url.endsWith("/admin/knowledge/documents/doc%2F1"), true);
+  await api.listQa(); assert.equal(calls.at(-1)?.url.endsWith("/admin/knowledge/qa"), true);
+  await api.transitionQa("qa/1", "published"); assert.deepEqual(calls.at(-1)?.body, { status: "published" });
+  await api.listScripts(); assert.equal(calls.at(-1)?.url.endsWith("/admin/knowledge/scripts"), true);
+  await api.listPackages(); assert.equal(calls.at(-1)?.url.endsWith("/admin/knowledge/packages"), true);
+  await api.transitionPackage("pkg/1", "published"); assert.equal(calls.at(-1)?.url.endsWith("/admin/knowledge/packages/pkg%2F1/status"), true);
+  await api.listMissPool(); assert.equal(calls.at(-1)?.url.endsWith("/admin/knowledge/miss-pool"), true);
+  await api.resolveMiss("miss/1", "converted_qa"); assert.deepEqual(calls.at(-1)?.body, { status: "converted_qa" });
+});

@@ -796,6 +796,23 @@ export class FetchAdminApiClient extends MockAdminApiClient {
     await this.request(`/admin/interactions/shopping-strategies/${encodeURIComponent(id)}`, { method: "DELETE" });
   }
 
+  override async listDocuments() { return this.requestList<KnowledgeDocument>("/admin/knowledge/documents"); }
+  override async uploadDocument(input: Pick<KnowledgeDocument, "title" | "fileName" | "type" | "exhibition">) { return this.request<KnowledgeDocument>("/admin/knowledge/documents", { method: "POST", body: JSON.stringify(input) }); }
+  override async updateDocument(id: string, patch: Partial<KnowledgeDocument>) { return this.request<KnowledgeDocument>(`/admin/knowledge/documents/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(patch) }); }
+  override async deleteDocument(id: string) { await this.request(`/admin/knowledge/documents/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+  override async listQa() { return this.requestList<KnowledgeQa>("/admin/knowledge/qa"); }
+  override async saveQa(item: KnowledgeQa) { return this.saveResource(item, "/admin/knowledge/qa"); }
+  override async transitionQa(id: string, status: KnowledgeQa["status"]) { return this.request<KnowledgeQa>(`/admin/knowledge/qa/${encodeURIComponent(id)}/status`, { method: "POST", body: JSON.stringify({ status }) }); }
+  override async deleteQa(id: string) { await this.request(`/admin/knowledge/qa/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+  override async listScripts() { return this.requestList<ScriptTemplate>("/admin/knowledge/scripts"); }
+  override async saveScript(item: ScriptTemplate) { return this.saveResource(item, "/admin/knowledge/scripts"); }
+  override async deleteScript(id: string) { await this.request(`/admin/knowledge/scripts/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+  override async listPackages() { return this.requestList<PublishPackage>("/admin/knowledge/packages"); }
+  override async createPackage(input: Pick<PublishPackage, "name" | "exhibition" | "qaCount" | "documentCount">) { return this.request<PublishPackage>("/admin/knowledge/packages", { method: "POST", body: JSON.stringify(input) }); }
+  override async transitionPackage(id: string, status: PublishPackage["status"]) { return this.request<PublishPackage>(`/admin/knowledge/packages/${encodeURIComponent(id)}/status`, { method: "POST", body: JSON.stringify({ status }) }); }
+  override async listMissPool() { return this.requestList<MissPoolItem>("/admin/knowledge/miss-pool"); }
+  override async resolveMiss(id: string, status: MissPoolItem["status"]) { return this.request<MissPoolItem>(`/admin/knowledge/miss-pool/${encodeURIComponent(id)}/status`, { method: "POST", body: JSON.stringify({ status }) }); }
+
   override async listGifs() { return this.requestList<GifAssetMeta>("/admin/assets?kind=gif"); }
   override async createGif(input: Omit<GifAssetMeta, "id" | "createdAt">) { return this.request<GifAssetMeta>("/admin/assets", { method: "POST", body: JSON.stringify(input) }); }
   override async updateGif(id: string, patch: Partial<GifAssetMeta>) { return this.request<GifAssetMeta>(`/admin/assets/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(patch) }); }
