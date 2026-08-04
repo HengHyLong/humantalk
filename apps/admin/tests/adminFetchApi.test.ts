@@ -159,3 +159,33 @@ test("real Admin system management maps RBAC, audit, monitor, alert and CSV endp
   await api.acknowledgeAlert("alert-1", "吴涓");
   assert.deepEqual(calls.at(-1)?.body, { operator: "吴涓" });
 });
+
+test("real Admin interaction management maps exhibition-scoped strategy endpoints", async () => {
+  values.clear();
+  values.set("opentalking-admin-token", "interaction-token");
+  const calls: Array<{ url: string; method: string; body?: Record<string, unknown> }> = [];
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    const method = init?.method ?? "GET";
+    const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined;
+    calls.push({ url, method, body });
+    if (method === "DELETE") return new Response(null, { status: 204 });
+    if (method === "POST" || method === "PATCH") return Response.json({ ...body, id: "saved-1" });
+    return Response.json({ items: [], total: 0 });
+  };
+
+  const api = new FetchAdminApiClient();
+  await api.listWelcomeConfigs("event A/1");
+  assert.equal(calls.at(-1)?.url.endsWith("/admin/interactions/welcome-configs?exhibition_id=event+A%2F1"), true);
+  await api.saveWelcomeConfig({ id: "welcome-1722780000000", exhibitionId: "event-1", exhibitionName: "测试展", trigger: "person_detected", scriptId: "script-1", voiceId: "voice-1", enabled: true, cooldownSeconds: 30, updatedAt: "" });
+  assert.equal(calls.at(-1)?.method, "POST");
+  assert.equal(calls.at(-1)?.body?.id, undefined);
+  await api.listExplainFlows("event-1");
+  assert.equal(calls.at(-1)?.url.includes("/admin/interactions/explain-flows?"), true);
+  await api.deleteExplainFlow("flow/1");
+  assert.equal(calls.at(-1)?.url.endsWith("/admin/interactions/explain-flows/flow%2F1"), true);
+  await api.listShoppingStrategies("event-1");
+  assert.equal(calls.at(-1)?.url.includes("/admin/interactions/shopping-strategies?"), true);
+  await api.deleteShoppingStrategy("strategy/1");
+  assert.equal(calls.at(-1)?.url.endsWith("/admin/interactions/shopping-strategies/strategy%2F1"), true);
+});
