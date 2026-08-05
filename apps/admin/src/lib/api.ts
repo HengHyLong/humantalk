@@ -600,6 +600,8 @@ export type AvatarSummary = {
   matting_status: "unknown" | "opaque" | "transparent_ready";
   duo_dialog: DuoDialogCapability | null;
   client_renderer: ClientRendererDescriptor | null;
+  waiting_gif_url?: string | null;
+  speaking_gif_url?: string | null;
 };
 
 export type CreateSessionResponse = { session_id: string; status: string };

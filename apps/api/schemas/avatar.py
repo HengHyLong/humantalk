@@ -36,3 +36,5 @@ class AvatarSummary(BaseModel):
     matting_status: str = "unknown"
     duo_dialog: Optional[DuoDialogCapability] = None
     client_renderer: Optional[ClientRendererCapability] = None
+    waiting_gif_url: Optional[str] = None
+    speaking_gif_url: Optional[str] = None
