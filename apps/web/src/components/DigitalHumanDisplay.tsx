@@ -15,6 +15,7 @@ import {
 } from "../lib/sessionStateMachine";
 import type { WelcomePhase } from "../lib/welcomeExperience";
 import type { NavigationStep } from "../lib/navigationPresentation";
+import { createInputCaptureEvent, type InputCaptureEvent } from "../lib/inputCapture";
 import { ChatInput } from "./ChatInput";
 import { NavigationGuideCard } from "./NavigationGuideCard";
 import { SceneStage } from "./SceneStage";
@@ -57,6 +58,8 @@ type DigitalHumanDisplayProps = {
   welcomeReplayDisabled?: boolean;
   onReplayWelcome?: () => void;
   onSpeakNavigationStep?: (step: NavigationStep) => void;
+  onInputEvent?: (event: InputCaptureEvent) => void;
+  terminalId?: string;
 };
 
 const languages = ["中文", "English"];
@@ -99,6 +102,8 @@ export function DigitalHumanDisplay({
   welcomeReplayDisabled = true,
   onReplayWelcome,
   onSpeakNavigationStep,
+  onInputEvent,
+  terminalId = "web-terminal",
 }: DigitalHumanDisplayProps) {
   const [activeLanguage, setActiveLanguage] = useState("中文");
   const [draft, setDraft] = useState("");
@@ -112,6 +117,16 @@ export function DigitalHumanDisplay({
     subtitle?.trim()
       && !(latestVisibleMessage?.role === "assistant" && latestVisibleMessage.text.trim() === subtitle.trim()),
   );
+
+  const emitTouch = (control: string, value?: string) => {
+    onInputEvent?.(createInputCaptureEvent({
+      sessionId: streamingAsrSessionId,
+      terminalId,
+      source: "touch",
+      kind: "touch",
+      payload: { control, value: value ?? null },
+    }));
+  };
 
   const submit = () => {
     const text = draft.trim();
@@ -145,7 +160,10 @@ export function DigitalHumanDisplay({
               <button
                 key={language}
                 type="button"
-                onClick={() => setActiveLanguage(language)}
+                onClick={() => {
+                  emitTouch("language", language);
+                  setActiveLanguage(language);
+                }}
                 className={activeLanguage === language ? "is-active" : ""}
               >
                 {language}
@@ -170,14 +188,20 @@ export function DigitalHumanDisplay({
                 <NavigationGuideCard
                   navigationResult={navigationResult}
                   isSpeaking={isSpeaking}
-                  onSpeakStep={onSpeakNavigationStep}
+                  onSpeakStep={onSpeakNavigationStep ? (step) => {
+                    emitTouch("navigation_step", step.id);
+                    onSpeakNavigationStep(step);
+                  } : undefined}
                 />
               ) : null}
               {visibleMessages.length === 0 && !navigationResult ? (
                 <WelcomeOverviewCard
                   phase={welcomePhase}
                   replayDisabled={welcomeReplayDisabled}
-                  onReplay={onReplayWelcome}
+                  onReplay={onReplayWelcome ? () => {
+                    emitTouch("welcome_replay");
+                    onReplayWelcome();
+                  } : undefined}
                 />
               ) : null}
               {visibleMessages.map((message) => (
@@ -196,7 +220,16 @@ export function DigitalHumanDisplay({
 
             <div className="digital-display-chat-suggestions" aria-label="常见问题">
               {suggestions.map((suggestion) => (
-                <button key={suggestion} type="button" onClick={() => live && onSend(suggestion)} disabled={!live}>
+                <button
+                  key={suggestion}
+                  type="button"
+                  onClick={() => {
+                    if (!live) return;
+                    emitTouch("suggestion", suggestion);
+                    onSend(suggestion);
+                  }}
+                  disabled={!live}
+                >
                   {suggestion}
                 </button>
               ))}
@@ -211,6 +244,8 @@ export function DigitalHumanDisplay({
                   onSpeakAudioStreamResult={onSpeakAudioStreamResult}
                   onSpeakAudioStreamError={onSpeakAudioStreamError}
                   streamingAsrSessionId={streamingAsrSessionId}
+                  onInputEvent={onInputEvent}
+                  terminalId={terminalId}
                   onInterrupt={onInterrupt}
                   isSpeaking={isSpeaking}
                   disabled={!live}

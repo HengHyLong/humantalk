@@ -10,6 +10,13 @@ import {
 import { getVoiceVadConfig } from "../config/voiceVad";
 import { isEdgeTts, type TtsProviderExtended } from "../constants/ttsBailian";
 import { buildWsUrl } from "../lib/api";
+import {
+  createInputCaptureEvent,
+  createInputCorrelationId,
+  type InputCaptureEvent,
+  type InputCaptureKind,
+  type InputCapturePayload,
+} from "../lib/inputCapture";
 
 /** 浏览器 AudioContext 采样率 → 16kHz PCM（与 DashScope 流式 STT 约定一致） */
 const TARGET_SR = 16000;
@@ -135,6 +142,9 @@ interface ChatInputProps {
   compact?: boolean;
   /** 流式 STT 后端是否支持识别完成后由前端决定是否 speak。 */
   deferSpeak?: boolean;
+  /** 语音、触控和扫码共用的最小事件封装。 */
+  onInputEvent?: (event: InputCaptureEvent) => void;
+  terminalId?: string;
 }
 
 export type ListeningState = "off" | "listening" | "recording" | "transcribing" | "processing" | "error";
@@ -147,6 +157,26 @@ function pickRecorderMime(): string | undefined {
     }
   }
   return undefined;
+}
+
+function voiceCaptureErrorMessage(error: unknown): string {
+  const name = error instanceof DOMException ? error.name : "";
+  if (name === "NotAllowedError" || name === "SecurityError") {
+    return "麦克风权限被拒绝，请在浏览器地址栏允许麦克风后重试。";
+  }
+  if (name === "NotFoundError" || name === "DevicesNotFoundError") {
+    return "未检测到可用麦克风，请连接设备后重试。";
+  }
+  if (name === "NotReadableError" || name === "TrackStartError") {
+    return "麦克风正在被其他应用占用，请关闭占用程序后重试。";
+  }
+  if (name === "NotSupportedError" || !navigator.mediaDevices?.getUserMedia) {
+    return "当前浏览器不支持麦克风，请通过 localhost 或 HTTPS 打开页面。";
+  }
+  if (name === "AbortError" || name === "InvalidStateError") {
+    return "麦克风输入已中断，请点击重新监听。";
+  }
+  return "无法使用麦克风，请检查浏览器权限和输入设备后重试。";
 }
 
 /** 流式 STT：在 VAD 攻击帧确认前保留最近 PCM，连接建立后先补发，减轻句首丢失 */
@@ -197,6 +227,8 @@ export function ChatInput({
   qwenVoice = "",
   compact = false,
   deferSpeak = false,
+  onInputEvent,
+  terminalId = "web-terminal",
 }: ChatInputProps) {
   const voiceCaptureEnabled = !!(
     onSpeakAudio ||
@@ -238,6 +270,7 @@ export function ChatInput({
   const streamMuteRef = useRef<GainNode | null>(null);
   const voiceModeRef = useRef(false);
   const pcmPrerollRef = useRef<Int16Array>(new Int16Array(0));
+  const segmentCorrelationIdRef = useRef<string | null>(null);
 
   const segmentActiveRef = useRef(false);
   const loudFramesRef = useRef(0);
@@ -262,6 +295,27 @@ export function ChatInput({
 
   const onInterruptRef = useRef(onInterrupt);
   onInterruptRef.current = onInterrupt;
+
+  const onNotifyRef = useRef(onNotify);
+  onNotifyRef.current = onNotify;
+
+  const onInputEventRef = useRef(onInputEvent);
+  onInputEventRef.current = onInputEvent;
+
+  const emitInputEvent = useCallback((
+    kind: InputCaptureKind,
+    payload: InputCapturePayload = {},
+    correlationId?: string | null,
+  ) => {
+    onInputEventRef.current?.(createInputCaptureEvent({
+      sessionId: streamingAsrSessionId,
+      terminalId,
+      source: kind === "touch" ? "touch" : "microphone",
+      kind,
+      correlationId,
+      payload,
+    }));
+  }, [streamingAsrSessionId, terminalId]);
 
   const stopVadLoop = useCallback(() => {
     if (rafRef.current) {
@@ -343,6 +397,7 @@ export function ChatInput({
       }
       streamWsRef.current = null;
       segmentActiveRef.current = false;
+      segmentCorrelationIdRef.current = null;
       setSegmentHot(false);
       return;
     }
@@ -350,6 +405,7 @@ export function ChatInput({
     const mr = mediaRecorderRef.current;
     if (!mr || mr.state === "inactive") {
       segmentActiveRef.current = false;
+      segmentCorrelationIdRef.current = null;
       setSegmentHot(false);
       return;
     }
@@ -364,19 +420,27 @@ export function ChatInput({
     mediaRecorderRef.current = null;
     chunksRef.current = [];
     segmentActiveRef.current = false;
+    segmentCorrelationIdRef.current = null;
     setSegmentHot(false);
   }, []);
 
-  const teardownVoicePipeline = useCallback(async () => {
+  const teardownVoicePipeline = useCallback(async (finalState: ListeningState = "off") => {
     voiceBreakGenRef.current += 1;
     stopVadLoop();
     uploadLockRef.current = false;
     pcmSendGateRef.current = false;
     segmentConnectingRef.current = false;
     try {
-      await stopSegmentRecorder();
+      if (segmentActiveRef.current) {
+        emitInputEvent(
+          "voice.interrupted",
+          { reason: "listener_stopped" },
+          segmentCorrelationIdRef.current,
+        );
+      }
+      await discardActiveSegment();
     } catch {
-      /* stopSegmentRecorder may throw on WS error */
+      /* stopping the microphone should remain recoverable even if the stream is already gone */
     }
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((t) => t.stop());
@@ -398,10 +462,11 @@ export function ChatInput({
     loudFramesRef.current = 0;
     softFramesRef.current = 0;
     silenceStartRef.current = null;
+    segmentCorrelationIdRef.current = null;
     setVoiceMode(false);
-    setListeningState("off");
+    setListeningState(finalState);
     setSegmentHot(false);
-  }, [stopSegmentRecorder, stopVadLoop]);
+  }, [discardActiveSegment, emitInputEvent, stopVadLoop]);
 
   const startSegmentRecorder = useCallback(
     async (stream: MediaStream) => {
@@ -410,6 +475,7 @@ export function ChatInput({
         onSpeakAudioStreamResultRef.current &&
         pcmStreamAvailableRef.current
       ) {
+        const correlationId = createInputCorrelationId("voice");
         let wsReady = false;
         if (streamWsRef.current || segmentConnectingRef.current) return;
         segmentConnectingRef.current = true;
@@ -477,11 +543,16 @@ export function ChatInput({
           segmentConnectingRef.current = false;
         }
         // WS 流式链路就绪，当前分段由 WebSocket 持续发送 PCM。
-        if (wsReady) return;
+        if (wsReady) {
+          segmentCorrelationIdRef.current = correlationId;
+          emitInputEvent("voice.started", { mode: "stream" }, correlationId);
+          return;
+        }
         // WS 链路失败时，不要直接丢段；继续走 MediaRecorder + speak_audio 回退路径。
       }
 
       if (mediaRecorderRef.current) return;
+      const correlationId = createInputCorrelationId("voice");
       const mime = pickRecorderMime();
       const mr = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
       chunksRef.current = [];
@@ -493,8 +564,10 @@ export function ChatInput({
       segmentActiveRef.current = true;
       segmentStartTsRef.current = performance.now();
       silenceStartRef.current = null;
+      segmentCorrelationIdRef.current = correlationId;
       setSegmentHot(true);
       setListeningState("recording");
+      emitInputEvent("voice.started", { mode: "media-recorder" }, correlationId);
     },
     [
       edgeVoice,
@@ -504,6 +577,7 @@ export function ChatInput({
       sttProvider,
       streamingAsrSessionId,
       ttsProvider,
+      emitInputEvent,
     ],
   );
 
@@ -514,6 +588,23 @@ export function ChatInput({
     const voiceCaptureOk =
       !!onSpeakAudioRef.current || !!onSpeakAudioStreamResultRef.current;
     if (!stream || !analyser || !voiceCaptureOk) {
+      if (voiceModeRef.current) {
+        stopVadLoop();
+        setVoiceMode(false);
+        setListeningState("error");
+        emitInputEvent("voice.error", { code: "capture_pipeline_unavailable" });
+        void teardownVoicePipeline("error");
+      }
+      return;
+    }
+
+    if (stream.getAudioTracks().every((track) => track.readyState === "ended")) {
+      stopVadLoop();
+      setVoiceMode(false);
+      setListeningState("error");
+      emitInputEvent("voice.error", { code: "input_device_ended" });
+      onNotifyRef.current?.("麦克风输入已中断，请检查设备后点击重新监听。", "error");
+      void teardownVoicePipeline("error");
       return;
     }
 
@@ -537,12 +628,19 @@ export function ChatInput({
           if (bargeMode) {
             voiceBreakGenRef.current += 1;
             uploadLockRef.current = false;
+            emitInputEvent("voice.interrupted", { reason: "barge_in" }, segmentCorrelationIdRef.current);
             onInterruptRef.current();
           }
           void (async () => {
-            await startSegmentRecorder(stream);
-            loudFramesRef.current = 0;
-            softFramesRef.current = 0;
+            try {
+              await startSegmentRecorder(stream);
+              loudFramesRef.current = 0;
+              softFramesRef.current = 0;
+            } catch (error) {
+              console.warn("voice segment start failed", error);
+              setListeningState("error");
+              emitInputEvent("voice.error", { code: "segment_start_failed" });
+            }
           })();
         };
         if (rms >= speechTh) {
@@ -571,6 +669,13 @@ export function ChatInput({
           const segDur = now - segmentStartTsRef.current;
           if (silentFor >= cfg.silenceMs && segDur >= cfg.minSegmentMs) {
             const startedGen = voiceBreakGenRef.current;
+            const correlationId = segmentCorrelationIdRef.current;
+            segmentCorrelationIdRef.current = null;
+            emitInputEvent(
+              "voice.ended",
+              { reason: "silence", durationMs: Math.max(0, Math.round(segDur)) },
+              correlationId,
+            );
             uploadLockRef.current = true;
             void (async () => {
               try {
@@ -591,6 +696,7 @@ export function ChatInput({
                 console.warn("voice segment failed", err);
                 const message = err instanceof Error ? err.message : String(err);
                 onSpeakAudioStreamErrorRef.current?.(message);
+                emitInputEvent("voice.error", { code: "segment_failed" }, correlationId);
                 if (voiceModeRef.current) setListeningState("error");
               } finally {
                 uploadLockRef.current = false;
@@ -604,7 +710,7 @@ export function ChatInput({
     }
 
     rafRef.current = requestAnimationFrame(vadTick);
-  }, [startSegmentRecorder, stopSegmentRecorder]);
+  }, [emitInputEvent, startSegmentRecorder, stopSegmentRecorder, stopVadLoop, teardownVoicePipeline]);
 
   const enterVoiceMode = useCallback(async () => {
     if (!voiceCaptureEnabled || disabled) return;
@@ -678,10 +784,8 @@ export function ChatInput({
     } catch (e) {
       console.warn("Voice mode failed", e);
       setListeningState("error");
-      onNotify?.(
-        "无法使用麦克风。请用 localhost 或 HTTPS 打开页面，并允许麦克风权限（纯 IP 的 HTTP 多半会被浏览器拦截）。",
-        "error",
-      );
+      emitInputEvent("voice.error", { code: "microphone_start_failed" });
+      onNotifyRef.current?.(voiceCaptureErrorMessage(e), "error");
     }
   }, [
     disabled,
@@ -690,17 +794,22 @@ export function ChatInput({
     streamingAsrSessionId,
     vadTick,
     voiceCaptureEnabled,
+    emitInputEvent,
   ]);
 
   const toggleVoiceMode = useCallback(async () => {
     if (!voiceCaptureEnabled || disabled) return;
+    emitInputEvent("touch", {
+      control: "voice_toggle",
+      action: voiceMode ? "stop" : "start",
+    });
     if (voiceMode) {
       await teardownVoicePipeline();
       return;
     }
     if (voiceBusy) return;
     await enterVoiceMode();
-  }, [disabled, enterVoiceMode, teardownVoicePipeline, voiceBusy, voiceCaptureEnabled, voiceMode]);
+  }, [disabled, emitInputEvent, enterVoiceMode, teardownVoicePipeline, voiceBusy, voiceCaptureEnabled, voiceMode]);
 
   useEffect(() => {
     if (disabled && voiceMode) {
@@ -729,9 +838,13 @@ export function ChatInput({
   const handleVoiceBreak = useCallback(async () => {
     voiceBreakGenRef.current += 1;
     uploadLockRef.current = false;
+    emitInputEvent("touch", { control: "voice_break" });
+    if (segmentActiveRef.current) {
+      emitInputEvent("voice.interrupted", { reason: "manual" }, segmentCorrelationIdRef.current);
+    }
     await discardActiveSegment();
     onInterrupt();
-  }, [discardActiveSegment, onInterrupt]);
+  }, [discardActiveSegment, emitInputEvent, onInterrupt]);
 
   const handleKey = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -776,13 +889,15 @@ export function ChatInput({
     ? listeningState === "error"
       ? "下一句话会自动重试"
       : "静音自动分句，识别后继续监听"
-    : "点击开启长期监听";
+    : listeningState === "error"
+      ? "点击重新监听，或改用键盘输入"
+      : "点击开启长期监听";
 
   if (compact) {
     return (
       <div className="digital-display-voice-input">
         <div className="digital-display-voice-copy">
-          <span className={voiceMode ? "is-active" : ""} />
+          <span className={listeningState === "error" ? "is-error" : voiceMode ? "is-active" : ""} />
           <div>
             <strong>{listeningLabel}</strong>
             <small>{listeningHint}</small>
@@ -791,8 +906,8 @@ export function ChatInput({
         {voiceCaptureEnabled ? (
           <button
             type="button"
-            className={`digital-display-voice-trigger ${voiceMode ? "is-active" : ""}`}
-            aria-label={voiceMode ? "停止长期监听" : "开始长期监听"}
+            className={`digital-display-voice-trigger ${voiceMode ? "is-active" : listeningState === "error" ? "is-error" : ""}`}
+            aria-label={voiceMode ? "停止长期监听" : listeningState === "error" ? "重新开启长期监听" : "开始长期监听"}
             disabled={ftAudioBusy}
             onClick={(event) => {
               event.preventDefault();
@@ -803,7 +918,7 @@ export function ChatInput({
               void toggleVoiceMode();
             }}
           >
-            {voiceMode ? "停止监听" : "开始监听"}
+            {voiceMode ? "停止监听" : listeningState === "error" ? "重新监听" : "开始监听"}
           </button>
         ) : null}
         {showInterruptButton ? (
@@ -818,7 +933,11 @@ export function ChatInput({
   return (
     <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
       <div className="flex flex-col gap-2">
-        {voiceMode ? (
+        {listeningState === "error" ? (
+          <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-center text-[11px] leading-relaxed text-rose-700">
+            麦克风采集异常。请检查权限或输入设备后点击“重新监听”，也可以继续使用文字输入。
+          </p>
+        ) : voiceMode ? (
           <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-center text-[11px] leading-relaxed text-emerald-700">
             连续对话：静音自动断句并识别。播报时可大声抢话或点红钮打断。
           </p>
@@ -936,7 +1055,10 @@ export function ChatInput({
           ) : (
             <button
               type="button"
-              onClick={handleSend}
+              onClick={() => {
+                emitInputEvent("touch", { control: "text_send" });
+                handleSend();
+              }}
               disabled={voiceBusy || ftAudioBusy || !hasText}
               className={`flex h-11 min-w-24 shrink-0 items-center justify-center gap-2 rounded-lg bg-cyan-600 px-4 text-sm font-semibold text-white transition-colors hover:bg-cyan-500 disabled:opacity-40 ${
                 disabled ? "cursor-not-allowed opacity-45 hover:bg-cyan-600" : ""

@@ -86,6 +86,12 @@ import {
 } from "./lib/welcomeExperience";
 import type { NavigationStep } from "./lib/navigationPresentation";
 import {
+  createInputCaptureEvent,
+  INPUT_SCAN_EVENT_NAME,
+  parseScanInputDetail,
+  type InputCaptureEvent,
+} from "./lib/inputCapture";
+import {
   DEFAULT_EDGE_VOICE_ID,
   EDGE_VOICE_STORAGE_KEY,
   EDGE_ZH_VOICES,
@@ -122,6 +128,11 @@ import {
 } from "./light2d/avatarSelection";
 
 const MEMORY_PROFILE_ID = "default";
+
+function configuredTerminalId(): string {
+  const value = import.meta.env.VITE_TERMINAL_ID;
+  return typeof value === "string" && value.trim() ? value.trim().slice(0, 128) : "web-terminal";
+}
 
 function bailianModelOptions(provider: TtsProviderExtended): { id: string; label: string }[] {
   switch (provider) {
@@ -927,6 +938,7 @@ export default function App() {
   const scheduleReconnectRef = useRef<() => void>(() => {});
   const welcomeTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
   const welcomeSpeechSessionRef = useRef<string | null>(null);
+  const inputEventLogRef = useRef<InputCaptureEvent[]>([]);
 
   // Data
   const [avatars, setAvatars] = useState<AvatarSummary[]>([]);
@@ -979,6 +991,7 @@ export default function App() {
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
   const [queueInfo, setQueueInfo] = useState<QueueInfo | null>(null);
   const [expiringCountdown, setExpiringCountdown] = useState<number | null>(null);
+  const terminalId = useMemo(configuredTerminalId, []);
 
   // Chat
   const [messages, setMessages] = useState<Message[]>([]);
@@ -1030,6 +1043,31 @@ export default function App() {
       welcomeTimerRef.current = null;
     }
   }, []);
+
+  const recordInputEvent = useCallback((event: InputCaptureEvent) => {
+    inputEventLogRef.current = [...inputEventLogRef.current, event].slice(-64);
+  }, []);
+
+  useEffect(() => {
+    const handleScan = (event: Event) => {
+      const detail = parseScanInputDetail((event as CustomEvent<unknown>).detail);
+      if (!detail) return;
+      recordInputEvent(createInputCaptureEvent({
+        sessionId: sessionIdRef.current,
+        terminalId,
+        source: "scan",
+        kind: "scan",
+        correlationId: detail.correlationId,
+        payload: {
+          targetId: detail.targetId,
+          routeId: detail.routeId ?? null,
+          assetId: detail.assetId ?? null,
+        },
+      }));
+    };
+    window.addEventListener(INPUT_SCAN_EVENT_NAME, handleScan);
+    return () => window.removeEventListener(INPUT_SCAN_EVENT_NAME, handleScan);
+  }, [recordInputEvent, terminalId]);
 
   const appendAssistantError = useCallback((message: string) => {
     const normalized = message.startsWith("出错了：") ? message : `出错了：${message}`;
@@ -3381,6 +3419,8 @@ export default function App() {
           welcomeReplayDisabled={!canReplayWelcome(welcomeState)}
           onReplayWelcome={requestWelcomeReplay}
           onSpeakNavigationStep={speakNavigationStep}
+          onInputEvent={recordInputEvent}
+          terminalId={terminalId}
           onNotify={notify}
           ttsProvider={ttsProvider}
           sttProvider={activeAsrProvider}
@@ -3644,6 +3684,8 @@ export default function App() {
                 streamingAsrSessionId={sessionId}
                 onSpeakAudioStreamResult={handleSpeakAudioStreamResult}
                 onSpeakAudioStreamError={handleSpeakAudioStreamError}
+                onInputEvent={recordInputEvent}
+                terminalId={terminalId}
                 onInterrupt={handleInterrupt}
                 isSpeaking={isSpeaking}
                 disabled={connection !== "live" && connection !== "expiring"}
