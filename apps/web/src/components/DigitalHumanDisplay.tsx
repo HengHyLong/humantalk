@@ -15,13 +15,14 @@ import {
 } from "../lib/sessionStateMachine";
 import type { WelcomePhase } from "../lib/welcomeExperience";
 import type { NavigationStep } from "../lib/navigationPresentation";
+import type { MediaPlaybackState, MediaPlaybackStatus } from "../lib/mediaPlayback";
 import { createInputCaptureEvent, type InputCaptureEvent } from "../lib/inputCapture";
-import { createLiveInteractionAdapter, createInteractionPreviewAdapter } from "../lib/interactionAdapter";
+import { createLiveInteractionAdapter } from "../lib/interactionAdapter";
 import { useInteractionController } from "../lib/useInteractionController";
-import { F02_DEVELOPMENT_PREVIEW, F02_UPDATED_PREVIEW_CARD } from "../lib/multimodalPreview";
+import { F02_DEVELOPMENT_PREVIEW } from "../lib/multimodalPreview";
 import { useMultimodalController } from "../lib/useMultimodalController";
 import { ChatInput } from "./ChatInput";
-import { InteractionControlPanel } from "./InteractionControlPanel";
+import { FeatureDrawer } from "./FeatureDrawer";
 import { MultimodalPanel } from "./MultimodalPanel";
 import { NavigationGuideCard } from "./NavigationGuideCard";
 import { SceneStage } from "./SceneStage";
@@ -66,10 +67,31 @@ type DigitalHumanDisplayProps = {
   onSpeakNavigationStep?: (step: NavigationStep) => void;
   onInputEvent?: (event: InputCaptureEvent) => void;
   terminalId?: string;
+  mediaPlayback?: MediaPlaybackState;
 };
 
 const languages = ["中文", "English"];
 const suggestions = ["展馆导航", "预约洽谈", "会议服务", "关于展览"];
+type FeatureDrawerKey = "navigation" | "primary" | "supporting" | "detail" | "action";
+type MultimodalDrawerSlot = Exclude<FeatureDrawerKey, "navigation">;
+const FEATURE_RAIL_ITEMS: ReadonlyArray<{ key: FeatureDrawerKey; label: string }> = [
+  { key: "navigation", label: "展馆导航" },
+  { key: "primary", label: "展会概览" },
+  { key: "supporting", label: "参观推荐" },
+  { key: "detail", label: "展品介绍" },
+  { key: "action", label: "资料二维码" },
+];
+const MEDIA_PLAYBACK_LABELS: Record<MediaPlaybackStatus, string> = {
+  idle: "媒体待机",
+  negotiating: "媒体协商",
+  buffering: "等待首帧",
+  playing: "媒体播放中",
+  stalled: "媒体卡顿",
+  reconnecting: "媒体重连",
+  degraded: "媒体降级",
+  ended: "媒体结束",
+  error: "媒体异常",
+};
 
 export function DigitalHumanDisplay({
   videoRef,
@@ -110,12 +132,14 @@ export function DigitalHumanDisplay({
   onSpeakNavigationStep,
   onInputEvent,
   terminalId = "web-terminal",
+  mediaPlayback,
 }: DigitalHumanDisplayProps) {
   const [activeLanguage, setActiveLanguage] = useState("中文");
   const [draft, setDraft] = useState("");
   const [inputMode, setInputMode] = useState<"voice" | "keyboard">("voice");
-  const [interactionPreviewOpen, setInteractionPreviewOpen] = useState(false);
-  const [multimodalPreviewOpen, setMultimodalPreviewOpen] = useState(false);
+  const [featureRailExpanded, setFeatureRailExpanded] = useState(false);
+  const [selectedFeatureKey, setSelectedFeatureKey] = useState<FeatureDrawerKey>("primary");
+  const [activeFeatureDrawer, setActiveFeatureDrawer] = useState<FeatureDrawerKey | null>(null);
   const live = connection === "live" || connection === "expiring";
   const busy = connection === "connecting" || connection === "queued";
   const phaseLabel = conversationPhaseLabel(conversationPhase);
@@ -130,9 +154,7 @@ export function DigitalHumanDisplay({
     () => createLiveInteractionAdapter({ requestInterrupt: async () => onInterrupt() }),
     [onInterrupt],
   );
-  const previewInteractionAdapter = useMemo(createInteractionPreviewAdapter, []);
   const liveInteraction = useInteractionController(liveInteractionAdapter);
-  const previewInteraction = useInteractionController(previewInteractionAdapter);
   const multimodal = useMultimodalController();
 
   useEffect(() => {
@@ -153,57 +175,26 @@ export function DigitalHumanDisplay({
     }));
   };
 
-  const openInteractionPreview = () => {
-    previewInteraction.reset();
-    previewInteraction.startActivity("展会概览播报（开发预览）");
-    setInteractionPreviewOpen(true);
-    emitTouch("interaction_preview_open");
-  };
-
-  const closeInteractionPreview = () => {
-    previewInteraction.reset();
-    setInteractionPreviewOpen(false);
-    emitTouch("interaction_preview_close");
-  };
-
-  const openMultimodalPreview = () => {
+  const openMultimodalPreview = (focusSlot: MultimodalDrawerSlot = "primary") => {
     multimodal.reset();
     multimodal.publishMany(F02_DEVELOPMENT_PREVIEW);
-    setMultimodalPreviewOpen(true);
-    emitTouch("multimodal_preview_open");
+    setSelectedFeatureKey(focusSlot);
+    setFeatureRailExpanded(true);
+    setActiveFeatureDrawer(focusSlot);
+    emitTouch("multimodal_drawer_open", focusSlot);
   };
 
-  const closeMultimodalPreview = () => {
-    multimodal.reset();
-    setMultimodalPreviewOpen(false);
-    emitTouch("multimodal_preview_close");
+  const openNavigationDrawer = () => {
+    setSelectedFeatureKey("navigation");
+    setFeatureRailExpanded(true);
+    setActiveFeatureDrawer("navigation");
+    emitTouch("navigation_drawer_open");
   };
 
-  const updateMultimodalPreview = () => {
-    multimodal.publish("detail", F02_UPDATED_PREVIEW_CARD);
-    emitTouch("multimodal_revision_update");
-  };
-
-  const toggleMultimodalSupporting = () => {
-    const slot = multimodal.view.slots.find((item) => item.slotKey === "supporting");
-    const contentKey = slot?.presentation?.contentKey;
-    if (!contentKey) return;
-    if (slot.status === "hidden") multimodal.show("supporting", contentKey);
-    else if (slot.status === "visible") multimodal.hide("supporting", contentKey);
-  };
-
-  const degradeMultimodalQr = () => {
-    const slot = multimodal.view.slots.find((item) => item.slotKey === "action");
-    const contentKey = slot?.presentation?.contentKey;
-    if (contentKey) multimodal.degrade("action", contentKey);
-    emitTouch("multimodal_degrade", contentKey);
-  };
-
-  const clearMultimodal = () => {
-    for (const slot of multimodal.view.slots) {
-      if (slot.status !== "empty") multimodal.clear(slot.slotKey);
-    }
-    emitTouch("multimodal_clear");
+  const closeFeatureDrawer = () => {
+    if (!activeFeatureDrawer) return;
+    emitTouch("feature_drawer_close", activeFeatureDrawer);
+    setActiveFeatureDrawer(null);
   };
 
   const submit = () => {
@@ -212,6 +203,24 @@ export function DigitalHumanDisplay({
     onSend(text);
     setDraft("");
   };
+
+  useEffect(() => {
+    if (!activeFeatureDrawer) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") closeFeatureDrawer();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [activeFeatureDrawer]);
+
+  useEffect(() => {
+    if (live) return;
+    setActiveFeatureDrawer(null);
+    setFeatureRailExpanded(false);
+  }, [live]);
+
+  const showConversationSurface = live;
+  const visibleFeatureItems = featureRailExpanded ? FEATURE_RAIL_ITEMS : [FEATURE_RAIL_ITEMS[0]];
 
   return (
     <main className="digital-display-root">
@@ -233,15 +242,45 @@ export function DigitalHumanDisplay({
           <div className="digital-display-orbit digital-display-orbit-one" aria-hidden />
           <div className="digital-display-orbit digital-display-orbit-two" aria-hidden />
 
-          {multimodalPreviewOpen ? (
-            <MultimodalPanel
-              view={multimodal.view}
-              onUpdatePreview={updateMultimodalPreview}
-              onToggleSupporting={toggleMultimodalSupporting}
-              onClear={clearMultimodal}
-              onDegrade={degradeMultimodalQr}
-              onClose={closeMultimodalPreview}
-            />
+          {showConversationSurface && activeFeatureDrawer === "navigation" ? (
+            <FeatureDrawer
+              eyebrow="路线指引"
+              title="展馆导航"
+              description={navigationResult ? "地图、字幕和播报会跟随当前路线步骤更新。" : "连接数字人并提出目的地后，这里会显示真实路线。"}
+              onClose={closeFeatureDrawer}
+            >
+              {navigationResult ? (
+                <NavigationGuideCard
+                  navigationResult={navigationResult}
+                  isSpeaking={isSpeaking}
+                  onSpeakStep={onSpeakNavigationStep ? (step) => {
+                    emitTouch("navigation_step", step.id);
+                    onSpeakNavigationStep(step);
+                  } : undefined}
+                />
+              ) : (
+                <div className="digital-display-feature-drawer-empty" role="status">
+                  <strong>等待导航路线</strong>
+                  <p>可以先点击“展馆导航”快捷问题，或在输入框中告诉数字人你的目的地。</p>
+                </div>
+              )}
+            </FeatureDrawer>
+          ) : null}
+
+          {showConversationSurface && activeFeatureDrawer && activeFeatureDrawer !== "navigation" ? (
+            <FeatureDrawer
+              eyebrow="展会服务"
+              title={activeFeatureDrawer === "primary" ? "展馆概览" : activeFeatureDrawer === "supporting" ? "参观推荐" : activeFeatureDrawer === "detail" ? "展品介绍" : "资料二维码"}
+              description="地图、列表、卡片和二维码按功能独立打开，不阻塞当前会话。"
+              onClose={closeFeatureDrawer}
+            >
+              <MultimodalPanel
+                view={multimodal.view}
+                onClose={closeFeatureDrawer}
+                embedded
+                focusSlot={activeFeatureDrawer}
+              />
+            </FeatureDrawer>
           ) : null}
 
           <aside className="digital-display-languages" aria-label="语言选择">
@@ -260,7 +299,35 @@ export function DigitalHumanDisplay({
             ))}
           </aside>
 
-          <section className="digital-display-chat-panel" aria-label="实时对话">
+          {showConversationSurface ? (
+            <nav className={`digital-display-feature-rail${featureRailExpanded ? " is-expanded" : ""}`} aria-label="展会功能入口">
+              <div className="digital-display-feature-rail-items">
+                {visibleFeatureItems.map((item) => (
+                  <button
+                    key={item.key}
+                    type="button"
+                    aria-label={item.label}
+                    aria-current={selectedFeatureKey === item.key ? "page" : undefined}
+                    onClick={() => item.key === "navigation" ? openNavigationDrawer() : openMultimodalPreview(item.key)}
+                    className={selectedFeatureKey === item.key ? "is-active" : ""}
+                  >
+                    <strong>{item.label}</strong>
+                  </button>
+                ))}
+              </div>
+              <button
+                type="button"
+                className="digital-display-feature-rail-toggle"
+                aria-expanded={featureRailExpanded}
+                aria-label={featureRailExpanded ? "收起展会功能" : "展开展会功能"}
+                onClick={() => setFeatureRailExpanded((expanded) => !expanded)}
+              >
+                <span aria-hidden="true">{featureRailExpanded ? "⌃" : "⌄"}</span>
+              </button>
+            </nav>
+          ) : null}
+
+          {showConversationSurface ? <section className="digital-display-chat-panel" aria-label="实时对话">
             <div className="digital-display-chat-heading">
               <span>{activeLanguage === "中文" ? "实时对话" : "LIVE CONVERSATION"}</span>
               <span className="digital-display-chat-state">
@@ -268,23 +335,16 @@ export function DigitalHumanDisplay({
                 {isSpeaking ? " · 正在播报" : ""}
               </span>
               <span className="digital-display-chat-state">{phaseLabel}</span>
-              <button type="button" className="digital-display-multimodal-trigger" onClick={openMultimodalPreview}>
-                F02 联动
-              </button>
+              {mediaPlayback ? (
+                <span className={`digital-display-media-status is-${mediaPlayback.status}`} role="status">
+                  {MEDIA_PLAYBACK_LABELS[mediaPlayback.status]}
+                  {mediaPlayback.status === "reconnecting" && mediaPlayback.reconnectAttempt > 0 ? ` · ${mediaPlayback.reconnectAttempt}` : ""}
+                </span>
+              ) : null}
             </div>
             <div className="digital-display-chat-feed" aria-live="polite">
               {exhibitionConfigNotice ? (
                 <div className="digital-display-chat-notice" role="status">{exhibitionConfigNotice}</div>
-              ) : null}
-              {navigationResult ? (
-                <NavigationGuideCard
-                  navigationResult={navigationResult}
-                  isSpeaking={isSpeaking}
-                  onSpeakStep={onSpeakNavigationStep ? (step) => {
-                    emitTouch("navigation_step", step.id);
-                    onSpeakNavigationStep(step);
-                  } : undefined}
-                />
               ) : null}
               {visibleMessages.length === 0 && !navigationResult ? (
                 <WelcomeOverviewCard
@@ -327,20 +387,6 @@ export function DigitalHumanDisplay({
                 </button>
               ))}
             </div>
-
-            {live || interactionPreviewOpen ? (
-              <InteractionControlPanel
-                view={interactionPreviewOpen ? previewInteraction.view : liveInteraction.view}
-                onPause={() => void (interactionPreviewOpen ? previewInteraction.pause() : liveInteraction.pause())}
-                onResume={() => void (interactionPreviewOpen ? previewInteraction.resume() : liveInteraction.resume())}
-                onInterrupt={() => void (interactionPreviewOpen ? previewInteraction.interrupt() : liveInteraction.interrupt())}
-                onRepeat={() => void (interactionPreviewOpen ? previewInteraction.repeat() : liveInteraction.repeat())}
-                onSetSpeed={(speed) => void (interactionPreviewOpen ? previewInteraction.setSpeed(speed) : liveInteraction.setSpeed(speed))}
-                onSetLanguage={(language) => void (interactionPreviewOpen ? previewInteraction.setLanguage(language) : liveInteraction.setLanguage(language))}
-                onOpenPreview={interactionPreviewOpen ? undefined : openInteractionPreview}
-                onClosePreview={interactionPreviewOpen ? closeInteractionPreview : undefined}
-              />
-            ) : null}
 
             <div className="digital-display-chat-input">
               {inputMode === "voice" ? (
@@ -392,7 +438,7 @@ export function DigitalHumanDisplay({
                 {inputMode === "voice" ? "键盘输入" : "语音输入"}
               </button>
             </div>
-          </section>
+          </section> : null}
 
           {!live && !busy ? (
             <div className="digital-display-start-card">

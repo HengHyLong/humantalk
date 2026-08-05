@@ -55,7 +55,7 @@ export function WelcomeOverviewCard({
       </div>
       {onOpenMultimodalPreview ? (
         <button type="button" className="digital-display-welcome-multimodal-button" onClick={onOpenMultimodalPreview}>
-          F02 多模态联动预览
+          浏览展会内容
         </button>
       ) : null}
     </article>

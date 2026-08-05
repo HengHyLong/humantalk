@@ -2,12 +2,17 @@ import type { MultimodalCompositionView, MultimodalPresentation } from "../lib/m
 
 type MultimodalPanelProps = {
   view: MultimodalCompositionView;
-  onUpdatePreview: () => void;
-  onToggleSupporting: () => void;
-  onClear: () => void;
-  onDegrade: () => void;
   onClose: () => void;
+  embedded?: boolean;
+  focusSlot?: "primary" | "supporting" | "detail" | "action" | null;
 };
+
+const FOCUS_SLOT_LABELS = {
+  primary: "展馆概览",
+  supporting: "参观推荐",
+  detail: "展品介绍",
+  action: "资料二维码",
+} as const;
 
 function MapPanel({ presentation }: { presentation: Extract<MultimodalPresentation, { kind: "map" }> }) {
   const polyline = presentation.points.map((point) => `${point.xPercent},${point.yPercent}`).join(" ");
@@ -45,16 +50,21 @@ function PresentationPanel({ presentation }: { presentation: MultimodalPresentat
   return <QrPanel presentation={presentation} />;
 }
 
-export function MultimodalPanel({ view, onUpdatePreview, onToggleSupporting, onClear, onDegrade, onClose }: MultimodalPanelProps) {
-  const supporting = view.slots.find((slot) => slot.slotKey === "supporting");
-  const action = view.slots.find((slot) => slot.slotKey === "action");
-  const clearAvailable = view.slots.some((slot) => slot.status !== "empty");
+export function MultimodalPanel({
+  view,
+  onClose,
+  embedded = false,
+  focusSlot = null,
+}: MultimodalPanelProps) {
+  const visibleSlots = focusSlot
+    ? view.visibleSlots.filter((slot) => slot.slotKey === focusSlot)
+    : view.visibleSlots;
+  const title = focusSlot ? FOCUS_SLOT_LABELS[focusSlot] : view.title;
   return (
-    <section className="digital-display-multimodal-panel" aria-label="F02 多模态信息">
-      <header><div><small>F02 多模态联动 · 开发预览</small><h2>{view.title}</h2><p role="status">{view.statusMessage}</p></div><button type="button" onClick={onClose} aria-label="关闭多模态预览">关闭</button></header>
-      {view.hasDevelopmentPreview ? <p className="digital-display-multimodal-notice">当前点位、文案和二维码均为前端开发预览，不代表正式业务数据或接口成功。</p> : null}
-      {view.phase === "error" ? <div className="digital-display-multimodal-empty" role="alert">{view.errorMessage || view.statusMessage}</div> : view.visibleSlots.length ? <div className="digital-display-multimodal-content">{view.visibleSlots.map((slot) => slot.presentation ? <PresentationPanel key={`${slot.slotKey}-${slot.presentation.contentKey}`} presentation={slot.presentation} /> : null)}</div> : <div className="digital-display-multimodal-empty">暂无可展示内容</div>}
-      <details className="digital-display-multimodal-actions"><summary>展开联动检查</summary><div><button type="button" onClick={onUpdatePreview}>模拟版本更新</button><button type="button" disabled={!supporting || (supporting.status !== "visible" && supporting.status !== "hidden")} onClick={onToggleSupporting}>{view.hiddenCount ? "恢复列表区域" : "隐藏列表区域"}</button><button type="button" disabled={!action || action.status === "empty" || action.status === "degraded"} onClick={onDegrade}>模拟二维码降级</button><button type="button" disabled={!clearAvailable} onClick={onClear}>模拟清空数据</button></div></details>
+    <section className={`digital-display-multimodal-panel${embedded ? " is-embedded" : ""}`} aria-label={`${title}内容`}>
+      {!embedded ? <header><div><small>展会服务</small><h2>{title}</h2><p role="status">{view.statusMessage}</p></div><button type="button" onClick={onClose} aria-label="关闭展会服务">关闭</button></header> : null}
+      {view.hasDevelopmentPreview ? <p className="digital-display-multimodal-notice">当前为演示内容，连接服务后将更新为实时数据。</p> : null}
+      {view.phase === "error" ? <div className="digital-display-multimodal-empty" role="alert">{view.errorMessage || view.statusMessage}</div> : visibleSlots.length ? <div className="digital-display-multimodal-content">{visibleSlots.map((slot) => slot.presentation ? <PresentationPanel key={`${slot.slotKey}-${slot.presentation.contentKey}`} presentation={slot.presentation} /> : null)}</div> : <div className="digital-display-multimodal-empty">该功能暂无可展示内容</div>}
     </section>
   );
 }

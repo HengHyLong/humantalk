@@ -74,6 +74,23 @@ import {
 import type { VoiceCloneApplication } from "./lib/voiceCloneApply";
 import { startPlayback } from "./lib/webrtc";
 import {
+  bufferSubtitleChunk,
+  classifyMediaFailure,
+  classifyPlaybackError,
+  compatibleSubtitleChunkKey,
+  compatibleSubtitleChunkOrder,
+  compatibleSubtitleText,
+  compatibleSubtitleTurnKey,
+  createInitialMediaPlaybackState,
+  createSubtitleTurnBuffer,
+  decideMediaReconnect,
+  endSubtitleTurn,
+  getSubtitlePresentation,
+  markSubtitleMediaStarted,
+  mediaPlaybackReducer,
+  type MediaFailureCategory,
+} from "./lib/mediaPlayback";
+import {
   conversationStateReducer,
   createInitialConversationState,
 } from "./lib/sessionStateMachine";
@@ -923,8 +940,6 @@ export default function App() {
   const speakAudioAbortRef = useRef<AbortController | null>(null);
   const ttsPreviewAudioRef = useRef<HTMLAudioElement | null>(null);
   const ttsPreviewUrlRef = useRef<string | null>(null);
-  /** Cumulative assistant text for the current speech turn (subtitle.chunk segments). */
-  const subtitleAccRef = useRef("");
   /** `messages` id of the in-progress assistant bubble for this turn; cleared on speech.ended. */
   const streamingAssistantMsgIdRef = useRef<string | null>(null);
   /** Local placeholder shown immediately after the user sends text, before worker SSE arrives. */
@@ -932,10 +947,13 @@ export default function App() {
   /** 首帧已进入 WebRTC 后再叠字幕（与口型对齐）；旧版 Worker 无 speech.media_started 时用定时回退 */
   const subtitleMediaReadyRef = useRef(false);
   const subtitleFallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const subtitleBufferRef = useRef(createSubtitleTurnBuffer());
+  const subtitleTurnCounterRef = useRef(0);
+  const activeSubtitleTurnRef = useRef<{ scopeKey: string; turnKey: string; nextChunkOrder: number } | null>(null);
   const reconnectAttemptRef = useRef(0);
   const reconnectTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
   const reconnectSessionIdRef = useRef<string | null>(null);
-  const scheduleReconnectRef = useRef<() => void>(() => {});
+  const scheduleReconnectRef = useRef<(category?: MediaFailureCategory) => void>(() => {});
   const welcomeTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
   const welcomeSpeechSessionRef = useRef<string | null>(null);
   const inputEventLogRef = useRef<InputCaptureEvent[]>([]);
@@ -989,6 +1007,7 @@ export default function App() {
   welcomeStateRef.current = welcomeState;
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
+  const [mediaPlayback, dispatchMediaPlayback] = useReducer(mediaPlaybackReducer, undefined, createInitialMediaPlaybackState);
   const [queueInfo, setQueueInfo] = useState<QueueInfo | null>(null);
   const [expiringCountdown, setExpiringCountdown] = useState<number | null>(null);
   const terminalId = useMemo(configuredTerminalId, []);
@@ -1013,23 +1032,56 @@ export default function App() {
     }
   }, []);
 
-  const flushSubtitleDisplay = useCallback(() => {
-    const t = subtitleAccRef.current;
-    if (t) setCurrentSubtitle(t);
+  const refreshSubtitlePresentation = useCallback((nowMs = Date.now()) => {
+    const active = activeSubtitleTurnRef.current;
+    if (!active) {
+      setCurrentSubtitle("");
+      return "";
+    }
+    const presentation = getSubtitlePresentation(
+      subtitleBufferRef.current,
+      active.scopeKey,
+      active.turnKey,
+      nowMs,
+    );
+    if (presentation.visible) {
+      setCurrentSubtitle(presentation.text);
+      const msgId = streamingAssistantMsgIdRef.current;
+      if (msgId) {
+        setMessages((prev) => prev.map((message) => message.id === msgId ? { ...message, text: presentation.text } : message));
+      }
+    }
+    return presentation.text;
   }, []);
 
+  const scheduleSubtitleFallback = useCallback(() => {
+    if (subtitleFallbackTimerRef.current !== null) return;
+    subtitleFallbackTimerRef.current = window.setTimeout(() => {
+      subtitleFallbackTimerRef.current = null;
+      refreshSubtitlePresentation(Date.now());
+    }, subtitleBufferRef.current.fallbackDelayMs);
+  }, [refreshSubtitlePresentation]);
+
+  const flushSubtitleDisplay = useCallback(() => {
+    refreshSubtitlePresentation(Date.now());
+  }, [refreshSubtitlePresentation]);
+
   const flushSubtitleMessage = useCallback(() => {
-    const msgId = streamingAssistantMsgIdRef.current;
-    const t = subtitleAccRef.current;
-    if (!msgId || !t) return;
-    setMessages((prev) =>
-      prev.map((m) => (m.id === msgId ? { ...m, text: t } : m)),
-    );
+    refreshSubtitlePresentation(Date.now());
+  }, [refreshSubtitlePresentation]);
+
+  const beginSubtitleTurn = useCallback((data: unknown) => {
+    const scopeKey = sessionIdRef.current ?? "session-unknown";
+    const fallbackTurnKey = `speech-${++subtitleTurnCounterRef.current}`;
+    const turnKey = compatibleSubtitleTurnKey(data, fallbackTurnKey);
+    activeSubtitleTurnRef.current = { scopeKey, turnKey, nextChunkOrder: 0 };
+    subtitleMediaReadyRef.current = false;
   }, []);
 
   const clearSubtitleState = useCallback(() => {
     setCurrentSubtitle("");
-    subtitleAccRef.current = "";
+    subtitleBufferRef.current = createSubtitleTurnBuffer();
+    activeSubtitleTurnRef.current = null;
     subtitleMediaReadyRef.current = false;
     clearSubtitleFallbackTimer();
     streamingAssistantMsgIdRef.current = null;
@@ -2009,54 +2061,77 @@ export default function App() {
     }
     try {
       closePeerConnection();
+      dispatchMediaPlayback({ type: "negotiate" });
       const playback = await startPlayback(sid, video, {
         onRemoteStream: (stream) => {
           remoteStreamRef.current = stream;
           setRemoteStream(stream);
+          dispatchMediaPlayback({ type: "remote-stream" });
+        },
+        onFirstFrame: () => {
+          dispatchMediaPlayback({ type: "first-frame" });
         },
         onConnectionStateChange: (state) => {
+          if (state === "connected") dispatchMediaPlayback({ type: "connected" });
           if (state === "failed" || state === "disconnected") {
-            scheduleReconnectRef.current();
+            dispatchMediaPlayback({ type: "stalled" });
+            scheduleReconnectRef.current("connection-lost");
+          }
+        },
+        onIceConnectionStateChange: (state) => {
+          if (state === "failed" || state === "disconnected") {
+            dispatchMediaPlayback({ type: "stalled" });
+            scheduleReconnectRef.current("connection-lost");
           }
         },
       });
-      if (sessionIdRef.current !== sid) return;
+      if (sessionIdRef.current !== sid) {
+        playback.pc.close();
+        return;
+      }
       pcRef.current = playback.pc;
       remoteStreamRef.current = playback.remoteStream;
       setRemoteStream(playback.remoteStream);
+      dispatchMediaPlayback({ type: "remote-stream" });
       video.muted = false;
       reconnectAttemptRef.current = 0;
       reconnectSessionIdRef.current = sid;
       setConnection("live");
+      dispatchMediaPlayback({ type: "reconnected" });
       dispatchConversation({ type: "reconnected", sessionId: sid });
     } catch (error) {
       console.warn("Failed to reconnect WebRTC playback", error);
       if (sessionIdRef.current === sid) {
-        scheduleReconnectRef.current();
+        scheduleReconnectRef.current(classifyPlaybackError(error));
       }
     }
   }, [closePeerConnection]);
 
-  const scheduleReconnect = useCallback(() => {
+  const scheduleReconnect = useCallback((category: MediaFailureCategory = "connection-lost") => {
     const sid = sessionIdRef.current;
     if (!sid || reconnectTimerRef.current !== null) return;
-    const nextAttempt = reconnectAttemptRef.current + 1;
-    if (nextAttempt > 3) {
+    const decision = decideMediaReconnect(classifyMediaFailure(category), reconnectAttemptRef.current, 0.5);
+    if (!decision.shouldRetry) {
+      dispatchMediaPlayback({ type: "degraded", category });
       dispatchConversation({ type: "failed", code: "WEBRTC_RECONNECT_EXHAUSTED", message: "视频通道重连失败" });
-      setConnection("error");
+      const requiresNewSession = ["authorization-required", "access-denied", "scope-expired"].includes(category);
+      setConnection(requiresNewSession ? "error" : "live");
+      if (!requiresNewSession) notify("视频通道暂不可用，已切换为文字交互。", "info");
       return;
     }
+    const nextAttempt = decision.attempt;
     reconnectSessionIdRef.current = sid;
     reconnectAttemptRef.current = nextAttempt;
+    dispatchMediaPlayback({ type: "reconnect-requested", attempt: nextAttempt });
     dispatchConversation({ type: "transport_lost", message: "视频通道暂时中断" });
     dispatchConversation({ type: "reconnect_requested", attempt: nextAttempt });
     setConnection("connecting");
-    const delay = [0, 1000, 3000][nextAttempt - 1] ?? 3000;
+    const delay = decision.delayMs;
     reconnectTimerRef.current = window.setTimeout(() => {
       reconnectTimerRef.current = null;
       void attemptPlaybackReconnect();
     }, delay);
-  }, [attemptPlaybackReconnect]);
+  }, [attemptPlaybackReconnect, notify]);
   scheduleReconnectRef.current = scheduleReconnect;
 
   const releaseSession = useCallback(async (sid: string, keepalive = false) => {
@@ -2075,6 +2150,7 @@ export default function App() {
       reconnectAttemptRef.current = 0;
       reconnectSessionIdRef.current = null;
       closePeerConnection();
+      dispatchMediaPlayback({ type: "reset" });
       setSessionId(null);
       setActiveAsrProvider("");
       setQueueInfo(null);
@@ -2268,6 +2344,7 @@ export default function App() {
       if (ev === "session.expired") {
         // Server force-closed the session, reset to idle
         setConnection("idle");
+        dispatchMediaPlayback({ type: "reset" });
         dispatchConversation({ type: "session_expired" });
         clearWelcomeTimer();
         welcomeSpeechSessionRef.current = null;
@@ -2302,6 +2379,7 @@ export default function App() {
         const staleId = streamingAssistantMsgIdRef.current;
         const pendingId = pendingAssistantMsgIdRef.current;
         clearSubtitleState();
+        beginSubtitleTurn(data);
         setIsSpeaking(true);
         if (staleId) {
           setMessages((prev) => prev.filter((m) => m.id !== staleId));
@@ -2321,16 +2399,47 @@ export default function App() {
       if (ev === "speech.media_started") {
         subtitleMediaReadyRef.current = true;
         clearSubtitleFallbackTimer();
+        const active = activeSubtitleTurnRef.current;
+        if (active) {
+          const turnKey = compatibleSubtitleTurnKey(data, active.turnKey);
+          if (turnKey !== active.turnKey) return;
+          subtitleBufferRef.current = markSubtitleMediaStarted(subtitleBufferRef.current, {
+            scopeKey: active.scopeKey,
+            turnKey,
+            observedAtMs: Date.now(),
+          }).buffer;
+        }
         flushSubtitleDisplay();
         flushSubtitleMessage();
       }
       if (ev === "subtitle.chunk" && data && typeof data === "object") {
-        const t = (data as { text?: string }).text;
+        const t = compatibleSubtitleText(data);
         if (!t) return;
-        subtitleAccRef.current += t;
-        if (subtitleMediaReadyRef.current) {
+        let active = activeSubtitleTurnRef.current;
+        if (!active) {
+          beginSubtitleTurn(data);
+          active = activeSubtitleTurnRef.current;
+        }
+        if (!active) return;
+        const incomingTurnKey = compatibleSubtitleTurnKey(data, active.turnKey);
+        if (incomingTurnKey !== active.turnKey) return;
+        const nextOrder = ++active.nextChunkOrder;
+        const update = bufferSubtitleChunk(subtitleBufferRef.current, {
+          scopeKey: active.scopeKey,
+          turnKey: active.turnKey,
+          chunkKey: compatibleSubtitleChunkKey(data, `${active.turnKey}:chunk:${nextOrder}`),
+          order: compatibleSubtitleChunkOrder(data, nextOrder),
+          text: t,
+          observedAtMs: Date.now(),
+        });
+        if (!update.accepted) return;
+        subtitleBufferRef.current = update.buffer;
+        const presentation = getSubtitlePresentation(subtitleBufferRef.current, active.scopeKey, active.turnKey, Date.now());
+        if (presentation.visible || subtitleMediaReadyRef.current) {
           flushSubtitleDisplay();
           flushSubtitleMessage();
+        } else {
+          scheduleSubtitleFallback();
         }
       }
       if (ev === "speech.ended") {
@@ -2339,9 +2448,18 @@ export default function App() {
           welcomeSpeechSessionRef.current = null;
           dispatchWelcome({ type: "finished" });
         }
-        const d = data && typeof data === "object" ? (data as { text?: string }) : {};
-        const fromEvent = typeof d.text === "string" ? d.text.trim() : "";
-        const streamed = subtitleAccRef.current.trim();
+        const fromEvent = compatibleSubtitleText(data);
+        const active = activeSubtitleTurnRef.current;
+        const streamed = active
+          ? getSubtitlePresentation(subtitleBufferRef.current, active.scopeKey, active.turnKey, Date.now()).text.trim()
+          : "";
+        if (active) {
+          subtitleBufferRef.current = endSubtitleTurn(subtitleBufferRef.current, {
+            scopeKey: active.scopeKey,
+            turnKey: active.turnKey,
+            observedAtMs: Date.now(),
+          }).buffer;
+        }
         const finalText = fromEvent || streamed;
         const msgId = streamingAssistantMsgIdRef.current;
         clearSubtitleState();
@@ -2372,7 +2490,7 @@ export default function App() {
       }
     });
     return stop;
-  }, [appendAssistantError, clearReconnectTimer, clearSubtitleFallbackTimer, clearSubtitleState, clearWelcomeTimer, flushSubtitleDisplay, flushSubtitleMessage, notify, sessionId]);
+  }, [appendAssistantError, beginSubtitleTurn, clearReconnectTimer, clearSubtitleFallbackTimer, clearSubtitleState, clearWelcomeTimer, flushSubtitleDisplay, flushSubtitleMessage, notify, scheduleSubtitleFallback, sessionId]);
 
   // Resolves when FlashTalk slot is acquired (session.queued position=0)
   const slotAcquiredRef = useRef<(() => void) | null>(null);
@@ -2500,23 +2618,38 @@ export default function App() {
       }
 
       closePeerConnection();
+      dispatchMediaPlayback({ type: "negotiate" });
       const playback = await startPlayback(created.session_id, videoRef.current!, {
         onRemoteStream: (remoteStream) => {
           remoteStreamRef.current = remoteStream;
           setRemoteStream(remoteStream);
+          dispatchMediaPlayback({ type: "remote-stream" });
+        },
+        onFirstFrame: () => {
+          dispatchMediaPlayback({ type: "first-frame" });
         },
         onConnectionStateChange: (state) => {
+          if (state === "connected") dispatchMediaPlayback({ type: "connected" });
           if (state === "failed" || state === "disconnected") {
-            scheduleReconnectRef.current();
+            dispatchMediaPlayback({ type: "stalled" });
+            scheduleReconnectRef.current("connection-lost");
+          }
+        },
+        onIceConnectionStateChange: (state) => {
+          if (state === "failed" || state === "disconnected") {
+            dispatchMediaPlayback({ type: "stalled" });
+            scheduleReconnectRef.current("connection-lost");
           }
         },
       });
       pcRef.current = playback.pc;
       remoteStreamRef.current = playback.remoteStream;
       setRemoteStream(playback.remoteStream);
+      dispatchMediaPlayback({ type: "remote-stream" });
       setActiveAsrProvider(lockedAsrProvider);
       videoRef.current!.muted = false;
       setConnection("live");
+      dispatchMediaPlayback({ type: "connected" });
       dispatchConversation({ type: "transport_connected", sessionId: created.session_id });
       await apiPost(`/sessions/${created.session_id}/start`, {});
       notify("会话已连接，可以开始文本、语音或音频驱动。", "success");
@@ -2526,6 +2659,7 @@ export default function App() {
       }
       resetLiveState();
       console.warn("Failed to start session", error);
+      dispatchMediaPlayback({ type: "failed", category: classifyPlaybackError(error) });
       setConnection("error");
       dispatchConversation({
         type: "failed",
@@ -2545,6 +2679,7 @@ export default function App() {
     clientUserId,
     clearSubtitleState,
     closePeerConnection,
+    dispatchMediaPlayback,
     edgeVoice,
     llmSystemPrompt,
     memoryEnabled,
@@ -3398,6 +3533,7 @@ export default function App() {
           avatarMaskUrl={selectedAvatarMaskUrl}
           clientRenderer={model === "mock" ? currentAvatar?.client_renderer ?? null : null}
           connection={connection}
+          mediaPlayback={mediaPlayback}
           conversationPhase={conversationState.phase}
           isSpeaking={isSpeaking}
           avatar={currentAvatar}
