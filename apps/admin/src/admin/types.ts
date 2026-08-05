@@ -91,6 +91,18 @@ export type DashboardData = {
   todos: Array<{ id: string; type: string; title: string; owner: string; time: string; path: string }>;
 };
 
+export type ReportFilters = { exhibitionId?: string; scene?: string; terminalId?: string; from?: string; to?: string };
+export type ReportBucket = { key: string; count: number; averageDurationMs?: number; totalDurationMs?: number };
+export type ReportOperations = {
+  generatedAt: string;
+  filters: Record<string, string | null | undefined>;
+  interaction: { total: number; averageDurationMs: number; byScene: ReportBucket[]; byTerminal: ReportBucket[]; byHour: ReportBucket[] };
+  hotspot: { items: ReportBucket[] };
+  hit: { total: number; hit: number; miss: number; hitRate: number; strongQaHit: number; ragHit: number };
+  lead: { total: number; converted: number; conversionRate: number; byStatus: ReportBucket[] };
+  resource: { items: ReportBucket[] };
+};
+
 export type AdminAsset = {
   id: string;
   name: string;

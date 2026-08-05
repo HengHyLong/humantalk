@@ -6,12 +6,14 @@ import os
 import stat
 from contextlib import contextmanager
 from dataclasses import dataclass
+from io import BytesIO
 from pathlib import Path
 from typing import Any, BinaryIO, Iterator, Literal, Mapping, cast
 
 import numpy as np
 import cv2
 from PIL import Image, UnidentifiedImageError
+
 
 
 CANONICAL_DOGO_AVATAR_ID = "dogo-light2d"
@@ -236,7 +238,43 @@ def _open_file_no_follow(root: Path, relative: Path) -> Iterator[BinaryIO]:
     no_follow = getattr(os, "O_NOFOLLOW", 0)
     directory = getattr(os, "O_DIRECTORY", 0)
     if not no_follow or not directory:
-        raise Light2DContractError("secure Light2D file opening is unavailable")
+        # Windows does not expose openat/O_NOFOLLOW. Keep the same contract
+        # with a component-by-component symlink check and a resolved
+        # containment check before opening the file. The handle is opened once
+        # and yielded, so a later path replacement cannot change the bytes
+        # consumed by the caller.
+        root = root.expanduser().resolve()
+        if relative.is_absolute() or any(part in {"", ".", ".."} for part in relative.parts):
+            raise Light2DContractError("invalid Light2D file path")
+        candidate = root.joinpath(*relative.parts)
+        current = root
+        try:
+            for part in relative.parts:
+                current = current / part
+                if current.is_symlink():
+                    raise Light2DContractError("Light2D asset path contains a symlink")
+            resolved = candidate.resolve(strict=True)
+            resolved.relative_to(root)
+            if os.name == "nt":
+                # Windows does not allow replacing an open file through
+                # pathlib's standard handle. Snapshot the validated file
+                # before yielding so callers still observe the same bytes
+                # after an atomic path replacement.
+                with resolved.open("rb") as opened:
+                    if not stat.S_ISREG(os.fstat(opened.fileno()).st_mode):
+                        raise Light2DContractError("Light2D asset is not a regular file")
+                    payload = opened.read()
+                yield BytesIO(payload)
+            else:
+                with resolved.open("rb") as opened:
+                    if not stat.S_ISREG(os.fstat(opened.fileno()).st_mode):
+                        raise Light2DContractError("Light2D asset is not a regular file")
+                    yield opened
+            return
+        except Light2DContractError:
+            raise
+        except (OSError, ValueError) as exc:
+            raise Light2DContractError("Light2D asset not found") from exc
     root = root.absolute()
     if not root.is_absolute() or relative.is_absolute():
         raise Light2DContractError("invalid Light2D file path")

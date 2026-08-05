@@ -1013,6 +1013,46 @@ def test_speak_audio_passes_request_level_stt_provider(
     assert seen == ["dashscope"]
 
 
+@pytest.mark.parametrize("defer_speak, expected_status", [(False, "queued"), (True, "transcribed")])
+def test_streaming_speech_honors_defer_speak(
+    unified_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    defer_speak: bool,
+    expected_status: str,
+) -> None:
+    def fake_transcribe_pcm(chunk_queue, *, provider=None):
+        del provider
+        while chunk_queue.get() is not None:
+            pass
+        return "流式识别文本", 1.0
+
+    monkeypatch.setattr(sessions_routes, "transcribe_pcm_chunk_queue_sync", fake_transcribe_pcm)
+
+    create_response = unified_client.post(
+        "/sessions",
+        json={"avatar_id": "singer", "model": "flashtalk"},
+    )
+    assert create_response.status_code == 200, create_response.json()
+    session_id = create_response.json()["session_id"]
+
+    with unified_client.websocket_connect(f"/sessions/{session_id}/speak_audio_stream") as websocket:
+        websocket.send_json({"type": "meta", "defer_speak": defer_speak})
+        websocket.send_bytes(b"\x00\x00" * 320)
+        websocket.send_json({"type": "end"})
+        result = websocket.receive_json()
+
+    assert result == {
+        "session_id": session_id,
+        "status": expected_status,
+        "text": "流式识别文本",
+    }
+    runner = unified_client.created_runners[session_id]  # type: ignore[attr-defined]
+    if defer_speak:
+        assert runner.started_texts == []
+    else:
+        _wait_until(lambda: runner.started_texts == ["流式识别文本"])
+
+
 def test_update_fasterliveportrait_config_for_active_session(
     unified_client: TestClient,
     monkeypatch: pytest.MonkeyPatch,

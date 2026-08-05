@@ -358,6 +358,12 @@ class Settings(BaseSettings):
     models_dir: str = Field(default_factory=lambda: str(model_root()))
     worker_url: str = "http://127.0.0.1:9001"
     exports_dir: str = "./data/exports"
+    admin_data_dir: str = "./data/admin"
+    admin_asset_max_bytes: int = 20 * 1024 * 1024
+    admin_username: str = "admin"
+    admin_password: str = "Admin@123456"
+    admin_role: str = "sys_admin"
+    admin_token_ttl_sec: int = 8 * 3600
     scene_assets_dir: str = "./data/scene-assets"
     scene_asset_max_bytes: int = 200 * 1024 * 1024
     export_max_bytes: int = 1024 * 1024 * 1024

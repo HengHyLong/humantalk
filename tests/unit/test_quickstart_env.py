@@ -10,9 +10,26 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
+def _bash_usable() -> bool:
+    bash = shutil.which("bash")
+    if not bash:
+        return False
+    try:
+        subprocess.run(
+            [bash, "-lc", "true"],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return True
+
+
 def test_quickstart_source_env_exports_plain_assignments(tmp_path: Path) -> None:
-    if shutil.which("bash") is None:
-        pytest.skip("bash is not available")
+    if not _bash_usable():
+        pytest.skip("a usable bash executable is not available")
     env_file = tmp_path / "quickstart.env"
     env_file.write_text(
         "OPENTALKING_TEST_PLAIN_ASSIGNMENT=from_quickstart_env\n",
@@ -43,8 +60,8 @@ def test_quickstart_entrypoints_use_exporting_env_loader() -> None:
 
 
 def test_quickstart_source_env_preserves_calling_environment(tmp_path: Path) -> None:
-    if shutil.which("bash") is None:
-        pytest.skip("bash is not available")
+    if not _bash_usable():
+        pytest.skip("a usable bash executable is not available")
     env_file = tmp_path / "quickstart.env"
     env_file.write_text(
         "OPENTALKING_TEST_OVERRIDE=from_quickstart_env\n"
@@ -65,8 +82,8 @@ bash -c 'test "$OPENTALKING_TEST_DEFAULT" = from_quickstart_env'
 
 
 def test_quickstart_source_env_keeps_new_env_file_assignments(tmp_path: Path) -> None:
-    if shutil.which("bash") is None:
-        pytest.skip("bash is not available")
+    if not _bash_usable():
+        pytest.skip("a usable bash executable is not available")
     env_file = tmp_path / "quickstart.env"
     env_file.write_text(
         "OPENTALKING_MODEL_ROOT=/deploy/models\n"
@@ -163,8 +180,8 @@ def test_start_opentalking_revalidates_existing_pid_with_http_probe() -> None:
 
 
 def test_quickstart_source_ascend_env_tolerates_unset_ld_library_path(tmp_path: Path) -> None:
-    if shutil.which("bash") is None:
-        pytest.skip("bash is not available")
+    if not _bash_usable():
+        pytest.skip("a usable bash executable is not available")
     ascend_env = tmp_path / "set_env.sh"
     ascend_env.write_text(
         'export LD_LIBRARY_PATH="${LD_LIBRARY_PATH}:/mock/ascend/lib64"\n',

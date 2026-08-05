@@ -24,6 +24,7 @@ dependencies = [
   "aiortc>=1.6",
   'av>=14,<14.3; python_version < "3.13"',
   "python-multipart>=0.0.9",
+  "psutil>=5.9",
   "pillow>=10",
   "websockets>=13",
   "loguru>=0.7",

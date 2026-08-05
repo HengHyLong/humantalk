@@ -36,10 +36,14 @@ import type {
   WelcomeConfig,
   ExplainFlow,
   ShoppingStrategy,
+  ReportFilters,
+  ReportOperations,
   AuthSession,
   PermissionCode,
   ButtonPermission,
 } from "./types";
+
+export type GifCreateInput = Omit<GifAssetMeta, "id" | "createdAt"> & { file?: File };
 
 const STORAGE_PREFIX = "opentalking-admin-";
 const AUTH_TOKEN_KEY = `${STORAGE_PREFIX}token`;
@@ -219,8 +223,9 @@ export interface AdminApiClient {
   logout(): Promise<void>;
   getPermissions(): Promise<{ permissions: PermissionCode[]; buttonPermissions: ButtonPermission[] }>;
   getDashboard(): Promise<DashboardData>;
+  getReport(filters?: ReportFilters): Promise<ReportOperations>;
   listGifs(): Promise<GifAssetMeta[]>;
-  createGif(input: Omit<GifAssetMeta, "id" | "createdAt">): Promise<GifAssetMeta>;
+  createGif(input: GifCreateInput): Promise<GifAssetMeta>;
   updateGif(id: string, patch: Partial<GifAssetMeta>): Promise<GifAssetMeta>;
   deleteGif(id: string): Promise<void>;
   listVoiceConfigs(): Promise<VoiceAsset[]>;
@@ -230,6 +235,7 @@ export interface AdminApiClient {
   saveSceneBindings(bindings: SceneBinding[]): Promise<SceneBinding[]>;
   listIdle(): Promise<IdleContent[]>;
   saveIdle(item: IdleContent): Promise<IdleContent>;
+  deleteIdle(id: string): Promise<void>;
   listDocuments(): Promise<KnowledgeDocument[]>;
   uploadDocument(input: Pick<KnowledgeDocument, "title" | "fileName" | "type" | "exhibition">): Promise<KnowledgeDocument>;
   updateDocument(id: string, patch: Partial<KnowledgeDocument>): Promise<KnowledgeDocument>;
@@ -401,8 +407,20 @@ export class MockAdminApiClient implements AdminApiClient {
     };
   }
 
+  async getReport(): Promise<ReportOperations> {
+    return {
+      generatedAt: now(),
+      filters: {},
+      interaction: { total: 0, averageDurationMs: 0, byScene: [], byTerminal: [], byHour: [] },
+      hotspot: { items: [] },
+      hit: { total: 0, hit: 0, miss: 0, hitRate: 0, strongQaHit: 0, ragHit: 0 },
+      lead: { total: 0, converted: 0, conversionRate: 0, byStatus: [] },
+      resource: { items: [] },
+    };
+  }
+
   async listGifs() { return readStore("gifs", DEFAULT_GIFS); }
-  async createGif(input: Omit<GifAssetMeta, "id" | "createdAt">) { const item = { ...input, id: `gif-${Date.now()}`, createdAt: now() }; writeStore("gifs", [item, ...await this.listGifs()]); return item; }
+  async createGif(input: GifCreateInput) { const { file: _file, ...metadata } = input; const item = { ...metadata, id: `gif-${Date.now()}`, createdAt: now() }; writeStore("gifs", [item, ...await this.listGifs()]); return item; }
   async updateGif(id: string, patch: Partial<GifAssetMeta>) { const items = await this.listGifs(); const next = items.map((item) => item.id === id ? { ...item, ...patch } : item); writeStore("gifs", next); return next.find((item) => item.id === id) ?? items[0]; }
   async deleteGif(id: string) { writeStore("gifs", (await this.listGifs()).filter((item) => item.id !== id)); }
   async listVoiceConfigs() { return readStore<VoiceAsset[]>("voice-configs", []); }
@@ -412,6 +430,7 @@ export class MockAdminApiClient implements AdminApiClient {
   async saveSceneBindings(bindings: SceneBinding[]) { writeStore("scene-bindings", bindings); return bindings; }
   async listIdle() { return readStore<IdleContent[]>("idle", [{ id: "idle-1", type: "标语轮播", title: "西博会欢迎语", content: "欢迎来到 2026 西部博览会", interval: 8, exhibition: "2026 西部博览会", enabled: true }]); }
   async saveIdle(item: IdleContent) { const items = (await this.listIdle()).filter((candidate) => candidate.id !== item.id); const next = [item, ...items]; writeStore("idle", next); return item; }
+  async deleteIdle(id: string) { writeStore("idle", (await this.listIdle()).filter((item) => item.id !== id)); }
   async listDocuments() { return readStore("documents", DEFAULT_DOCUMENTS); }
   async uploadDocument(input: Pick<KnowledgeDocument, "title" | "fileName" | "type" | "exhibition">) { const item: KnowledgeDocument = { ...input, id: `doc-${Date.now()}`, parseStatus: "parsing", vectorStatus: "pending", chunks: 0, uploader: "当前用户", uploadedAt: now() }; writeStore("documents", [item, ...await this.listDocuments()]); window.setTimeout(() => { void this.patchDocument(item.id, { parseStatus: "parsed", vectorStatus: "indexed", chunks: 32 }); }, 1200); return item; }
   private async patchDocument(id: string, patch: Partial<KnowledgeDocument>) { const next = (await this.listDocuments()).map((item) => item.id === id ? { ...item, ...patch } : item); writeStore("documents", next); }
@@ -429,8 +448,8 @@ export class MockAdminApiClient implements AdminApiClient {
   async listExplainFlows(exhibitionId?: string) { migrateInteractionMockData(); return (await readStore<ExplainFlow[]>("explain-flows", DEFAULT_EXPLAIN_FLOWS)).filter((item) => !exhibitionId || exhibitionId === "all" || item.exhibitionId === exhibitionId); }
   async saveExplainFlow(item: ExplainFlow) { const exhibition = (await this.listExhibitions()).find((candidate) => candidate.id === item.exhibitionId); if (!exhibition) throw new Error("讲解流程所属展会不存在"); const scripts = await this.listScripts(); if (!scripts.some((script) => script.id === item.scriptId && script.scene === "explain")) throw new Error("讲解流程必须关联讲解话术"); const saved = { ...item, exhibitionName: exhibition.name, updatedAt: now() }; writeStore("explain-flows", [saved, ...(await this.listExplainFlows()).filter((candidate) => candidate.id !== item.id)]); return saved; }
   async deleteExplainFlow(id: string) { writeStore("explain-flows", (await this.listExplainFlows()).filter((item) => item.id !== id)); }
-  async listShoppingStrategies(exhibitionId?: string) { migrateInteractionMockData(); return (await readStore<ShoppingStrategy[]>("shopping-strategies", DEFAULT_SHOPPING_STRATEGIES)).map((item) => ({ ...item, exhibitIds: item.exhibitIds ?? [] })).filter((item) => !exhibitionId || exhibitionId === "all" || item.exhibitionId === exhibitionId); }
-  async saveShoppingStrategy(item: ShoppingStrategy) { const exhibition = (await this.listExhibitions()).find((candidate) => candidate.id === item.exhibitionId); if (!exhibition) throw new Error("导购策略所属展会不存在"); const exhibits = await this.listExhibits(); const exhibitIds = (item.exhibitIds || []).filter((id) => exhibits.some((exhibit) => exhibit.id === id && exhibit.exhibitionId === item.exhibitionId)); if (exhibitIds.length !== (item.exhibitIds || []).length) throw new Error("导购策略关联的展品必须属于所选展会"); const saved = { ...item, exhibitionName: exhibition.name, exhibitIds, updatedAt: now() }; writeStore("shopping-strategies", [saved, ...(await this.listShoppingStrategies()).filter((candidate) => candidate.id !== item.id)]); return saved; }
+  async listShoppingStrategies(exhibitionId?: string): Promise<ShoppingStrategy[]> { migrateInteractionMockData(); return (await readStore<ShoppingStrategy[]>("shopping-strategies", DEFAULT_SHOPPING_STRATEGIES)).map((item) => ({ ...item, exhibitIds: item.exhibitIds ?? [] })).filter((item) => !exhibitionId || exhibitionId === "all" || item.exhibitionId === exhibitionId); }
+  async saveShoppingStrategy(item: ShoppingStrategy): Promise<ShoppingStrategy> { const exhibition = (await this.listExhibitions()).find((candidate) => candidate.id === item.exhibitionId); if (!exhibition) throw new Error("导购策略所属展会不存在"); const exhibits = await this.listExhibits(); const exhibitIds = (item.exhibitIds || []).filter((id) => exhibits.some((exhibit) => exhibit.id === id && exhibit.exhibitionId === item.exhibitionId)); if (exhibitIds.length !== (item.exhibitIds || []).length) throw new Error("导购策略关联的展品必须属于所选展会"); const saved = { ...item, exhibitionName: exhibition.name, exhibitIds, updatedAt: now() }; writeStore("shopping-strategies", [saved, ...(await this.listShoppingStrategies()).filter((candidate) => candidate.id !== item.id)]); return saved; }
   async deleteShoppingStrategy(id: string) { writeStore("shopping-strategies", (await this.listShoppingStrategies()).filter((item) => item.id !== id)); }
   async listPackages() { return readStore("packages", DEFAULT_PACKAGES); }
   async createPackage(input: Pick<PublishPackage, "name" | "exhibition" | "qaCount" | "documentCount">) { const item: PublishPackage = { ...input, id: `pkg-${Date.now()}`, status: "draft", version: 1, creator: "当前用户", updatedAt: now() }; writeStore("packages", [item, ...await this.listPackages()]); return item; }
@@ -636,12 +655,22 @@ export class FetchAdminApiClient extends MockAdminApiClient {
     return session;
   }
   override async logout() {
-    try { await this.request<void>("/auth/logout", { method: "POST" }, false); }
+    try { await this.request<void>("/admin/auth/logout", { method: "POST" }, false); }
     finally { window.localStorage.removeItem(AUTH_TOKEN_KEY); }
   }
   override async getPermissions() { return this.request<{ permissions: PermissionCode[]; buttonPermissions: ButtonPermission[] }>("/auth/permissions"); }
 
   override async getDashboard() { return this.request<DashboardData>("/admin/report"); }
+  override async getReport(filters: ReportFilters = {}) {
+    const query = new URLSearchParams();
+    if (filters.exhibitionId) query.set("exhibition_id", filters.exhibitionId);
+    if (filters.scene) query.set("scene", filters.scene);
+    if (filters.terminalId) query.set("terminal_id", filters.terminalId);
+    if (filters.from) query.set("from", filters.from);
+    if (filters.to) query.set("to", filters.to);
+    const suffix = query.toString() ? `?${query.toString()}` : "";
+    return this.request<ReportOperations>(`/admin/report/operations${suffix}`);
+  }
 
   private async requestList<T>(path: string): Promise<T[]> {
     const payload = await this.request<T[] | { items: T[] }>(path);
