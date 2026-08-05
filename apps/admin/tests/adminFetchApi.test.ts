@@ -40,32 +40,55 @@ test("real Admin login persists token and uses the /api/v1 prefix", async () => 
   globalThis.fetch = async (input, init) => {
     requestedUrl = String(input);
     requestedBody = String(init?.body);
-    return Response.json({ token: "jwt-login", expires_at: "2026-08-04T20:00:00.000Z", user });
+    return Response.json({ token: "jwt-login", access_token: "jwt-login", refresh_token: "refresh-login", expires_at: 1785873600, user: { id: "user-admin", username: "admin", display_name: "管理员", roles: ["sys_admin"] } });
   };
 
   const session = await new FetchAdminApiClient().login("admin", "secret");
   assert.equal(requestedUrl, "http://localhost:5174/api/v1/auth/login");
   assert.deepEqual(JSON.parse(requestedBody), { username: "admin", password: "secret" });
   assert.equal(values.get("opentalking-admin-token"), "jwt-login");
-  assert.equal(session.expiresAt, Date.parse("2026-08-04T20:00:00.000Z"));
+  assert.equal(values.get("opentalking-admin-refresh-token"), "refresh-login");
+  assert.equal(session.user.role, "sys_admin");
+  assert.equal(session.expiresAt, 1785873600 * 1000);
 });
 
 test("real Admin requests refresh once after 401 and retry with the new token", async () => {
   values.clear();
   values.set("opentalking-admin-token", "expired-token");
-  const calls: Array<{ url: string; authorization: string | null }> = [];
+  values.set("opentalking-admin-refresh-token", "refresh-old");
+  const calls: Array<{ url: string; authorization: string | null; body: string }> = [];
   globalThis.fetch = async (input, init) => {
     const headers = new Headers(init?.headers);
-    calls.push({ url: String(input), authorization: headers.get("Authorization") });
+    calls.push({ url: String(input), authorization: headers.get("Authorization"), body: String(init?.body ?? "") });
     if (calls.length === 1) return Response.json({ detail: "Token expired" }, { status: 401 });
-    if (calls.length === 2) return Response.json({ token: "fresh-token", user, expiresAt: Date.now() + 60_000 });
+    if (calls.length === 2) return Response.json({ token: "fresh-token", refresh_token: "refresh-new", expiresAt: Date.now() + 60_000 });
+    if (calls.length === 3) return Response.json(user);
     return Response.json({ metrics: [], todos: [] });
   };
 
   await new FetchAdminApiClient().getDashboard();
   assert.equal(calls[0].authorization, "Bearer expired-token");
   assert.equal(calls[1].url.endsWith("/api/v1/auth/refresh"), true);
-  assert.equal(calls[2].authorization, "Bearer fresh-token");
+  assert.deepEqual(JSON.parse(calls[1].body), { refresh_token: "refresh-old" });
+  assert.equal(calls[2].url.endsWith("/api/v1/auth/me"), true);
+  assert.equal(calls[3].authorization, "Bearer fresh-token");
+  assert.equal(values.get("opentalking-admin-refresh-token"), "refresh-new");
+});
+
+test("real Admin logout uses auth endpoint and clears both tokens", async () => {
+  values.clear();
+  values.set("opentalking-admin-token", "access-token");
+  values.set("opentalking-admin-refresh-token", "refresh-token");
+  let requestedUrl = "";
+  globalThis.fetch = async (input) => {
+    requestedUrl = String(input);
+    return new Response(null, { status: 204 });
+  };
+
+  await new FetchAdminApiClient().logout();
+  assert.equal(requestedUrl.endsWith("/api/v1/auth/logout"), true);
+  assert.equal(values.has("opentalking-admin-token"), false);
+  assert.equal(values.has("opentalking-admin-refresh-token"), false);
 });
 
 test("real Admin errors expose backend code and trace id", async () => {
