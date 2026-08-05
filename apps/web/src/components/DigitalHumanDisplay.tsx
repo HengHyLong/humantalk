@@ -9,6 +9,10 @@ import type {
 } from "../lib/api";
 import type { TtsProviderExtended } from "../constants/ttsBailian";
 import type { ConnectionStatus, Message } from "../types";
+import {
+  conversationPhaseLabel,
+  type ConversationPhase,
+} from "../lib/sessionStateMachine";
 import { ChatInput } from "./ChatInput";
 import { SceneStage } from "./SceneStage";
 
@@ -21,6 +25,7 @@ type DigitalHumanDisplayProps = {
   avatarMaskUrl?: string | null;
   clientRenderer?: ClientRendererDescriptor | null;
   connection: ConnectionStatus;
+  conversationPhase: ConversationPhase;
   isSpeaking: boolean;
   avatar: AvatarSummary | null;
   modelLabel: string;
@@ -58,6 +63,7 @@ export function DigitalHumanDisplay({
   avatarMaskUrl = null,
   clientRenderer = null,
   connection,
+  conversationPhase,
   isSpeaking,
   avatar,
   modelLabel,
@@ -87,6 +93,7 @@ export function DigitalHumanDisplay({
   const [inputMode, setInputMode] = useState<"voice" | "keyboard">("voice");
   const live = connection === "live" || connection === "expiring";
   const busy = connection === "connecting" || connection === "queued";
+  const phaseLabel = conversationPhaseLabel(conversationPhase);
   const displaySubtitle = subtitle?.trim() || (messages.length === 0 ? "你可以问我以下问题哦" : "");
   const visibleMessages = messages.slice(-5);
   const latestVisibleMessage = visibleMessages[visibleMessages.length - 1];
@@ -142,6 +149,7 @@ export function DigitalHumanDisplay({
                 {voiceIntent === "navigation" ? "导航" : voiceIntent === "exhibition_content" ? "展品问答" : ""}
                 {isSpeaking ? " · 正在播报" : ""}
               </span>
+              <span className="digital-display-chat-state">{phaseLabel}</span>
             </div>
             <div className="digital-display-chat-feed" aria-live="polite">
               {exhibitionConfigNotice ? (
@@ -281,7 +289,7 @@ export function DigitalHumanDisplay({
           {busy ? (
             <div className="digital-display-loading" role="status" aria-live="polite">
               <span className="digital-display-loader" aria-hidden />
-              <strong>正在加载数字人</strong>
+              <strong>{conversationPhase === "reconnecting" ? "正在重连数字人" : "正在加载数字人"}</strong>
               <span>{queueInfo?.position ? `当前排队第 ${queueInfo.position} 位，请稍候` : "正在建立 WebRTC 视频通道"}</span>
               <div className="digital-display-loading-track" aria-hidden><i /></div>
             </div>

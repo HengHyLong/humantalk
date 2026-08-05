@@ -59,6 +59,7 @@ export type PlaybackHandle = { pc: RTCPeerConnection; remoteStream: MediaStream 
 
 export type StartPlaybackOptions = {
   onRemoteStream?: (remoteStream: MediaStream) => void;
+  onConnectionStateChange?: (state: RTCPeerConnectionState) => void;
 };
 
 export async function startPlayback(
@@ -91,6 +92,7 @@ export async function startPlayback(
     videoEl.srcObject = null;
   };
   pc.addEventListener("connectionstatechange", () => {
+    options.onConnectionStateChange?.(pc.connectionState);
     if (
       pc.connectionState === "closed"
       || pc.connectionState === "failed"
