@@ -3,6 +3,7 @@ import { EDGE_ZH_VOICES } from "../constants/edgeZhVoices";
 import type {
   AdminUser,
   DashboardData,
+  OperationsReport,
   EventSchedule,
   EventVenue,
   EmergencyBroadcast,
@@ -213,8 +214,11 @@ const DEFAULT_ALERTS: AlertEvent[] = [
 export interface AdminApiClient {
   login(username: string, password: string): Promise<{ token: string; user: AdminUser }>;
   getDashboard(): Promise<DashboardData>;
+  getOperationsReport(): Promise<OperationsReport>;
+  exportReport(exhibitionId?: string): Promise<string>;
   listGifs(): Promise<GifAssetMeta[]>;
   createGif(input: Omit<GifAssetMeta, "id" | "createdAt">): Promise<GifAssetMeta>;
+  uploadGif(file: File, input: Pick<GifAssetMeta, "name" | "scene" | "tags" | "status">): Promise<GifAssetMeta>;
   updateGif(id: string, patch: Partial<GifAssetMeta>): Promise<GifAssetMeta>;
   deleteGif(id: string): Promise<void>;
   listVoiceConfigs(): Promise<VoiceAsset[]>;
@@ -380,8 +384,34 @@ export class MockAdminApiClient implements AdminApiClient {
     };
   }
 
+  async getOperationsReport(): Promise<OperationsReport> {
+    const dashboard = await this.getDashboard();
+    return {
+      summary: {
+        exhibition_id: "exhibition-1",
+        interaction_count: Number(dashboard.metrics.find((item) => item.id === "interactions")?.value.replace(/,/g, "") || 0),
+        online_terminals: Number(dashboard.metrics.find((item) => item.id === "terminals")?.value.split("/")[0].trim() || 0),
+        pending_knowledge: Number(dashboard.metrics.find((item) => item.id === "pending")?.value || 0),
+        new_leads: Number(dashboard.metrics.find((item) => item.id === "leads")?.value || 0),
+        alerts: Number(dashboard.metrics.find((item) => item.id === "backlog")?.value || 0),
+        todo: dashboard.todos,
+      },
+      series: [],
+      dimensions: { interaction: [], hotspot: [], lead: [], resource: [] },
+    };
+  }
+
+  async exportReport(): Promise<string> {
+    const report = await this.getOperationsReport();
+    return JSON.stringify(report, null, 2);
+  }
+
   async listGifs() { return readStore("gifs", DEFAULT_GIFS); }
   async createGif(input: Omit<GifAssetMeta, "id" | "createdAt">) { const item = { ...input, id: `gif-${Date.now()}`, createdAt: now() }; writeStore("gifs", [item, ...await this.listGifs()]); return item; }
+  async uploadGif(file: File, input: Pick<GifAssetMeta, "name" | "scene" | "tags" | "status">) {
+    const previewUrl = typeof URL.createObjectURL === "function" ? URL.createObjectURL(file) : `mock://${file.name}`;
+    return this.createGif({ ...input, kind: "gif", previewUrl, width: 0, height: 0, frames: 0, durationMs: 0, fileName: file.name, sizeBytes: file.size });
+  }
   async updateGif(id: string, patch: Partial<GifAssetMeta>) { const items = await this.listGifs(); const next = items.map((item) => item.id === id ? { ...item, ...patch } : item); writeStore("gifs", next); return next.find((item) => item.id === id) ?? items[0]; }
   async deleteGif(id: string) { writeStore("gifs", (await this.listGifs()).filter((item) => item.id !== id)); }
   async listVoiceConfigs() { return readStore<VoiceAsset[]>("voice-configs", []); }
@@ -732,6 +762,14 @@ export class FetchAdminApiClient implements AdminApiClient {
     };
   }
 
+  async getOperationsReport(): Promise<OperationsReport> {
+    return this.request<OperationsReport>("/admin/report/operations");
+  }
+
+  async exportReport(exhibitionId?: string): Promise<string> {
+    return this.download(`/admin/report/export${queryString({ exhibition_id: exhibitionId })}`);
+  }
+
   async listGifs() {
     const items = await this.collection<JsonRecord>("assets", "gifs");
     return items.map((item) => ({
@@ -752,6 +790,30 @@ export class FetchAdminApiClient implements AdminApiClient {
     }));
   }
   async createGif(input: Omit<GifAssetMeta, "id" | "createdAt">) { return this.saveCollection<GifAssetMeta>("assets", "gifs", input as JsonRecord); }
+  async uploadGif(file: File, input: Pick<GifAssetMeta, "name" | "scene" | "tags" | "status">) {
+    const form = new FormData();
+    form.set("file", file, file.name);
+    form.set("name", input.name);
+    form.set("scene", input.scene);
+    form.set("tags", input.tags.join(","));
+    const saved = await this.request<JsonRecord>("/admin/assets/gifs/upload", { method: "POST", body: form });
+    return {
+      id: String(saved.id || ""),
+      name: String(saved.name || input.name),
+      kind: "gif" as const,
+      previewUrl: String(saved.previewUrl || saved.url || ""),
+      scene: String(saved.scene || input.scene),
+      tags: stringArray(saved.tags || input.tags),
+      status: saved.status === "inactive" ? "inactive" as const : input.status,
+      width: Number(saved.width || 0),
+      height: Number(saved.height || 0),
+      frames: Number(saved.frames || 0),
+      durationMs: Number(saved.durationMs || 0),
+      fileName: String(saved.fileName || saved.filename || file.name),
+      sizeBytes: Number(saved.sizeBytes || file.size),
+      createdAt: String(saved.createdAt || saved.created_at || now()),
+    };
+  }
   async updateGif(id: string, patch: Partial<GifAssetMeta>) { return this.saveCollection<GifAssetMeta>("assets", "gifs", { ...patch, id }); }
   async deleteGif(id: string) { await this.request(`/admin/assets/gifs/${encodeURIComponent(id)}`, { method: "DELETE" }); }
 
