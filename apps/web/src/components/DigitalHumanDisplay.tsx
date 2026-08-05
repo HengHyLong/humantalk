@@ -14,7 +14,9 @@ import {
   type ConversationPhase,
 } from "../lib/sessionStateMachine";
 import type { WelcomePhase } from "../lib/welcomeExperience";
+import type { NavigationStep } from "../lib/navigationPresentation";
 import { ChatInput } from "./ChatInput";
+import { NavigationGuideCard } from "./NavigationGuideCard";
 import { SceneStage } from "./SceneStage";
 import { WelcomeOverviewCard } from "./WelcomeOverviewCard";
 
@@ -54,6 +56,7 @@ type DigitalHumanDisplayProps = {
   welcomePhase?: WelcomePhase;
   welcomeReplayDisabled?: boolean;
   onReplayWelcome?: () => void;
+  onSpeakNavigationStep?: (step: NavigationStep) => void;
 };
 
 const languages = ["中文", "English"];
@@ -95,6 +98,7 @@ export function DigitalHumanDisplay({
   welcomePhase = "idle",
   welcomeReplayDisabled = true,
   onReplayWelcome,
+  onSpeakNavigationStep,
 }: DigitalHumanDisplayProps) {
   const [activeLanguage, setActiveLanguage] = useState("中文");
   const [draft, setDraft] = useState("");
@@ -163,38 +167,11 @@ export function DigitalHumanDisplay({
                 <div className="digital-display-chat-notice" role="status">{exhibitionConfigNotice}</div>
               ) : null}
               {navigationResult ? (
-                <article className="digital-display-navigation-card">
-                  {navigationResult.image_url ? (
-                    <img
-                      src={navigationResult.image_url}
-                      alt={navigationResult.title || "导航示意图"}
-                      loading="lazy"
-                      onError={(event) => { event.currentTarget.style.display = "none"; }}
-                    />
-                  ) : null}
-                  <div className="digital-display-navigation-copy">
-                    <strong>{navigationResult.title || "导航指引"}</strong>
-                    <p className="digital-display-navigation-summary">
-                      {navigationResult.subtitle_text || navigationResult.spoken_text}
-                    </p>
-                    {navigationResult.route?.from || navigationResult.route?.to ? (
-                      <p className="digital-display-navigation-route">
-                        {navigationResult.route.from || "当前位置"}
-                        {navigationResult.route.to ? ` → ${navigationResult.route.to}` : ""}
-                        {navigationResult.route.estimated_minutes != null
-                          ? ` · 约 ${navigationResult.route.estimated_minutes} 分钟`
-                          : ""}
-                      </p>
-                    ) : null}
-                    {navigationResult.route?.directions?.length ? (
-                      <ol>
-                        {navigationResult.route.directions.map((direction, index) => (
-                          <li key={`${index}-${direction}`}>{direction}</li>
-                        ))}
-                      </ol>
-                    ) : null}
-                  </div>
-                </article>
+                <NavigationGuideCard
+                  navigationResult={navigationResult}
+                  isSpeaking={isSpeaking}
+                  onSpeakStep={onSpeakNavigationStep}
+                />
               ) : null}
               {visibleMessages.length === 0 && !navigationResult ? (
                 <WelcomeOverviewCard

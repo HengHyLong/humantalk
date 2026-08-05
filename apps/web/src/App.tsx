@@ -84,6 +84,7 @@ import {
   createInitialWelcomeState,
   welcomeStateReducer,
 } from "./lib/welcomeExperience";
+import type { NavigationStep } from "./lib/navigationPresentation";
 import {
   DEFAULT_EDGE_VOICE_ID,
   EDGE_VOICE_STORAGE_KEY,
@@ -2749,6 +2750,11 @@ export default function App() {
     dispatchWelcome({ type: "retry_requested", now });
   }, []);
 
+  const speakNavigationStep = useCallback((step: NavigationStep) => {
+    cancelWelcomeForUserInput();
+    enqueueSpeech(step.spokenText || step.instruction, "");
+  }, [cancelWelcomeForUserInput, enqueueSpeech]);
+
   useEffect(() => {
     if (!sessionId || (connection !== "live" && connection !== "expiring")) return;
     dispatchWelcome({
@@ -3374,6 +3380,7 @@ export default function App() {
           welcomePhase={welcomeState.phase}
           welcomeReplayDisabled={!canReplayWelcome(welcomeState)}
           onReplayWelcome={requestWelcomeReplay}
+          onSpeakNavigationStep={speakNavigationStep}
           onNotify={notify}
           ttsProvider={ttsProvider}
           sttProvider={activeAsrProvider}

@@ -193,14 +193,44 @@ body {
 .digital-display-chat-state { color: rgba(185, 240, 255, .88); font-size: 9px; letter-spacing: .08em; }
 .digital-display-chat-feed { display: flex; min-height: 0; flex: 1; flex-direction: column; gap: 8px; overflow-y: auto; padding: 2px 3px; scrollbar-width: thin; scrollbar-color: rgba(183, 237, 255, .5) transparent; }
 .digital-display-chat-notice { align-self: stretch; border: 1px solid rgba(255, 218, 144, .28); border-radius: 9px; padding: 7px 9px; color: rgba(255, 240, 199, .9); background: rgba(117, 82, 23, .2); font-size: 10px; line-height: 1.5; }
-.digital-display-navigation-card { align-self: stretch; overflow: hidden; border: 1px solid rgba(168, 235, 255, .38); border-radius: 12px; background: rgba(2, 50, 108, .42); }
-.digital-display-navigation-card img { display: block; width: 100%; max-height: 180px; object-fit: cover; }
-.digital-display-navigation-copy { padding: 9px 10px; color: rgba(239, 251, 255, .94); font-size: 10px; line-height: 1.55; }
-.digital-display-navigation-copy strong { display: block; font-size: 11px; }
-.digital-display-navigation-copy p { margin: 3px 0 0; color: rgba(205, 236, 255, .78); }
-.digital-display-navigation-copy .digital-display-navigation-summary { color: rgba(239, 251, 255, .9); }
-.digital-display-navigation-copy .digital-display-navigation-route { color: rgba(205, 236, 255, .78); }
-.digital-display-navigation-copy ol { margin: 5px 0 0; padding-left: 18px; color: rgba(224, 245, 255, .88); }
+.digital-display-navigation-guide { align-self: stretch; overflow: hidden; border: 1px solid rgba(168, 235, 255, .38); border-radius: 12px; background: rgba(2, 50, 108, .42); }
+.digital-display-navigation-map { position: relative; min-height: 152px; overflow: hidden; background: linear-gradient(145deg, rgba(10, 78, 132, .88), rgba(2, 25, 68, .96)); }
+.digital-display-navigation-map img { display: block; width: 100%; height: 152px; object-fit: cover; }
+.digital-display-navigation-map-fallback { display: flex; min-height: 152px; flex-direction: column; justify-content: center; padding: 20px; color: rgba(224, 247, 255, .78); background: repeating-linear-gradient(135deg, rgba(121, 220, 255, .08) 0 1px, transparent 1px 22px); }
+.digital-display-navigation-map-fallback span { font-size: 9px; letter-spacing: .14em; }
+.digital-display-navigation-map-fallback strong { margin-top: 7px; color: #f3fcff; font-size: 20px; }
+.digital-display-navigation-map-fallback small { max-width: 240px; margin-top: 5px; font-size: 9px; line-height: 1.5; }
+.digital-display-navigation-map-shade { position: absolute; inset: 0; background: linear-gradient(180deg, rgba(1, 28, 74, .02), rgba(1, 24, 70, .45)); pointer-events: none; }
+.digital-display-navigation-route-line { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+.digital-display-navigation-route-line polyline { fill: none; stroke: #6ce4ff; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; filter: drop-shadow(0 0 4px rgba(108, 228, 255, .8)); }
+.digital-display-navigation-generic-route { position: absolute; left: 16%; right: 16%; bottom: 29%; height: 4px; overflow: hidden; border-radius: 999px; background: rgba(207, 242, 255, .22); box-shadow: 0 0 0 1px rgba(157, 230, 255, .16); }
+.digital-display-navigation-generic-route::after { display: block; width: var(--navigation-progress, 0%); height: 100%; border-radius: inherit; background: #6ce4ff; box-shadow: 0 0 8px rgba(108, 228, 255, .9); content: ""; transition: width .25s ease; }
+.digital-display-navigation-marker { position: absolute; width: 9px; height: 9px; transform: translate(-50%, -50%); border: 2px solid rgba(234, 251, 255, .9); border-radius: 50%; background: rgba(41, 126, 186, .9); box-shadow: 0 0 0 3px rgba(44, 194, 236, .18); }
+.digital-display-navigation-marker.is-visited { background: #58c9ed; }
+.digital-display-navigation-marker.is-active { width: 13px; height: 13px; background: #c3f4ff; box-shadow: 0 0 0 5px rgba(108, 228, 255, .26), 0 0 14px rgba(108, 228, 255, .88); }
+.digital-display-navigation-map-badge { position: absolute; right: 9px; bottom: 9px; border: 1px solid rgba(190, 241, 255, .4); border-radius: 999px; padding: 5px 8px; color: #eafaff; background: rgba(2, 38, 91, .78); font-size: 9px; }
+.digital-display-navigation-content { padding: 10px; color: rgba(239, 251, 255, .94); font-size: 10px; line-height: 1.55; }
+.digital-display-navigation-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.digital-display-navigation-heading strong { display: block; font-size: 12px; }
+.digital-display-navigation-heading p { margin: 3px 0 0; color: rgba(205, 236, 255, .78); }
+.digital-display-navigation-heading > span { color: #9feeff; font-size: 11px; font-weight: 700; }
+.digital-display-navigation-route { margin: 6px 0 0; color: rgba(205, 236, 255, .78); }
+.digital-display-navigation-progress { height: 3px; margin: 8px 0 7px; overflow: hidden; border-radius: 999px; background: rgba(193, 234, 255, .18); }
+.digital-display-navigation-progress span { display: block; height: 100%; border-radius: inherit; background: #6ce4ff; transition: width .25s ease; }
+.digital-display-navigation-steps { display: grid; gap: 4px; max-height: 142px; margin: 0; padding: 0; overflow-y: auto; list-style: none; }
+.digital-display-navigation-steps button { display: flex; width: 100%; align-items: center; gap: 7px; border: 1px solid transparent; border-radius: 8px; padding: 6px 7px; color: rgba(216, 244, 255, .72); background: rgba(5, 48, 103, .28); text-align: left; cursor: pointer; }
+.digital-display-navigation-steps button > span { display: inline-grid; width: 18px; height: 18px; flex: 0 0 auto; place-items: center; border: 1px solid rgba(174, 232, 255, .35); border-radius: 50%; font-size: 9px; }
+.digital-display-navigation-steps button strong { overflow: hidden; font-size: 10px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.digital-display-navigation-steps li.is-active button { border-color: rgba(118, 229, 255, .55); color: #f0fcff; background: rgba(41, 141, 196, .32); }
+.digital-display-navigation-steps li.is-active button > span { border-color: #abf0ff; color: #063d70; background: #abf0ff; }
+.digital-display-navigation-steps li.is-visited button { color: rgba(190, 236, 255, .86); }
+.digital-display-navigation-current { margin-top: 8px; border-left: 2px solid #6ce4ff; padding: 3px 0 3px 8px; }
+.digital-display-navigation-current span { color: rgba(163, 230, 255, .7); font-size: 9px; }
+.digital-display-navigation-current p { margin: 2px 0 0; color: #f0fcff; font-size: 11px; }
+.digital-display-navigation-actions { display: flex; justify-content: flex-end; gap: 5px; margin-top: 9px; }
+.digital-display-navigation-actions button { border: 1px solid rgba(168, 235, 255, .3); border-radius: 999px; padding: 5px 8px; color: rgba(222, 246, 255, .84); background: rgba(6, 67, 132, .38); font-size: 9px; cursor: pointer; }
+.digital-display-navigation-actions button:disabled { cursor: default; opacity: .4; }
+.digital-display-navigation-actions button.is-primary { border-color: rgba(185, 237, 255, .55); color: #073761; background: #b9edff; font-weight: 700; }
 .digital-display-chat-empty { align-self: center; margin: auto 0; color: rgba(245, 253, 255, .92); font-size: clamp(16px, 2.3vw, 23px); font-weight: 500; letter-spacing: .04em; text-align: center; }
 .digital-display-welcome-card { align-self: stretch; margin: auto 0; border: 1px solid rgba(168, 235, 255, .34); border-radius: 14px; padding: 14px; background: linear-gradient(145deg, rgba(3, 63, 130, .55), rgba(2, 30, 77, .58)); box-shadow: 0 14px 28px rgba(1, 20, 65, .14); }
 .digital-display-welcome-card-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: rgba(192, 239, 255, .78); font-size: 9px; letter-spacing: .14em; }
