@@ -1,18 +1,15 @@
 from __future__ import annotations
 
 import csv
-import base64
 import io
 import json
 import time
 import uuid
-from collections import Counter
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, model_validator
 
 from .security import current_user, decode_token, get_store, issue_tokens, password_hasher, verify_password
@@ -88,39 +85,6 @@ def _paginate(items: list[dict[str, Any]], page: int, page_size: int) -> dict[st
     page_size = min(max(page_size, 1), 100)
     start = (page - 1) * page_size
     return {"items": items[start : start + page_size], "total": len(items), "page": page, "page_size": page_size}
-
-
-def _resolve_exhibition_id(store: AdminStore, exhibition_id: str | None) -> str | None:
-    if exhibition_id and exhibition_id != "current":
-        return exhibition_id
-    current = next((item for item in store.list_records("exhibitions") if item.get("isCurrent")), None)
-    return str(current["id"]) if current else None
-
-
-def _normalized(value: Any) -> str:
-    return "".join(str(value or "").casefold().split())
-
-
-def _public_image_url(item: dict[str, Any] | None) -> str | None:
-    if not item:
-        return None
-    value = item.get("imageUrl") or item.get("image_url") or item.get("url")
-    return str(value) if value else None
-
-
-def _record_interaction(store: AdminStore, *, exhibition_id: str, intent: str, query: str, target: str = "") -> None:
-    store.save_record(
-        "interaction_events",
-        {
-            "id": f"interaction-{uuid.uuid4().hex[:12]}",
-            "exhibitionId": exhibition_id,
-            "intent": intent,
-            "query": query,
-            "target": target,
-            "createdAt": utc_now(),
-        },
-        exhibition_id,
-    )
 
 
 def _record(store: AdminStore, kind: str, record_id: str, *, required: bool = True) -> dict[str, Any] | None:
@@ -227,18 +191,9 @@ def _collection_permission(kind: str) -> str:
 
 
 @router.post("/admin/assets/gifs/upload")
-async def upload_gif(
-    request: Request,
-    file: UploadFile = File(...),
-    name: str | None = Form(None),
-    scene: str = Form("idle"),
-    tags: str = Form(""),
-    exhibition_id: str | None = None,
-    auth: dict[str, Any] = Depends(current_user),
-) -> dict[str, Any]:
+async def upload_gif(request: Request, file: UploadFile = File(...), exhibition_id: str | None = None, auth: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
     store = get_store(request)
     _require(store, auth, "asset:gif")
-    resolved_exhibition_id = _resolve_exhibition_id(store, exhibition_id)
     settings = getattr(request.app.state, "settings", None)
     root = Path(getattr(settings, "admin_media_root", "./data/admin-assets")) / "gifs"
     root.mkdir(parents=True, exist_ok=True)
@@ -251,41 +206,7 @@ async def upload_gif(
     record_id = f"gif-{uuid.uuid4().hex[:12]}"
     file_path = root / f"{record_id}{extension}"
     file_path.write_bytes(content)
-    width = height = frames = duration_ms = 0
-    try:
-        from PIL import Image
-
-        with Image.open(io.BytesIO(content)) as image:
-            width, height = image.size
-            frames = int(getattr(image, "n_frames", 1))
-            duration_ms = sum(int(image.seek(index) or image.info.get("duration", 0) or 0) for index in range(frames))
-    except Exception:
-        # Metadata is optional; the original bytes remain the source of truth.
-        pass
-    file_url = f"/api/v1/admin/assets/gifs/{record_id}/file"
-    saved = store.save_record(
-        "gifs",
-        {
-            "id": record_id,
-            "name": (name or file.filename or record_id).strip(),
-            "filename": file.filename or record_id,
-            "fileName": file.filename or record_id,
-            "mimeType": file.content_type or "application/octet-stream",
-            "sizeBytes": len(content),
-            "url": file_url,
-            "previewUrl": file_url,
-            "scene": scene.strip() or "idle",
-            "tags": [item.strip() for item in tags.split(",") if item.strip()],
-            "kind": "gif",
-            "width": width,
-            "height": height,
-            "frames": frames,
-            "durationMs": duration_ms,
-            "exhibitionId": resolved_exhibition_id,
-            "status": "active",
-        },
-        resolved_exhibition_id,
-    )
+    saved = store.save_record("gifs", {"id": record_id, "name": file.filename or record_id, "filename": file.filename or record_id, "mimeType": file.content_type or "application/octet-stream", "sizeBytes": len(content), "url": f"/api/v1/admin/assets/gifs/{record_id}/file", "exhibitionId": exhibition_id, "status": "active"}, exhibition_id)
     _audit(request, auth, action="upload", resource_type="gif", resource_id=record_id, before=None, after=saved)
     return saved
 
@@ -316,6 +237,8 @@ def create_collection(resource: str, request: Request, body: RecordBody, auth: d
 
 @router.get("/admin/assets/gifs/{record_id}/file")
 def get_gif_file(record_id: str, request: Request, auth: dict[str, Any] = Depends(current_user)) -> Any:
+    from fastapi.responses import FileResponse
+
     store = get_store(request)
     _require(store, auth, "asset:gif")
     item = _record(store, "gifs", record_id) or {}
@@ -346,21 +269,6 @@ def update_collection(resource: str, record_id: str, request: Request, body: Rec
     _require(store, auth, _collection_permission(kind))
     before = _record(store, kind, record_id) or {}
     data = {**before, **body.data, "id": record_id}
-    if kind == "qa" and any(key in body.data for key in ("question", "answer", "keywords", "category")):
-        previous_version = int(before.get("version", 1) or 1)
-        history = list(before.get("history", []))
-        history.append({
-            "version": previous_version,
-            "answer": str(before.get("answer", "")),
-            "editor": auth["user"].get("display_name", ""),
-            "time": utc_now(),
-            "reason": "内容更新",
-        })
-        data["version"] = previous_version + 1
-        data["history"] = history[-20:]
-    if kind in {"qa", "packages"} and body.data.get("status") in {"pending_review", "published", "rolled_back", "archived"}:
-        data["reviewer"] = auth["user"].get("display_name", "")
-        data["reviewedAt"] = utc_now()
     saved = store.save_record(kind, data, data.get("exhibitionId"))
     _audit(request, auth, action="update", resource_type=kind, resource_id=record_id, before=before, after=saved)
     return saved
@@ -635,6 +543,21 @@ def create_lead(request: Request, body: RecordBody, auth: dict[str, Any] = Depen
     return saved
 
 
+@router.get("/admin/lead/export")
+def export_leads(request: Request, exhibition_id: str | None = None, keyword: str | None = None, status_filter: str | None = Query(None, alias="status"), from_date: str = Query("", alias="from"), to_date: str = Query("", alias="to"), auth: dict[str, Any] = Depends(current_user)) -> StreamingResponse:
+    store = get_store(request)
+    _require(store, auth, "lead:export")
+    items = store.list_records("leads", exhibition_id=exhibition_id, keyword=keyword, status=status_filter)
+    items = [item for item in items if (not from_date or str(item.get("createdAt", ""))[:10] >= from_date) and (not to_date or str(item.get("createdAt", ""))[:10] <= to_date)]
+    sensitive = "lead:view_sensitive" in _permission_codes(store, auth["user"]["id"])
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["线索ID", "展会", "单位名称", "联系人", "手机号", "邮箱", "状态", "创建时间"])
+    for item in items:
+        writer.writerow([item.get("id", ""), item.get("exhibitionName", item.get("exhibitionId", "")), item.get("companyName", ""), item.get("contactName", ""), item.get("phone", "") if sensitive else _mask_phone(str(item.get("phone", ""))), item.get("email", "") if sensitive else _mask_email(str(item.get("email", ""))), item.get("status", ""), item.get("createdAt", "")])
+    return StreamingResponse(iter([output.getvalue().encode("utf-8-sig")]), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=leads.csv"})
+
+
 @router.get("/admin/lead/{record_id}")
 def get_lead(record_id: str, request: Request, auth: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
     store = get_store(request)
@@ -675,21 +598,6 @@ def update_lead_status(record_id: str, request: Request, body: StatusBody, auth:
     return saved
 
 
-@router.get("/admin/lead/export")
-def export_leads(request: Request, exhibition_id: str | None = None, keyword: str | None = None, status_filter: str | None = Query(None, alias="status"), from_date: str = Query("", alias="from"), to_date: str = Query("", alias="to"), auth: dict[str, Any] = Depends(current_user)) -> StreamingResponse:
-    store = get_store(request)
-    _require(store, auth, "lead:export")
-    items = store.list_records("leads", exhibition_id=exhibition_id, keyword=keyword, status=status_filter)
-    items = [item for item in items if (not from_date or str(item.get("createdAt", ""))[:10] >= from_date) and (not to_date or str(item.get("createdAt", ""))[:10] <= to_date)]
-    sensitive = "lead:view_sensitive" in _permission_codes(store, auth["user"]["id"])
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(["线索ID", "展会", "单位名称", "联系人", "手机号", "邮箱", "状态", "创建时间"])
-    for item in items:
-        writer.writerow([item.get("id", ""), item.get("exhibitionName", item.get("exhibitionId", "")), item.get("companyName", ""), item.get("contactName", ""), item.get("phone", "") if sensitive else _mask_phone(str(item.get("phone", ""))), item.get("email", "") if sensitive else _mask_email(str(item.get("email", ""))), item.get("status", ""), item.get("createdAt", "")])
-    return StreamingResponse(iter([output.getvalue().encode("utf-8-sig")]), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=leads.csv"})
-
-
 @router.get("/admin/feedback")
 def list_feedback(request: Request, page: int = 1, page_size: int = 9, exhibition_id: str | None = None, keyword: str | None = None, status_filter: str | None = Query(None, alias="status"), auth: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
     store = get_store(request)
@@ -714,81 +622,18 @@ def resolve_feedback(record_id: str, request: Request, body: RecordBody, auth: d
     return saved
 
 
-def _report_summary(store: AdminStore, exhibition_id: str | None = None) -> dict[str, Any]:
-    resolved_id = _resolve_exhibition_id(store, exhibition_id)
-    interactions = store.list_records("interaction_events", exhibition_id=resolved_id)
-    audit_rows = [row for row in store.audit_list() if "/auth/" not in str(row.get("path", ""))]
-    terminals = store.list_records("terminals", exhibition_id=resolved_id)
-    qa = store.list_records("qa", exhibition_id=resolved_id)
-    documents = store.list_records("documents", exhibition_id=resolved_id)
-    packages = store.list_records("packages", exhibition_id=resolved_id)
-    leads = store.list_records("leads", exhibition_id=resolved_id)
-    alerts = store.list_records("alerts")
-    pending_knowledge = len([item for item in qa if item.get("status") == "pending_review"])
-    pending_knowledge += len([item for item in documents if item.get("vectorStatus") not in {"indexed", None}])
-    pending_knowledge += len([item for item in packages if item.get("status") == "pending_review"])
-    todo = []
-    if pending_knowledge:
-        todo.append({"id": "todo-knowledge", "type": "知识审核", "title": f"{pending_knowledge} 项知识内容待处理", "owner": "内容运营", "time": "当前快照", "path": "/knowledge/package"})
-    pending_miss = len([item for item in store.list_records("miss_pool", exhibition_id=resolved_id) if item.get("status") == "pending"])
-    if pending_miss:
-        todo.append({"id": "todo-miss", "type": "未命中池", "title": f"{pending_miss} 个问题待补齐", "owner": "内容运营", "time": "当前快照", "path": "/knowledge/memory"})
-    return {
-        "exhibition_id": resolved_id or "current",
-        "interaction_count": len(interactions) or len(audit_rows),
-        "online_terminals": len([item for item in terminals if item.get("status") == "online"]),
-        "pending_knowledge": pending_knowledge,
-        "new_leads": len([item for item in leads if item.get("status") == "new"]),
-        "alerts": len([item for item in alerts if item.get("status") in {"open", "active"}]),
-        "todo": todo,
-    }
-
-
-def _report_operations(store: AdminStore, exhibition_id: str | None = None) -> dict[str, Any]:
-    resolved_id = _resolve_exhibition_id(store, exhibition_id)
-    interactions = store.list_records("interaction_events", exhibition_id=resolved_id)
-    leads = store.list_records("leads", exhibition_id=resolved_id)
-    miss_pool = store.list_records("miss_pool", exhibition_id=resolved_id)
-    interaction_counter = Counter(str(item.get("intent") or "unknown") for item in interactions)
-    hotspot_counter = Counter(str(item.get("target") or "未指定目标") for item in interactions)
-    lead_counter = Counter(str(item.get("status") or "unknown") for item in leads)
-    resource_kinds = (("展商", "exhibitors"), ("展品", "exhibits"), ("场地", "venues"), ("点位", "points"), ("路线", "routes"), ("活动", "schedules"))
-    resource_dimension = [{"label": label, "count": len(store.list_records(kind, exhibition_id=resolved_id))} for label, kind in resource_kinds]
-    today = datetime.now(timezone.utc).date()
-    series = []
-    for offset in range(6, -1, -1):
-        day = today - timedelta(days=offset)
-        day_text = day.isoformat()
-        series.append({
-            "date": day_text,
-            "interactions": len([item for item in interactions if str(item.get("createdAt", item.get("created_at", ""))).startswith(day_text)]),
-            "leads": len([item for item in leads if str(item.get("createdAt", item.get("created_at", ""))).startswith(day_text)]),
-            "misses": len([item for item in miss_pool if str(item.get("lastAskedAt", item.get("last_asked_at", ""))).startswith(day_text)]),
-        })
-    return {
-        "summary": _report_summary(store, resolved_id),
-        "series": series,
-        "dimensions": {
-            "interaction": [{"label": key, "count": value} for key, value in interaction_counter.most_common()],
-            "hotspot": [{"label": key, "count": value} for key, value in hotspot_counter.most_common(10)],
-            "lead": [{"label": key, "count": value} for key, value in lead_counter.items()],
-            "resource": resource_dimension,
-        },
-    }
-
-
 @router.get("/admin/report")
 def report(request: Request, exhibition_id: str | None = None, auth: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
     store = get_store(request)
     _require(store, auth, "dashboard:view")
-    return _report_summary(store, exhibition_id)
+    return {"exhibition_id": exhibition_id or "current", "interaction_count": len(store.list_records("audit")), "online_terminals": len([x for x in store.list_records("terminals") if x.get("status") == "online"]), "pending_knowledge": len([x for x in store.list_records("qa") if x.get("status") == "pending_review"]), "new_leads": len(store.list_records("leads", exhibition_id=exhibition_id, status="new")), "alerts": len([x for x in store.list_records("alerts") if x.get("status") == "open"]), "todo": []}
 
 
 @router.get("/admin/report/operations")
 def operations_report(request: Request, exhibition_id: str | None = None, auth: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
     store = get_store(request)
     _require(store, auth, "dashboard:view")
-    return _report_operations(store, exhibition_id)
+    return {"summary": report(request, exhibition_id, auth), "series": [], "dimensions": {"interaction": [], "hotspot": [], "lead": [], "resource": []}}
 
 
 @router.get("/admin/report/export")
@@ -798,20 +643,10 @@ def export_report(request: Request, exhibition_id: str | None = None, auth: dict
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow(["指标", "数值", "展会"])
-    operations = _report_operations(store, exhibition_id)
-    summary = operations["summary"]
+    summary = report(request, exhibition_id, auth)
     for key, value in summary.items():
         if isinstance(value, (str, int, float)):
             writer.writerow([key, value, exhibition_id or "current"])
-    writer.writerow([])
-    writer.writerow(["维度", "标签", "数量"])
-    for dimension, items in operations["dimensions"].items():
-        for item in items:
-            writer.writerow([dimension, item["label"], item["count"]])
-    writer.writerow([])
-    writer.writerow(["日期", "交互量", "线索", "未命中"])
-    for item in operations["series"]:
-        writer.writerow([item["date"], item["interactions"], item["leads"], item["misses"]])
     return StreamingResponse(iter([output.getvalue().encode("utf-8-sig")]), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=operations-report.csv"})
 
 
@@ -990,7 +825,7 @@ def create_role(request: Request, body: RecordBody, auth: dict[str, Any] = Depen
     now = utc_now()
     with store.connect() as conn:
         conn.execute("INSERT INTO admin_roles(id,code,name,description,data_scope,level,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)", (role_id, str(data.get("code", role_id)), str(data.get("name", "新角色")), str(data.get("description", "")), str(data.get("dataScope", "custom")), int(data.get("level", 1)), now, now))
-    return list_roles(request, 1, 100, auth)["items"][-1]
+    return next(item for item in list_roles(request, 1, 100, auth)["items"] if item["id"] == role_id)
 
 
 @router.patch("/admin/roles/{role_id}")
@@ -1051,7 +886,7 @@ def permission_tree(request: Request, auth: dict[str, Any] = Depends(current_use
 
 @router.get("/admin/trace-records")
 def trace_records(request: Request, page: int = 1, page_size: int = 9, auth: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
-    return audit_logs(request, page, page_size, auth=auth)
+    return audit_logs(request, page, page_size, username="", ip="", keyword="", from_date="", to_date="", auth=auth)
 
 
 @router.post("/admin/alerts/{record_id}/acknowledge")
@@ -1110,138 +945,28 @@ def public_config(exhibition_id: str, request: Request) -> dict[str, Any]:
 @router.post("/exhibitions/{exhibition_id}/navigation/query")
 def navigation(exhibition_id: str, request: Request, body: NavigationBody) -> dict[str, Any]:
     store = get_store(request)
-    exhibition_id = _resolve_exhibition_id(store, exhibition_id)
-    if not exhibition_id:
-        raise HTTPException(status_code=404, detail={"code": "CURRENT_EXHIBITION_NOT_FOUND", "detail": "当前展会未配置"})
+    if exhibition_id == "current":
+        current = next((item for item in store.list_records("exhibitions") if item.get("isCurrent")), None)
+        if not current:
+            raise HTTPException(status_code=404, detail={"code": "CURRENT_EXHIBITION_NOT_FOUND", "detail": "当前展会未配置"})
+        exhibition_id = current["id"]
     _record(store, "exhibitions", exhibition_id)
-    text = body.text.strip()
-    normalized_text = _normalized(text)
-    candidates: list[tuple[dict[str, Any], str]] = []
-    for kind in ("exhibitors", "exhibits", "venues", "points"):
-        candidates.extend((item, kind) for item in store.list_records(kind, exhibition_id=exhibition_id))
-
-    def score(candidate: tuple[dict[str, Any], str]) -> int:
-        item, kind = candidate
-        tags = item.get("tags") if isinstance(item.get("tags"), list) else []
-        fields = [item.get("name"), item.get("boothCode"), item.get("code"), item.get("category"), *tags]
-        score_value = 0
-        for field in fields:
-            token = _normalized(field)
-            if token and token in normalized_text:
-                score_value = max(score_value, 100 + len(token))
-        if kind == "points" and _normalized(item.get("name")) in normalized_text:
-            score_value += 15
-        return score_value
-
-    match, match_kind = max(candidates, key=score, default=(None, ""))
-    if match is not None and score((match, match_kind)) == 0:
-        match = None
+    text = body.text.strip().lower()
+    candidates = store.list_records("exhibitors", exhibition_id=exhibition_id) + store.list_records("exhibits", exhibition_id=exhibition_id) + store.list_records("venues", exhibition_id=exhibition_id)
+    match = next((item for item in candidates if any(text_part and text_part.lower() in text for text_part in [str(item.get("name", "")), str(item.get("boothCode", "")), str(item.get("category", ""))])), None)
     if not match:
-        _record_interaction(store, exhibition_id=exhibition_id, intent="navigation_miss", query=text)
         return {"title": "导航提示", "spoken_text": "暂时没有找到匹配的展位或设施，您可以告诉我更具体的展商、展品或场馆名称。", "subtitle_text": "未找到匹配路线", "route": {"from": "当前位置", "to": "", "directions": [], "estimated_minutes": None}}
     routes = store.list_records("routes", exhibition_id=exhibition_id)
-    related_point_ids: set[str] = set()
-    if match_kind == "points":
-        related_point_ids.add(str(match.get("id")))
-    else:
-        for point in store.list_records("points", exhibition_id=exhibition_id):
-            if match_kind == "exhibitors" and point.get("exhibitorId") == match.get("id"):
-                related_point_ids.add(str(point.get("id")))
-            if match_kind == "exhibits" and point.get("exhibitId") == match.get("id"):
-                related_point_ids.add(str(point.get("id")))
-    route = max(routes, key=lambda item: (len(related_point_ids.intersection({str(value) for value in item.get("pointIds", [])})), bool(item.get("imageUrl"))), default=None)
-    target = str(match.get("name") or "目标位置")
-    directions = (route or {}).get("directions") or ["请沿现场指引前行"]
-    image_url = _public_image_url(match) or _public_image_url(route)
-    if not image_url and match_kind == "points":
-        image_url = _public_image_url(store.get_record("venues", str(match.get("venueId"))))
-    _record_interaction(store, exhibition_id=exhibition_id, intent="navigation", query=text, target=target)
-    return {"title": f"前往{target}", "spoken_text": f"正在为您规划前往{target}的路线。", "subtitle_text": f"目的地：{target}", "image_url": image_url, "route": {"from": "当前位置", "to": target, "directions": directions, "estimated_minutes": (route or {}).get("estimatedMinutes", 5)}}
-
-
-def _guide_item(store: AdminStore, exhibit: dict[str, Any], score: int) -> dict[str, Any]:
-    exhibitor = store.get_record("exhibitors", str(exhibit.get("exhibitorId"))) or {}
-    tags = exhibit.get("tags") if isinstance(exhibit.get("tags"), list) else []
-    return {
-        "id": str(exhibit.get("id")),
-        "name": str(exhibit.get("name") or "未命名展品"),
-        "category": str(exhibit.get("category") or "未分类"),
-        "description": str(exhibit.get("description") or ""),
-        "tags": [str(item) for item in tags],
-        "image_url": _public_image_url(exhibit),
-        "exhibitor": str(exhibitor.get("name") or ""),
-        "booth_code": str(exhibitor.get("boothCode") or ""),
-        "score": score,
-        "compare": {"适用场景": exhibit.get("scenario") or exhibit.get("category") or "展会展示", "展商": exhibitor.get("name") or "", "展位": exhibitor.get("boothCode") or ""},
-    }
-
-
-@router.get("/exhibitions/{exhibition_id}/guide/recommendations")
-def guide_recommendations(exhibition_id: str, request: Request, query: str = "", limit: int = Query(6, ge=1, le=12)) -> dict[str, Any]:
-    store = get_store(request)
-    exhibition_id = _resolve_exhibition_id(store, exhibition_id)
-    if not exhibition_id:
-        raise HTTPException(status_code=404, detail={"code": "CURRENT_EXHIBITION_NOT_FOUND", "detail": "当前展会未配置"})
-    _record(store, "exhibitions", exhibition_id)
-    strategy = next((item for item in store.list_records("interaction_shopping", exhibition_id=exhibition_id) if item.get("status") == "active"), None)
-    strategy_tags = [_normalized(item) for item in (strategy or {}).get("tags", [])]
-    linked_ids = set(store.get_links("interaction_shopping", str((strategy or {}).get("id", "")), "exhibits")) if strategy else set()
-    normalized_query = _normalized(query)
-    scored: list[tuple[int, dict[str, Any]]] = []
-    for exhibit in store.list_records("exhibits", exhibition_id=exhibition_id):
-        if exhibit.get("status") not in {None, "published", "active", "draft"}:
-            continue
-        tags = exhibit.get("tags") if isinstance(exhibit.get("tags"), list) else []
-        searchable = [_normalized(exhibit.get("name")), _normalized(exhibit.get("category")), _normalized(exhibit.get("description")), *[_normalized(item) for item in tags]]
-        score_value = 20 if str(exhibit.get("id")) in linked_ids else 0
-        score_value += sum(30 for token in searchable if normalized_query and token and (token in normalized_query or normalized_query in token))
-        score_value += sum(8 for token in searchable if token and token in strategy_tags)
-        scored.append((score_value, _guide_item(store, exhibit, score_value)))
-    scored.sort(key=lambda item: (-item[0], item[1]["name"]))
-    return {"exhibition_id": exhibition_id, "strategy": strategy or {}, "items": [item for _, item in scored[:limit]], "query": query}
-
-
-def _qr_data_url(value: str) -> str | None:
-    try:
-        import qrcode
-
-        output = io.BytesIO()
-        qrcode.make(value).save(output, format="PNG")
-        return f"data:image/png;base64,{base64.b64encode(output.getvalue()).decode('ascii')}"
-    except Exception:
-        return None
-
-
-@router.get("/exhibitions/{exhibition_id}/materials/qr")
-def material_qr(exhibition_id: str, request: Request, item_id: str | None = None) -> dict[str, Any]:
-    store = get_store(request)
-    exhibition_id = _resolve_exhibition_id(store, exhibition_id)
-    if not exhibition_id:
-        raise HTTPException(status_code=404, detail={"code": "CURRENT_EXHIBITION_NOT_FOUND", "detail": "当前展会未配置"})
-    if item_id:
-        exhibit = store.get_record("exhibits", item_id)
-        if not exhibit or exhibit.get("exhibitionId") != exhibition_id:
-            raise HTTPException(status_code=404, detail={"code": "EXHIBIT_NOT_FOUND", "detail": "展品不存在"})
-    token = f"material-{uuid.uuid4().hex[:16]}"
-    settings = getattr(request.app.state, "settings", None)
-    base_url = str(getattr(settings, "public_base_url", "") or str(request.base_url).rstrip("/"))
-    url = f"{base_url}/?materialToken={token}&exhibitionId={exhibition_id}"
-    expires_at = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
-    store.save_record("material_tokens", {"id": token, "token": token, "exhibitionId": exhibition_id, "itemId": item_id, "url": url, "expiresAt": expires_at}, exhibition_id)
-    return {"token": token, "url": url, "qr_data_url": _qr_data_url(url), "expires_at": expires_at}
+    route = routes[0] if routes else None
+    target = match.get("name", "目标位置")
+    return {"title": f"前往{target}", "spoken_text": f"正在为您规划前往{target}的路线。", "subtitle_text": f"目的地：{target}", "route": {"from": "当前位置", "to": target, "directions": (route or {}).get("directions", ["请沿现场指引前行"]), "estimated_minutes": (route or {}).get("estimatedMinutes", 5)}}
 
 
 @router.post("/runtime/lead")
 def runtime_lead(request: Request, body: RecordBody) -> dict[str, Any]:
-    store = get_store(request)
-    exhibition_id = _resolve_exhibition_id(store, str(body.data.get("exhibitionId") or "current"))
-    if not exhibition_id:
-        raise HTTPException(status_code=404, detail={"code": "CURRENT_EXHIBITION_NOT_FOUND", "detail": "当前展会未配置"})
-    if body.data.get("consent") is not True:
-        raise HTTPException(status_code=400, detail={"code": "CONSENT_REQUIRED", "detail": "提交线索前需要获得用户授权"})
-    data = {**body.data, "exhibitionId": exhibition_id, "status": "new", "source": body.data.get("source", "web")}
-    _validate_record(store, "leads", data)
-    saved = store.save_record("leads", data, data.get("exhibitionId"))
+    data = {**body.data, "status": "new"}
+    _validate_record(get_store(request), "leads", data)
+    saved = get_store(request).save_record("leads", data, data.get("exhibitionId"))
     _audit(request, None, action="create", resource_type="lead", resource_id=saved["id"], before=None, after=saved)
     return saved
 
@@ -1265,6 +990,3 @@ def terminal_heartbeat(request: Request, body: RecordBody) -> dict[str, Any]:
 # Web 端历史调用路径没有 /api/v1 前缀，保留原调用契约；Admin 端仍使用上面的统一前缀。
 public_router.add_api_route("/exhibitions/{exhibition_id}/digital-human-config", public_config, methods=["GET"])
 public_router.add_api_route("/exhibitions/{exhibition_id}/navigation/query", navigation, methods=["POST"])
-public_router.add_api_route("/exhibitions/{exhibition_id}/guide/recommendations", guide_recommendations, methods=["GET"])
-public_router.add_api_route("/exhibitions/{exhibition_id}/materials/qr", material_qr, methods=["GET"])
-public_router.add_api_route("/runtime/lead", runtime_lead, methods=["POST"])

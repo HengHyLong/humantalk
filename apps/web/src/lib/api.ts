@@ -280,14 +280,13 @@ export type SceneComposition = {
   updated_at: string;
 };
 
-export type VoiceIntent = "navigation" | "exhibition_content" | "shopping";
+export type VoiceIntent = "navigation" | "exhibition_content";
 
 export type ExhibitionVoiceConfig = {
   exhibition_id: string;
   keywords: {
     navigation: string[];
     exhibition_content: string[];
-    shopping: string[];
   };
   supports_deferred_speak?: boolean;
 };
@@ -311,38 +310,10 @@ export type ExhibitionVoiceConfigResponse = Partial<ExhibitionVoiceConfig> & {
     navigation?: string[];
     exhibition_content?: string[];
     exhibitionContent?: string[];
-    shopping?: string[];
   };
 };
 
 export type NavigationQueryResponse = NavigationResult;
-
-export type GuideRecommendation = {
-  id: string;
-  name: string;
-  category: string;
-  description: string;
-  tags: string[];
-  image_url?: string | null;
-  exhibitor: string;
-  booth_code: string;
-  score: number;
-  compare: Record<string, string>;
-};
-
-export type GuideRecommendationResponse = {
-  exhibition_id: string;
-  query: string;
-  strategy: Record<string, unknown>;
-  items: GuideRecommendation[];
-};
-
-export type MaterialQrResponse = {
-  token: string;
-  url: string;
-  qr_data_url?: string | null;
-  expires_at: string;
-};
 
 export async function getExhibitionVoiceConfig(exhibitionId?: string | null): Promise<ExhibitionVoiceConfigResponse> {
   const id = exhibitionId?.trim();
@@ -357,38 +328,6 @@ export async function queryExhibitionNavigation(
   const id = exhibitionId?.trim();
   const path = `/exhibitions/${encodeURIComponent(id || "current")}/navigation/query`;
   return apiPost<NavigationQueryResponse>(path, input);
-}
-
-export async function getExhibitionGuide(
-  exhibitionId: string | null | undefined,
-  query = "",
-): Promise<GuideRecommendationResponse> {
-  const id = exhibitionId?.trim();
-  const path = `/exhibitions/${encodeURIComponent(id || "current")}/guide/recommendations?query=${encodeURIComponent(query)}`;
-  return apiGet<GuideRecommendationResponse>(path);
-}
-
-export async function getMaterialQr(
-  exhibitionId: string | null | undefined,
-  itemId?: string,
-): Promise<MaterialQrResponse> {
-  const id = exhibitionId?.trim();
-  const suffix = itemId ? `?item_id=${encodeURIComponent(itemId)}` : "";
-  return apiGet<MaterialQrResponse>(`/exhibitions/${encodeURIComponent(id || "current")}/materials/qr${suffix}`);
-}
-
-export async function submitRuntimeLead(input: {
-  exhibitionId: string;
-  companyName: string;
-  contactName: string;
-  phone: string;
-  email?: string;
-  intentSummary?: string;
-  interestedExhibitIds?: string[];
-  consent: boolean;
-  source?: string;
-}): Promise<Record<string, unknown>> {
-  return apiPost<Record<string, unknown>>("/runtime/lead", input);
 }
 
 export async function transcribeSessionAudio(

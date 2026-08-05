@@ -91,20 +91,6 @@ export type DashboardData = {
   todos: Array<{ id: string; type: string; title: string; owner: string; time: string; path: string }>;
 };
 
-export type OperationsReport = {
-  summary: {
-    exhibition_id: string;
-    interaction_count: number;
-    online_terminals: number;
-    pending_knowledge: number;
-    new_leads: number;
-    alerts: number;
-    todo: DashboardData["todos"];
-  };
-  series: Array<{ date: string; interactions: number; leads: number; misses: number }>;
-  dimensions: Record<string, Array<{ label: string; count: number }>>;
-};
-
 export type AdminAsset = {
   id: string;
   name: string;

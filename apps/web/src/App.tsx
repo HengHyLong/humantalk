@@ -34,12 +34,9 @@ import {
   buildApiUrl,
   getMemoryLibraries,
   getExhibitionVoiceConfig,
-  getExhibitionGuide,
-  getMaterialQr,
   listSceneBackgrounds,
   listSceneCompositions,
   queryExhibitionNavigation,
-  submitRuntimeLead,
   transcribeSessionAudio,
   loadRuntimeConfig,
   uploadExportVideo,
@@ -48,10 +45,7 @@ import {
   type CreateSessionRequest,
   type CreateSessionResponse,
   type ExhibitionVoiceConfig,
-  type GuideRecommendation,
-  type MaterialQrResponse,
   type NavigationResult,
-  type VoiceIntent,
   type KnowledgeBaseSummary,
   type KnowledgeBasesResponse,
   type PersonaSummary,
@@ -959,9 +953,8 @@ export default function App() {
   const [currentSubtitle, setCurrentSubtitle] = useState("");
   const [exhibitionVoiceConfig, setExhibitionVoiceConfig] = useState<ExhibitionVoiceConfig | null>(null);
   const [exhibitionConfigNotice, setExhibitionConfigNotice] = useState<string | null>(null);
-  const [lastVoiceIntent, setLastVoiceIntent] = useState<VoiceIntent | null>(null);
+  const [lastVoiceIntent, setLastVoiceIntent] = useState<"navigation" | "exhibition_content" | null>(null);
   const [navigationResult, setNavigationResult] = useState<NavigationResult | null>(null);
-  const [guideItems, setGuideItems] = useState<GuideRecommendation[]>([]);
   const [, setRuntimeStatus] = useState<HealthResponse | null>(null);
   const [runtimeConfig, setRuntimeConfig] = useState<RuntimeConfigResponse | null>(null);
   const [runtimeConfigLoading, setRuntimeConfigLoading] = useState(false);
@@ -2595,13 +2588,12 @@ export default function App() {
       text,
       exhibitionVoiceConfig ?? {
         exhibition_id: configuredExhibitionId ?? "current",
-        keywords: { navigation: [], exhibition_content: [], shopping: [] },
+        keywords: { navigation: [], exhibition_content: [] },
       },
     );
     setLastVoiceIntent(match.intent);
 
     if (match.intent === "navigation") {
-      setGuideItems([]);
       try {
         const result = await queryExhibitionNavigation(configuredExhibitionId, {
           text,
@@ -2616,22 +2608,8 @@ export default function App() {
         setNavigationResult(null);
         notify("导航服务暂不可用，已切换为展会内容问答。", "info");
       }
-    } else if (match.intent === "shopping") {
-      setNavigationResult(null);
-      try {
-        const result = await getExhibitionGuide(configuredExhibitionId, text);
-        setGuideItems(result.items);
-        const first = result.items[0]?.name;
-        enqueueSpeech(first ? `为您推荐${first}，您可以查看资料或预约洽谈。` : "当前展会暂时没有可推荐的展品。", text);
-        return;
-      } catch (error) {
-        console.warn("guide query failed", error);
-        setGuideItems([]);
-        notify("导购服务暂不可用，已切换为展会内容问答。", "info");
-      }
     } else {
       setNavigationResult(null);
-      setGuideItems([]);
     }
     enqueueSpeech(text, text);
   }, [configuredExhibitionId, enqueueSpeech, exhibitionVoiceConfig, notify, sessionId]);
@@ -2639,27 +2617,6 @@ export default function App() {
   const handleSend = useCallback((text: string) => {
     void routeRecognizedText(text);
   }, [routeRecognizedText]);
-
-  const handleRequestMaterial = useCallback((itemId: string): Promise<MaterialQrResponse> => {
-    return getMaterialQr(configuredExhibitionId, itemId);
-  }, [configuredExhibitionId]);
-
-  const handleSubmitLead = useCallback(async (input: {
-    companyName: string;
-    contactName: string;
-    phone: string;
-    email: string;
-    intentSummary: string;
-    interestedExhibitIds: string[];
-    consent: boolean;
-  }) => {
-    await submitRuntimeLead({
-      ...input,
-      exhibitionId: exhibitionVoiceConfig?.exhibition_id || configuredExhibitionId || "current",
-      source: "web-guide",
-    });
-    notify("预约已提交，展会方会尽快与您联系。", "success");
-  }, [configuredExhibitionId, exhibitionVoiceConfig, notify]);
 
   const handleRealtimeVoiceAudio = useCallback(async (blob: Blob) => {
     if (!sessionId) return;
@@ -3182,9 +3139,6 @@ export default function App() {
           onSpeakAudio={handleRealtimeVoiceAudio}
           voiceIntent={lastVoiceIntent}
           navigationResult={navigationResult}
-          guideItems={guideItems}
-          onRequestMaterial={handleRequestMaterial}
-          onSubmitLead={handleSubmitLead}
           exhibitionConfigNotice={exhibitionConfigNotice}
           onNotify={notify}
           ttsProvider={ttsProvider}

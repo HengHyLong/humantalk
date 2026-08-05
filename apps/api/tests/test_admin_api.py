@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-from io import BytesIO
 from types import SimpleNamespace
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from PIL import Image
 
 from apps.api.admin import AdminStore
 from apps.api.admin.middleware import AdminTraceMiddleware
@@ -20,8 +18,6 @@ def _client(tmp_path) -> TestClient:
         admin_jwt_secret="test-secret-that-is-long-enough-for-hs256",
         admin_access_token_minutes=30,
         admin_refresh_token_days=7,
-        admin_media_root=str(tmp_path / "admin-media"),
-        public_base_url="https://example.test",
     )
     app = FastAPI()
     app.state.settings = settings
@@ -97,62 +93,3 @@ def test_shopping_strategy_uses_paginated_exhibit_ids(tmp_path) -> None:
         saved = client.put("/api/v1/admin/interaction/shopping-strategies/shopping-001/exhibits", headers=headers, json={"ids": []})
         assert saved.status_code == 200
         assert saved.json()["selected_ids"] == []
-
-
-def test_guide_material_lead_report_and_gif_upload(tmp_path) -> None:
-    with _client(tmp_path) as client:
-        headers = _login(client)
-
-        guide = client.get("/exhibitions/current/guide/recommendations", params={"query": "智能导览"})
-        assert guide.status_code == 200
-        assert guide.json()["items"][0]["id"] == "exhibit-001"
-        assert guide.json()["items"][0]["exhibitor"] == "智联科技"
-
-        qr = client.get("/exhibitions/current/materials/qr", params={"item_id": "exhibit-001"})
-        assert qr.status_code == 200
-        assert qr.json()["url"].startswith("https://example.test/")
-        assert qr.json()["qr_data_url"].startswith("data:image/png;base64,")
-        assert client.get("/exhibitions/expo-2027/materials/qr", params={"item_id": "exhibit-001"}).status_code == 404
-
-        lead = client.post("/runtime/lead", json={
-            "exhibitionId": "current",
-            "companyName": "测试单位",
-            "contactName": "张三",
-            "phone": "13900000000",
-            "email": "zhangsan@example.com",
-            "intentSummary": "咨询智能导览终端",
-            "interestedExhibitIds": ["exhibit-001"],
-            "consent": True,
-            "source": "web-guide",
-        })
-        assert lead.status_code == 200
-        assert lead.json()["exhibitionId"] == "expo-2026"
-        denied = client.post("/runtime/lead", json={"exhibitionId": "current", "companyName": "测试单位", "contactName": "张三", "phone": "13900000000", "consent": False})
-        assert denied.status_code == 400
-
-        image = Image.new("RGBA", (2, 2), (20, 120, 220, 255))
-        payload = BytesIO()
-        image.save(payload, format="GIF")
-        upload = client.post(
-            "/api/v1/admin/assets/gifs/upload",
-            headers=headers,
-            files={"file": ("guide.gif", payload.getvalue(), "image/gif")},
-            data={"name": "导购动作", "scene": "guide", "tags": "导购,推荐"},
-        )
-        assert upload.status_code == 200
-        uploaded = upload.json()
-        assert uploaded["frames"] == 1
-        assert uploaded["previewUrl"].startswith("/api/v1/admin/assets/gifs/")
-        file_response = client.get(uploaded["previewUrl"], headers=headers)
-        assert file_response.status_code == 200
-        assert file_response.content.startswith(b"GIF")
-
-        navigation = client.post("/exhibitions/current/navigation/query", json={"text": "怎么去智联科技", "session_id": "guide-test"})
-        assert navigation.status_code == 200
-        operations = client.get("/api/v1/admin/report/operations", headers=headers)
-        assert operations.status_code == 200
-        assert operations.json()["summary"]["new_leads"] >= 2
-        assert any(item["label"] == "navigation" for item in operations.json()["dimensions"]["interaction"])
-        exported = client.get("/api/v1/admin/report/export", headers=headers)
-        assert exported.status_code == 200
-        assert "interaction_count" in exported.text

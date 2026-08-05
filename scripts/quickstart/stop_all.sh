@@ -59,6 +59,7 @@ while [[ $# -gt 0 ]]; do
 done
 run_dir="$DIGITAL_HUMAN_HOME/run"
 web_dir="$repo_root/apps/web"
+admin_dir="$repo_root/apps/admin"
 
 summary_services=()
 summary_targets=()
@@ -286,6 +287,25 @@ stop_vite_all() {
   done
 }
 
+stop_admin_vite_all() {
+  local pids
+  pids="$(pgrep -f "vite preview .*--port" || true)"
+  if [[ -z "$pids" ]]; then
+    return
+  fi
+  for pid in $pids; do
+    if [[ "$pid" == "$$" ]]; then
+      continue
+    fi
+    local cwd
+    cwd="$(readlink -f "/proc/$pid/cwd" 2>/dev/null || true)"
+    if [[ "$cwd" != "$admin_dir" ]]; then
+      continue
+    fi
+    stop_process_pid "OpenTalking admin Vite residue" "repo admin" "$pid"
+  done
+}
+
 stop_repo_cmdline_residue() {
   local name="$1"
   local pattern="$2"
@@ -326,6 +346,8 @@ fi
 
 stop_pid_file "OpenTalking API legacy pid" "$run_dir/opentalking-api.pid"
 stop_pid_file "OpenTalking frontend legacy pid" "$run_dir/opentalking-web.pid"
+stop_pid_glob "OpenTalking admin" "$run_dir/opentalking-admin-*.pid"
+stop_admin_vite_all
 stop_pid_glob "Local CosyVoice" "$run_dir/local-cosyvoice-*.pid"
 stop_pid_glob "Local F5-TTS" "$run_dir/local-f5-tts-*.pid"
 stop_pid_glob "Local IndexTTS" "$run_dir/local-indextts-*.pid"
