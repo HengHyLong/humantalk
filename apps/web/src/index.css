@@ -278,6 +278,18 @@ body {
 .digital-display-voice-break { color: #fff; background: #dc7085; }
 .digital-display-voice-trigger:disabled { cursor: wait; opacity: .5; }
 
+.digital-display-interaction-panel { flex: 0 0 auto; overflow: hidden; border: 1px solid rgba(181, 232, 255, .34); border-radius: 12px; color: rgba(238, 250, 255, .94); background: rgba(2, 30, 76, .64); box-shadow: 0 10px 22px rgba(1, 16, 58, .14); }
+.digital-display-interaction-summary { display: flex; min-height: 42px; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 11px; cursor: pointer; list-style: none; }
+.digital-display-interaction-summary::-webkit-details-marker { display: none; }
+.digital-display-interaction-body { border-top: 1px solid rgba(181, 232, 255, .2); padding: 10px 11px 11px; }
+.digital-display-interaction-button, .digital-display-interaction-option { min-height: 34px; border: 1px solid rgba(181, 232, 255, .25); border-radius: 8px; padding: 6px 8px; color: rgba(232, 249, 255, .92); background: rgba(21, 122, 190, .28); font-size: 10px; font-weight: 600; cursor: pointer; transition: background .15s ease, border-color .15s ease, opacity .15s ease; }
+.digital-display-interaction-button:hover:not(:disabled), .digital-display-interaction-option:hover:not(:disabled) { border-color: rgba(181, 239, 255, .65); background: rgba(63, 186, 236, .48); }
+.digital-display-interaction-button.is-danger { border-color: rgba(255, 154, 170, .55); color: #fff; background: rgba(196, 69, 96, .78); }
+.digital-display-interaction-option.is-selected { border-color: rgba(170, 240, 255, .8); color: #063964; background: #b9edff; }
+.digital-display-interaction-button:disabled, .digital-display-interaction-option:disabled { cursor: default; opacity: .38; }
+.digital-display-interaction-link { border: 0; padding: 0; color: #a8eaff; background: transparent; font-size: 10px; font-weight: 600; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+.digital-display-interaction-link:hover { color: #fff; }
+
 @media (max-width: 760px) {
   .digital-display-shell { height: 100dvh; min-height: 580px; }
   .digital-display-root { min-height: 100dvh; }

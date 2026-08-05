@@ -1,4 +1,4 @@
-import { useState, type RefObject } from "react";
+import { useEffect, useMemo, useState, type RefObject } from "react";
 import type {
   AvatarSummary,
   ClientRendererDescriptor,
@@ -16,7 +16,10 @@ import {
 import type { WelcomePhase } from "../lib/welcomeExperience";
 import type { NavigationStep } from "../lib/navigationPresentation";
 import { createInputCaptureEvent, type InputCaptureEvent } from "../lib/inputCapture";
+import { createLiveInteractionAdapter, createInteractionPreviewAdapter } from "../lib/interactionAdapter";
+import { useInteractionController } from "../lib/useInteractionController";
 import { ChatInput } from "./ChatInput";
+import { InteractionControlPanel } from "./InteractionControlPanel";
 import { NavigationGuideCard } from "./NavigationGuideCard";
 import { SceneStage } from "./SceneStage";
 import { WelcomeOverviewCard } from "./WelcomeOverviewCard";
@@ -108,6 +111,7 @@ export function DigitalHumanDisplay({
   const [activeLanguage, setActiveLanguage] = useState("中文");
   const [draft, setDraft] = useState("");
   const [inputMode, setInputMode] = useState<"voice" | "keyboard">("voice");
+  const [interactionPreviewOpen, setInteractionPreviewOpen] = useState(false);
   const live = connection === "live" || connection === "expiring";
   const busy = connection === "connecting" || connection === "queued";
   const phaseLabel = conversationPhaseLabel(conversationPhase);
@@ -118,6 +122,22 @@ export function DigitalHumanDisplay({
       && !(latestVisibleMessage?.role === "assistant" && latestVisibleMessage.text.trim() === subtitle.trim()),
   );
 
+  const liveInteractionAdapter = useMemo(
+    () => createLiveInteractionAdapter({ requestInterrupt: async () => onInterrupt() }),
+    [onInterrupt],
+  );
+  const previewInteractionAdapter = useMemo(createInteractionPreviewAdapter, []);
+  const liveInteraction = useInteractionController(liveInteractionAdapter);
+  const previewInteraction = useInteractionController(previewInteractionAdapter);
+
+  useEffect(() => {
+    if (isSpeaking) {
+      liveInteraction.startActivity("当前数字人播报", `session-${streamingAsrSessionId ?? "unknown"}`);
+    } else {
+      liveInteraction.completeActivity();
+    }
+  }, [isSpeaking, liveInteraction.completeActivity, liveInteraction.startActivity, streamingAsrSessionId]);
+
   const emitTouch = (control: string, value?: string) => {
     onInputEvent?.(createInputCaptureEvent({
       sessionId: streamingAsrSessionId,
@@ -126,6 +146,19 @@ export function DigitalHumanDisplay({
       kind: "touch",
       payload: { control, value: value ?? null },
     }));
+  };
+
+  const openInteractionPreview = () => {
+    previewInteraction.reset();
+    previewInteraction.startActivity("展会概览播报（开发预览）");
+    setInteractionPreviewOpen(true);
+    emitTouch("interaction_preview_open");
+  };
+
+  const closeInteractionPreview = () => {
+    previewInteraction.reset();
+    setInteractionPreviewOpen(false);
+    emitTouch("interaction_preview_close");
   };
 
   const submit = () => {
@@ -234,6 +267,20 @@ export function DigitalHumanDisplay({
                 </button>
               ))}
             </div>
+
+            {live || interactionPreviewOpen ? (
+              <InteractionControlPanel
+                view={interactionPreviewOpen ? previewInteraction.view : liveInteraction.view}
+                onPause={() => void (interactionPreviewOpen ? previewInteraction.pause() : liveInteraction.pause())}
+                onResume={() => void (interactionPreviewOpen ? previewInteraction.resume() : liveInteraction.resume())}
+                onInterrupt={() => void (interactionPreviewOpen ? previewInteraction.interrupt() : liveInteraction.interrupt())}
+                onRepeat={() => void (interactionPreviewOpen ? previewInteraction.repeat() : liveInteraction.repeat())}
+                onSetSpeed={(speed) => void (interactionPreviewOpen ? previewInteraction.setSpeed(speed) : liveInteraction.setSpeed(speed))}
+                onSetLanguage={(language) => void (interactionPreviewOpen ? previewInteraction.setLanguage(language) : liveInteraction.setLanguage(language))}
+                onOpenPreview={interactionPreviewOpen ? undefined : openInteractionPreview}
+                onClosePreview={interactionPreviewOpen ? closeInteractionPreview : undefined}
+              />
+            ) : null}
 
             <div className="digital-display-chat-input">
               {inputMode === "voice" ? (
