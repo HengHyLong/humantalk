@@ -202,6 +202,16 @@ body {
 .digital-display-navigation-copy .digital-display-navigation-route { color: rgba(205, 236, 255, .78); }
 .digital-display-navigation-copy ol { margin: 5px 0 0; padding-left: 18px; color: rgba(224, 245, 255, .88); }
 .digital-display-chat-empty { align-self: center; margin: auto 0; color: rgba(245, 253, 255, .92); font-size: clamp(16px, 2.3vw, 23px); font-weight: 500; letter-spacing: .04em; text-align: center; }
+.digital-display-welcome-card { align-self: stretch; margin: auto 0; border: 1px solid rgba(168, 235, 255, .34); border-radius: 14px; padding: 14px; background: linear-gradient(145deg, rgba(3, 63, 130, .55), rgba(2, 30, 77, .58)); box-shadow: 0 14px 28px rgba(1, 20, 65, .14); }
+.digital-display-welcome-card-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: rgba(192, 239, 255, .78); font-size: 9px; letter-spacing: .14em; }
+.digital-display-welcome-card-heading span:last-child { color: rgba(161, 228, 255, .82); letter-spacing: .04em; }
+.digital-display-welcome-card h2 { margin: 12px 0 6px; color: #f3fcff; font-size: clamp(17px, 2.5vw, 24px); letter-spacing: .04em; }
+.digital-display-welcome-card p { margin: 0; color: rgba(222, 245, 255, .8); font-size: 11px; line-height: 1.7; }
+.digital-display-welcome-highlights { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 13px; }
+.digital-display-welcome-highlights span { border: 1px solid rgba(181, 232, 255, .3); border-radius: 999px; padding: 5px 8px; color: rgba(230, 249, 255, .9); background: rgba(21, 122, 190, .3); font-size: 9px; }
+.digital-display-welcome-card-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 14px; color: rgba(204, 236, 255, .68); font-size: 9px; line-height: 1.5; }
+.digital-display-welcome-card-footer button { flex: 0 0 auto; border: 1px solid rgba(185, 237, 255, .4); border-radius: 999px; padding: 7px 10px; color: #073761; background: #b9edff; font-size: 9px; font-weight: 700; cursor: pointer; }
+.digital-display-welcome-card-footer button:disabled { cursor: default; opacity: .45; }
 .digital-display-chat-line { display: flex; max-width: 88%; align-items: flex-start; gap: 8px; color: rgba(245, 253, 255, .92); font-size: 12px; line-height: 1.65; }
 .digital-display-chat-line.is-user { align-self: flex-start; }
 .digital-display-chat-line.is-assistant { align-self: flex-end; }

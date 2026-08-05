@@ -78,6 +78,13 @@ import {
   createInitialConversationState,
 } from "./lib/sessionStateMachine";
 import {
+  DEFAULT_WELCOME_OVERVIEW,
+  canReplayWelcome,
+  canStartWelcome,
+  createInitialWelcomeState,
+  welcomeStateReducer,
+} from "./lib/welcomeExperience";
+import {
   DEFAULT_EDGE_VOICE_ID,
   EDGE_VOICE_STORAGE_KEY,
   EDGE_ZH_VOICES,
@@ -917,6 +924,8 @@ export default function App() {
   const reconnectTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
   const reconnectSessionIdRef = useRef<string | null>(null);
   const scheduleReconnectRef = useRef<() => void>(() => {});
+  const welcomeTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
+  const welcomeSpeechSessionRef = useRef<string | null>(null);
 
   // Data
   const [avatars, setAvatars] = useState<AvatarSummary[]>([]);
@@ -958,6 +967,13 @@ export default function App() {
     undefined,
     createInitialConversationState,
   );
+  const [welcomeState, dispatchWelcome] = useReducer(
+    welcomeStateReducer,
+    undefined,
+    createInitialWelcomeState,
+  );
+  const welcomeStateRef = useRef(welcomeState);
+  welcomeStateRef.current = welcomeState;
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
   const [queueInfo, setQueueInfo] = useState<QueueInfo | null>(null);
@@ -1006,6 +1022,13 @@ export default function App() {
     pendingAssistantMsgIdRef.current = null;
     setIsSpeaking(false);
   }, [clearSubtitleFallbackTimer]);
+
+  const clearWelcomeTimer = useCallback(() => {
+    if (welcomeTimerRef.current !== null) {
+      window.clearTimeout(welcomeTimerRef.current);
+      welcomeTimerRef.current = null;
+    }
+  }, []);
 
   const appendAssistantError = useCallback((message: string) => {
     const normalized = message.startsWith("出错了：") ? message : `出错了：${message}`;
@@ -2008,6 +2031,8 @@ export default function App() {
   const resetLiveState = useCallback(
     (clearMessages = false) => {
       clearReconnectTimer();
+      clearWelcomeTimer();
+      welcomeSpeechSessionRef.current = null;
       reconnectAttemptRef.current = 0;
       reconnectSessionIdRef.current = null;
       closePeerConnection();
@@ -2019,12 +2044,13 @@ export default function App() {
       setLastVoiceIntent(null);
       slotAcquiredRef.current = null;
       dispatchConversation({ type: "reset" });
+      dispatchWelcome({ type: "session_closed" });
       clearSubtitleState();
       if (clearMessages) {
         setMessages([]);
       }
     },
-    [clearReconnectTimer, clearSubtitleState, closePeerConnection],
+    [clearReconnectTimer, clearSubtitleState, clearWelcomeTimer, closePeerConnection],
   );
 
   const prewarmKey = useCallback((targetAvatarId: string, targetModel: string) => {
@@ -2204,6 +2230,9 @@ export default function App() {
         // Server force-closed the session, reset to idle
         setConnection("idle");
         dispatchConversation({ type: "session_expired" });
+        clearWelcomeTimer();
+        welcomeSpeechSessionRef.current = null;
+        dispatchWelcome({ type: "session_closed" });
         clearReconnectTimer();
         reconnectAttemptRef.current = 0;
         reconnectSessionIdRef.current = null;
@@ -2221,6 +2250,10 @@ export default function App() {
       if (ev === "error") {
         const d = data && typeof data === "object" ? (data as { message?: string; code?: string }) : {};
         const detail = d.message || d.code || "语音合成失败，请切换可用音色后重试。";
+        if (welcomeSpeechSessionRef.current === sessionId) {
+          welcomeSpeechSessionRef.current = null;
+          dispatchWelcome({ type: "failed", message: detail });
+        }
         dispatchConversation({ type: "failed", code: d.code, message: detail });
         appendAssistantError(detail);
         notify(`对话失败：${detail}`, "error");
@@ -2263,6 +2296,10 @@ export default function App() {
       }
       if (ev === "speech.ended") {
         dispatchConversation({ type: "assistant_finished" });
+        if (welcomeSpeechSessionRef.current === sessionId) {
+          welcomeSpeechSessionRef.current = null;
+          dispatchWelcome({ type: "finished" });
+        }
         const d = data && typeof data === "object" ? (data as { text?: string }) : {};
         const fromEvent = typeof d.text === "string" ? d.text.trim() : "";
         const streamed = subtitleAccRef.current.trim();
@@ -2296,7 +2333,7 @@ export default function App() {
       }
     });
     return stop;
-  }, [appendAssistantError, clearReconnectTimer, clearSubtitleFallbackTimer, clearSubtitleState, flushSubtitleDisplay, flushSubtitleMessage, notify, sessionId]);
+  }, [appendAssistantError, clearReconnectTimer, clearSubtitleFallbackTimer, clearSubtitleState, clearWelcomeTimer, flushSubtitleDisplay, flushSubtitleMessage, notify, sessionId]);
 
   // Resolves when FlashTalk slot is acquired (session.queued position=0)
   const slotAcquiredRef = useRef<(() => void) | null>(null);
@@ -2649,7 +2686,11 @@ export default function App() {
   }, [bailianVoices, edgeVoice, notify, qwenModel, qwenVoice, ttsPreviewText, ttsProvider]);
 
   const enqueueSpeech = useCallback(
-    (speechText: string, userText: string) => {
+    (
+      speechText: string,
+      userText: string,
+      options: { source?: "user" | "welcome" } = {},
+    ) => {
       const text = speechText.trim();
       const user = userText.trim();
       if (!sessionId || !text) return;
@@ -2681,6 +2722,13 @@ export default function App() {
       };
       void apiPost(`/sessions/${sessionId}/${endpoint}`, payload).catch((err) => {
         console.warn(`${endpoint} failed`, err);
+        if (options.source === "welcome" && welcomeSpeechSessionRef.current === sessionId) {
+          welcomeSpeechSessionRef.current = null;
+          dispatchWelcome({
+            type: "failed",
+            message: apiErrorMessage(err, "请确认会话仍处于已连接状态。"),
+          });
+        }
         const detail = apiErrorMessage(err, "请确认会话仍处于已连接状态。");
         appendAssistantError(`发送失败：${detail}`);
         notify(`发送失败：${detail}`, "error");
@@ -2689,9 +2737,68 @@ export default function App() {
     [appendAssistantError, bailianVoices, edgeVoice, isSpeaking, notify, qwenModel, qwenVoice, sessionId, ttsProvider],
   );
 
+  const cancelWelcomeForUserInput = useCallback(() => {
+    clearWelcomeTimer();
+    welcomeSpeechSessionRef.current = null;
+    dispatchWelcome({ type: "user_input" });
+  }, [clearWelcomeTimer]);
+
+  const requestWelcomeReplay = useCallback(() => {
+    const now = Date.now();
+    if (!canReplayWelcome(welcomeStateRef.current, now)) return;
+    dispatchWelcome({ type: "retry_requested", now });
+  }, []);
+
+  useEffect(() => {
+    if (!sessionId || (connection !== "live" && connection !== "expiring")) return;
+    dispatchWelcome({
+      type: "session_connected",
+      sessionId,
+      exhibitionId: configuredExhibitionId,
+      now: Date.now(),
+    });
+  }, [configuredExhibitionId, connection, sessionId]);
+
+  useEffect(() => {
+    if (!sessionId || (connection !== "live" && connection !== "expiring")) return;
+    const current = welcomeStateRef.current;
+    if (current.sessionId !== sessionId) return;
+
+    const now = Date.now();
+    if (current.phase === "cooldown" && current.cooldownUntil !== null && current.cooldownUntil > now) {
+      const timer = window.setTimeout(() => {
+        welcomeTimerRef.current = null;
+        dispatchWelcome({ type: "cooldown_elapsed", now: Date.now() });
+      }, current.cooldownUntil - now);
+      welcomeTimerRef.current = timer;
+      return () => {
+        window.clearTimeout(timer);
+        if (welcomeTimerRef.current === timer) welcomeTimerRef.current = null;
+      };
+    }
+
+    if (!current.autoStart || !canStartWelcome(current, now)) return;
+    const timer = window.setTimeout(() => {
+      welcomeTimerRef.current = null;
+      const latest = welcomeStateRef.current;
+      const startedAt = Date.now();
+      if (latest.sessionId !== sessionId || !canStartWelcome(latest, startedAt)) return;
+      dispatchWelcome({ type: "scheduled" });
+      dispatchWelcome({ type: "started", now: startedAt });
+      welcomeSpeechSessionRef.current = sessionId;
+      enqueueSpeech(DEFAULT_WELCOME_OVERVIEW.speechText, "", { source: "welcome" });
+    }, 500);
+    welcomeTimerRef.current = timer;
+    return () => {
+      window.clearTimeout(timer);
+      if (welcomeTimerRef.current === timer) welcomeTimerRef.current = null;
+    };
+  }, [connection, enqueueSpeech, sessionId, welcomeState.autoStart, welcomeState.cooldownUntil, welcomeState.phase]);
+
   const routeRecognizedText = useCallback(async (rawText: string) => {
     const text = rawText.trim();
     if (!text || !sessionId) return;
+    cancelWelcomeForUserInput();
     dispatchConversation({ type: "input_submitted" });
     const match = matchVoiceIntent(
       text,
@@ -2721,7 +2828,7 @@ export default function App() {
       setNavigationResult(null);
     }
     enqueueSpeech(text, text);
-  }, [configuredExhibitionId, enqueueSpeech, exhibitionVoiceConfig, notify, sessionId]);
+  }, [cancelWelcomeForUserInput, configuredExhibitionId, enqueueSpeech, exhibitionVoiceConfig, notify, sessionId]);
 
   const handleSend = useCallback((text: string) => {
     void routeRecognizedText(text);
@@ -2729,6 +2836,7 @@ export default function App() {
 
   const handleRealtimeVoiceAudio = useCallback(async (blob: Blob) => {
     if (!sessionId) return;
+    cancelWelcomeForUserInput();
     try {
       const result = await transcribeSessionAudio(sessionId, blob, activeAsrProvider || undefined);
       await routeRecognizedText(result.text);
@@ -2738,10 +2846,11 @@ export default function App() {
       appendAssistantError(`语音识别失败：${detail}`);
       notify(`语音识别失败：${detail}`, "error");
     }
-  }, [activeAsrProvider, appendAssistantError, notify, routeRecognizedText, sessionId]);
+  }, [activeAsrProvider, appendAssistantError, cancelWelcomeForUserInput, notify, routeRecognizedText, sessionId]);
 
   /** 流式 STT 成功后：defer_speak 模式交给意图路由，否则后端已自动入队。 */
   const handleSpeakAudioStreamResult = useCallback(({ text }: { text: string }) => {
+    cancelWelcomeForUserInput();
     dispatchConversation({ type: "input_submitted" });
     if (exhibitionVoiceConfig?.supports_deferred_speak === true) {
       void routeRecognizedText(text);
@@ -2751,7 +2860,7 @@ export default function App() {
       ...prev,
       { id: makeId(), role: "user", text, timestamp: Date.now() },
     ]);
-  }, [exhibitionVoiceConfig?.supports_deferred_speak, routeRecognizedText]);
+  }, [cancelWelcomeForUserInput, exhibitionVoiceConfig?.supports_deferred_speak, routeRecognizedText]);
 
   const handleSpeakAudioStreamError = useCallback((message: string) => {
     const detail = message || "语音识别失败，请检查 STT 配置。";
@@ -2762,6 +2871,7 @@ export default function App() {
   const handleSpeakAudio = useCallback(
     async (blob: Blob) => {
       if (!sessionId) return;
+      cancelWelcomeForUserInput();
       dispatchConversation({ type: "input_submitted" });
       speakAudioAbortRef.current?.abort();
       const ac = new AbortController();
@@ -2802,15 +2912,16 @@ export default function App() {
         }
       }
     },
-    [activeAsrProvider, appendAssistantError, asrProvider, bailianVoices, edgeVoice, notify, qwenModel, qwenVoice, sessionId, ttsProvider],
+    [activeAsrProvider, appendAssistantError, asrProvider, bailianVoices, cancelWelcomeForUserInput, edgeVoice, notify, qwenModel, qwenVoice, sessionId, ttsProvider],
   );
 
   const handleInterrupt = useCallback(() => {
+    cancelWelcomeForUserInput();
     speakAudioAbortRef.current?.abort();
     if (!sessionId) return;
     dispatchConversation({ type: "assistant_interrupted" });
     void apiPost(`/sessions/${sessionId}/interrupt`, {}).catch(() => {});
-  }, [sessionId]);
+  }, [cancelWelcomeForUserInput, sessionId]);
 
   const handleSpeakFlashtalkAudioFile = useCallback(
     async (file: File) => {
@@ -3260,6 +3371,9 @@ export default function App() {
           voiceIntent={lastVoiceIntent}
           navigationResult={navigationResult}
           exhibitionConfigNotice={exhibitionConfigNotice}
+          welcomePhase={welcomeState.phase}
+          welcomeReplayDisabled={!canReplayWelcome(welcomeState)}
+          onReplayWelcome={requestWelcomeReplay}
           onNotify={notify}
           ttsProvider={ttsProvider}
           sttProvider={activeAsrProvider}

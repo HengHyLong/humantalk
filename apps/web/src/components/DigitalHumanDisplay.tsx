@@ -13,8 +13,10 @@ import {
   conversationPhaseLabel,
   type ConversationPhase,
 } from "../lib/sessionStateMachine";
+import type { WelcomePhase } from "../lib/welcomeExperience";
 import { ChatInput } from "./ChatInput";
 import { SceneStage } from "./SceneStage";
+import { WelcomeOverviewCard } from "./WelcomeOverviewCard";
 
 type DigitalHumanDisplayProps = {
   videoRef: RefObject<HTMLVideoElement>;
@@ -49,6 +51,9 @@ type DigitalHumanDisplayProps = {
   navigationResult?: NavigationResult | null;
   voiceIntent?: VoiceIntent | null;
   exhibitionConfigNotice?: string | null;
+  welcomePhase?: WelcomePhase;
+  welcomeReplayDisabled?: boolean;
+  onReplayWelcome?: () => void;
 };
 
 const languages = ["中文", "English"];
@@ -87,6 +92,9 @@ export function DigitalHumanDisplay({
   navigationResult = null,
   voiceIntent = null,
   exhibitionConfigNotice = null,
+  welcomePhase = "idle",
+  welcomeReplayDisabled = true,
+  onReplayWelcome,
 }: DigitalHumanDisplayProps) {
   const [activeLanguage, setActiveLanguage] = useState("中文");
   const [draft, setDraft] = useState("");
@@ -94,7 +102,6 @@ export function DigitalHumanDisplay({
   const live = connection === "live" || connection === "expiring";
   const busy = connection === "connecting" || connection === "queued";
   const phaseLabel = conversationPhaseLabel(conversationPhase);
-  const displaySubtitle = subtitle?.trim() || (messages.length === 0 ? "你可以问我以下问题哦" : "");
   const visibleMessages = messages.slice(-5);
   const latestVisibleMessage = visibleMessages[visibleMessages.length - 1];
   const showLiveSubtitle = Boolean(
@@ -189,8 +196,12 @@ export function DigitalHumanDisplay({
                   </div>
                 </article>
               ) : null}
-              {visibleMessages.length === 0 && displaySubtitle ? (
-                <div className="digital-display-chat-empty">{displaySubtitle}</div>
+              {visibleMessages.length === 0 && !navigationResult ? (
+                <WelcomeOverviewCard
+                  phase={welcomePhase}
+                  replayDisabled={welcomeReplayDisabled}
+                  onReplay={onReplayWelcome}
+                />
               ) : null}
               {visibleMessages.map((message) => (
                 <div key={message.id} className={`digital-display-chat-line ${message.role === "user" ? "is-user" : "is-assistant"}`}>
