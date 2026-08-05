@@ -34,9 +34,13 @@ import {
   buildApiUrl,
   getMemoryLibraries,
   getExhibitionVoiceConfig,
+  getExhibitionGuide,
+  getMaterialQr,
+  getMaterialToken,
   listSceneBackgrounds,
   listSceneCompositions,
   queryExhibitionNavigation,
+  submitRuntimeLead,
   transcribeSessionAudio,
   loadRuntimeConfig,
   uploadExportVideo,
@@ -45,7 +49,11 @@ import {
   type CreateSessionRequest,
   type CreateSessionResponse,
   type ExhibitionVoiceConfig,
+  type GuideRecommendation,
+  type MaterialQrResponse,
+  type MaterialTokenResponse,
   type NavigationResult,
+  type VoiceIntent,
   type KnowledgeBaseSummary,
   type KnowledgeBasesResponse,
   type PersonaSummary,
@@ -592,9 +600,6 @@ function validateAudioProviderConfigBeforeStart({
   ttsProvider: TtsProviderExtended;
   runtimeStatus: HealthResponse | null;
 }): string | null {
-  // API deployments configure OPENTALKING_STT_DASHSCOPE_API_KEY and
-  // OPENTALKING_TTS_DASHSCOPE_API_KEY on the backend; the health response only
-  // exposes whether each selected provider is ready.
   const missing: string[] = [];
   const sttStatus = runtimeStatus?.stt_providers?.[normalizeAsrProvider(sttProvider, "dashscope")];
   const ttsStatus = runtimeStatus?.tts_providers?.[ttsProvider];
@@ -1018,8 +1023,10 @@ export default function App() {
   const [currentSubtitle, setCurrentSubtitle] = useState("");
   const [exhibitionVoiceConfig, setExhibitionVoiceConfig] = useState<ExhibitionVoiceConfig | null>(null);
   const [exhibitionConfigNotice, setExhibitionConfigNotice] = useState<string | null>(null);
-  const [lastVoiceIntent, setLastVoiceIntent] = useState<"navigation" | "exhibition_content" | null>(null);
+  const [lastVoiceIntent, setLastVoiceIntent] = useState<VoiceIntent | null>(null);
   const [navigationResult, setNavigationResult] = useState<NavigationResult | null>(null);
+  const [guideItems, setGuideItems] = useState<GuideRecommendation[]>([]);
+  const [materialContext, setMaterialContext] = useState<MaterialTokenResponse | null>(null);
   const [, setRuntimeStatus] = useState<HealthResponse | null>(null);
   const [runtimeConfig, setRuntimeConfig] = useState<RuntimeConfigResponse | null>(null);
   const [runtimeConfigLoading, setRuntimeConfigLoading] = useState(false);
@@ -1274,6 +1281,20 @@ export default function App() {
       toastTimersRef.current.set(id, timer);
     }
   }, []);
+
+  useEffect(() => {
+    const token = new URLSearchParams(window.location.search).get("materialToken")?.trim();
+    if (!token) return;
+    let cancelled = false;
+    void getMaterialToken(token)
+      .then((context) => {
+        if (!cancelled) setMaterialContext(context);
+      })
+      .catch((error) => {
+        if (!cancelled) notify(error instanceof Error ? error.message : "资料链接已失效", "error");
+      });
+    return () => { cancelled = true; };
+  }, [notify]);
 
   const pauseToast = useCallback((id: string) => {
     const timer = toastTimersRef.current.get(id);
@@ -2295,7 +2316,6 @@ export default function App() {
         }
       } catch {
         setConnection("error");
-        dispatchConversation({ type: "failed", message: "运行时服务不可用" });
       }
     })();
   }, [loadVoices, syncRuntimeConfigSelection]);
@@ -2322,7 +2342,6 @@ export default function App() {
           slotAcquiredRef.current = null;
           setConnection("error");
           setQueueInfo({ position, message });
-          dispatchConversation({ type: "failed", message });
         }
       }
       if (ev === "session.expiring" && data && typeof data === "object") {
@@ -2375,7 +2394,6 @@ export default function App() {
         notify(`对话失败：${detail}`, "error");
       }
       if (ev === "speech.started") {
-        dispatchConversation({ type: "assistant_started" });
         const staleId = streamingAssistantMsgIdRef.current;
         const pendingId = pendingAssistantMsgIdRef.current;
         clearSubtitleState();
@@ -2549,7 +2567,6 @@ export default function App() {
     setActiveAsrProvider(lockedAsrProvider);
     setAsrModel(sttModelForProvider(lockedAsrProvider));
     setConnection("connecting");
-    dispatchConversation({ type: "start_requested" });
     setQueueInfo(null);
     let createdSessionId: string | null = null;
     try {
@@ -2583,7 +2600,6 @@ export default function App() {
         knowledge_base_ids: knowledgeBaseIds,
       } satisfies CreateSessionRequest);
       createdSessionId = created.session_id;
-      dispatchConversation({ type: "session_created", sessionId: created.session_id });
       setSessionId(created.session_id);
       if (model === "fasterliveportrait") {
         setFasterliveportraitAppliedConfig(fasterliveportraitConfig);
@@ -2661,10 +2677,6 @@ export default function App() {
       console.warn("Failed to start session", error);
       dispatchMediaPlayback({ type: "failed", category: classifyPlaybackError(error) });
       setConnection("error");
-      dispatchConversation({
-        type: "failed",
-        message: error instanceof Error ? error.message : "会话启动失败",
-      });
       const detail = error instanceof ApiError ? error.detail : null;
       const msg = detail
         ? `启动会话失败：${detail}`
@@ -2983,12 +2995,13 @@ export default function App() {
       text,
       exhibitionVoiceConfig ?? {
         exhibition_id: configuredExhibitionId ?? "current",
-        keywords: { navigation: [], exhibition_content: [] },
+        keywords: { navigation: [], exhibition_content: [], shopping: [] },
       },
     );
     setLastVoiceIntent(match.intent);
 
     if (match.intent === "navigation") {
+      setGuideItems([]);
       try {
         const result = await queryExhibitionNavigation(configuredExhibitionId, {
           text,
@@ -3003,8 +3016,22 @@ export default function App() {
         setNavigationResult(null);
         notify("导航服务暂不可用，已切换为展会内容问答。", "info");
       }
+    } else if (match.intent === "shopping") {
+      setNavigationResult(null);
+      try {
+        const result = await getExhibitionGuide(configuredExhibitionId, text);
+        setGuideItems(result.items);
+        const first = result.items[0]?.name;
+        enqueueSpeech(first ? `为您推荐${first}，您可以查看资料或预约洽谈。` : "当前展会暂时没有可推荐的展品。", text);
+        return;
+      } catch (error) {
+        console.warn("guide query failed", error);
+        setGuideItems([]);
+        notify("导购服务暂不可用，已切换为展会内容问答。", "info");
+      }
     } else {
       setNavigationResult(null);
+      setGuideItems([]);
     }
     enqueueSpeech(text, text);
   }, [cancelWelcomeForUserInput, configuredExhibitionId, enqueueSpeech, exhibitionVoiceConfig, notify, sessionId]);
@@ -3012,6 +3039,28 @@ export default function App() {
   const handleSend = useCallback((text: string) => {
     void routeRecognizedText(text);
   }, [routeRecognizedText]);
+
+  const handleRequestMaterial = useCallback((itemId: string): Promise<MaterialQrResponse> => {
+    return getMaterialQr(configuredExhibitionId, itemId);
+  }, [configuredExhibitionId]);
+
+  const handleSubmitLead = useCallback(async (input: {
+    companyName: string;
+    contactName: string;
+    phone: string;
+    email: string;
+    intentSummary: string;
+    interestedExhibitIds: string[];
+    consent: boolean;
+    materialToken?: string;
+  }) => {
+    await submitRuntimeLead({
+      ...input,
+      exhibitionId: exhibitionVoiceConfig?.exhibition_id || configuredExhibitionId || "current",
+      source: "web-guide",
+    });
+    notify("预约已提交，展会方会尽快与您联系。", "success");
+  }, [configuredExhibitionId, exhibitionVoiceConfig, notify]);
 
   const handleRealtimeVoiceAudio = useCallback(async (blob: Blob) => {
     if (!sessionId) return;
@@ -3027,7 +3076,7 @@ export default function App() {
     }
   }, [activeAsrProvider, appendAssistantError, cancelWelcomeForUserInput, notify, routeRecognizedText, sessionId]);
 
-  /** 流式 STT 成功后：defer_speak 模式交给意图路由，否则后端已自动入队。 */
+  /** 流式 STT（WebSocket PCM）成功后仅追加本地消息（speak 已由后端入队） */
   const handleSpeakAudioStreamResult = useCallback(({ text }: { text: string }) => {
     cancelWelcomeForUserInput();
     dispatchConversation({ type: "input_submitted" });
@@ -3098,7 +3147,6 @@ export default function App() {
     cancelWelcomeForUserInput();
     speakAudioAbortRef.current?.abort();
     if (!sessionId) return;
-    dispatchConversation({ type: "assistant_interrupted" });
     void apiPost(`/sessions/${sessionId}/interrupt`, {}).catch(() => {});
   }, [cancelWelcomeForUserInput, sessionId]);
 
@@ -3545,11 +3593,12 @@ export default function App() {
           onInterrupt={handleInterrupt}
           onChangeAvatar={handleReturnToAvatarSelection}
           onSpeakAudio={handleRealtimeVoiceAudio}
-          onSpeakAudioStreamResult={handleSpeakAudioStreamResult}
-          onSpeakAudioStreamError={handleSpeakAudioStreamError}
-          streamingAsrSessionId={sessionId}
           voiceIntent={lastVoiceIntent}
           navigationResult={navigationResult}
+          guideItems={guideItems}
+          materialContext={materialContext}
+          onRequestMaterial={handleRequestMaterial}
+          onSubmitLead={handleSubmitLead}
           exhibitionConfigNotice={exhibitionConfigNotice}
           welcomePhase={welcomeState.phase}
           welcomeReplayDisabled={!canReplayWelcome(welcomeState)}
@@ -3563,7 +3612,6 @@ export default function App() {
           edgeVoice={edgeVoice}
           qwenModel={qwenModel}
           qwenVoice={qwenVoice}
-          deferSpeak={exhibitionVoiceConfig?.supports_deferred_speak === true}
         />
       ) : (
       <div
@@ -3832,7 +3880,6 @@ export default function App() {
                 edgeVoice={edgeVoice}
                 qwenModel={qwenModel}
                 qwenVoice={qwenVoice}
-                deferSpeak={exhibitionVoiceConfig?.supports_deferred_speak === true}
               />
             </div>
             ) : null}

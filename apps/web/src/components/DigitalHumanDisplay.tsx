@@ -1,7 +1,10 @@
-import { useEffect, useMemo, useState, type RefObject } from "react";
+import { useEffect, useMemo, useState, type FormEvent, type RefObject } from "react";
 import type {
   AvatarSummary,
   ClientRendererDescriptor,
+  GuideRecommendation,
+  MaterialQrResponse,
+  MaterialTokenResponse,
   NavigationResult,
   SceneBackgroundAsset,
   SceneComposition,
@@ -57,7 +60,6 @@ type DigitalHumanDisplayProps = {
   edgeVoice?: string;
   qwenModel?: string;
   qwenVoice?: string;
-  deferSpeak?: boolean;
   navigationResult?: NavigationResult | null;
   voiceIntent?: VoiceIntent | null;
   exhibitionConfigNotice?: string | null;
@@ -68,6 +70,10 @@ type DigitalHumanDisplayProps = {
   onInputEvent?: (event: InputCaptureEvent) => void;
   terminalId?: string;
   mediaPlayback?: MediaPlaybackState;
+  guideItems?: GuideRecommendation[];
+  materialContext?: MaterialTokenResponse | null;
+  onRequestMaterial?: (itemId: string) => Promise<MaterialQrResponse>;
+  onSubmitLead?: (input: { companyName: string; contactName: string; phone: string; email: string; intentSummary: string; interestedExhibitIds: string[]; consent: boolean; materialToken?: string }) => Promise<void>;
 };
 
 const languages = ["中文", "English"];
@@ -122,7 +128,6 @@ export function DigitalHumanDisplay({
   edgeVoice = "",
   qwenModel = "",
   qwenVoice = "",
-  deferSpeak = false,
   navigationResult = null,
   voiceIntent = null,
   exhibitionConfigNotice = null,
@@ -133,6 +138,10 @@ export function DigitalHumanDisplay({
   onInputEvent,
   terminalId = "web-terminal",
   mediaPlayback,
+  guideItems = [],
+  materialContext = null,
+  onRequestMaterial,
+  onSubmitLead,
 }: DigitalHumanDisplayProps) {
   const [activeLanguage, setActiveLanguage] = useState("中文");
   const [draft, setDraft] = useState("");
@@ -140,6 +149,11 @@ export function DigitalHumanDisplay({
   const [featureRailExpanded, setFeatureRailExpanded] = useState(false);
   const [selectedFeatureKey, setSelectedFeatureKey] = useState<FeatureDrawerKey>("primary");
   const [activeFeatureDrawer, setActiveFeatureDrawer] = useState<FeatureDrawerKey | null>(null);
+  const [leadItem, setLeadItem] = useState<GuideRecommendation | null>(null);
+  const [materialQr, setMaterialQr] = useState<MaterialQrResponse | null>(null);
+  const [leadSaving, setLeadSaving] = useState(false);
+  const [leadMessage, setLeadMessage] = useState("");
+  const [leadForm, setLeadForm] = useState({ companyName: "", contactName: "", phone: "", email: "", consent: false });
   const live = connection === "live" || connection === "expiring";
   const busy = connection === "connecting" || connection === "queued";
   const phaseLabel = conversationPhaseLabel(conversationPhase);
@@ -156,6 +170,23 @@ export function DigitalHumanDisplay({
   );
   const liveInteraction = useInteractionController(liveInteractionAdapter);
   const multimodal = useMultimodalController();
+
+  useEffect(() => {
+    if (!materialContext) return;
+    setLeadMessage("");
+    setLeadItem({
+      id: materialContext.exhibit_id || "",
+      name: materialContext.exhibit_name || "展会资料",
+      category: "资料领取",
+      description: "扫码进入资料领取或预约洽谈表单。",
+      tags: ["资料二维码"],
+      image_url: null,
+      exhibitor: "",
+      booth_code: "",
+      score: 0,
+      compare: {},
+    });
+  }, [materialContext]);
 
   useEffect(() => {
     if (isSpeaking) {
@@ -202,6 +233,34 @@ export function DigitalHumanDisplay({
     if (!text || !live) return;
     onSend(text);
     setDraft("");
+  };
+
+  const submitLead = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!leadItem || !onSubmitLead || !leadForm.companyName.trim() || !leadForm.contactName.trim() || !leadForm.phone.trim() || !leadForm.consent) {
+      setLeadMessage("请填写单位、联系人、手机号并同意授权。");
+      return;
+    }
+    setLeadSaving(true);
+    setLeadMessage("");
+    try {
+      await onSubmitLead({
+        ...leadForm,
+        companyName: leadForm.companyName.trim(),
+        contactName: leadForm.contactName.trim(),
+        phone: leadForm.phone.trim(),
+        email: leadForm.email.trim(),
+        intentSummary: `咨询${leadItem.name}`,
+        interestedExhibitIds: leadItem.id ? [leadItem.id] : [],
+        materialToken: materialContext?.token,
+      });
+      setLeadMessage("已提交，我们会尽快与您联系。");
+      setLeadForm({ companyName: "", contactName: "", phone: "", email: "", consent: false });
+    } catch (error) {
+      setLeadMessage(error instanceof Error ? error.message : "提交失败，请稍后重试。");
+    } finally {
+      setLeadSaving(false);
+    }
   };
 
   useEffect(() => {
@@ -331,7 +390,7 @@ export function DigitalHumanDisplay({
             <div className="digital-display-chat-heading">
               <span>{activeLanguage === "中文" ? "实时对话" : "LIVE CONVERSATION"}</span>
               <span className="digital-display-chat-state">
-                {voiceIntent === "navigation" ? "导航" : voiceIntent === "exhibition_content" ? "展品问答" : ""}
+                {voiceIntent === "navigation" ? "导航" : voiceIntent === "shopping" ? "导购" : voiceIntent === "exhibition_content" ? "展品问答" : ""}
                 {isSpeaking ? " · 正在播报" : ""}
               </span>
               <span className="digital-display-chat-state">{phaseLabel}</span>
@@ -345,6 +404,64 @@ export function DigitalHumanDisplay({
             <div className="digital-display-chat-feed" aria-live="polite">
               {exhibitionConfigNotice ? (
                 <div className="digital-display-chat-notice" role="status">{exhibitionConfigNotice}</div>
+              ) : null}
+              {materialContext ? (
+                <div className="digital-display-material-context" role="status">
+                  资料表单：{materialContext.exhibit_name || "展会资料"} · 链接有效期至 {new Date(materialContext.expires_at).toLocaleString("zh-CN")}
+                </div>
+              ) : null}
+              {guideItems.length ? (
+                <section className="digital-display-guide" aria-label="导购推荐">
+                  <div className="digital-display-guide-header">
+                    <strong>为您推荐</strong>
+                    <span>可查看资料或预约洽谈</span>
+                  </div>
+                  <div className="digital-display-guide-grid">
+                    {guideItems.map((item) => (
+                      <article key={item.id} className="digital-display-guide-item">
+                        {item.image_url ? (
+                          <img src={item.image_url} alt={item.name} loading="lazy" onError={(event) => { event.currentTarget.style.display = "none"; }} />
+                        ) : null}
+                        <div className="digital-display-guide-copy">
+                          <strong>{item.name}</strong>
+                          <p>{[item.exhibitor, item.booth_code].filter(Boolean).join(" · ") || "展品推荐"}</p>
+                          {item.description ? <p>{item.description}</p> : null}
+                          {Object.entries(item.compare).some(([, value]) => value) ? (
+                            <div className="digital-display-guide-compare">
+                              {Object.entries(item.compare).filter(([, value]) => value).map(([label, value]) => <span key={`${item.id}-${label}`}><b>{label}</b>{value}</span>)}
+                            </div>
+                          ) : null}
+                          <div className="digital-display-guide-actions">
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                if (!onRequestMaterial) return;
+                                try {
+                                  setMaterialQr(await onRequestMaterial(item.id));
+                                } catch (error) {
+                                  onNotify?.(error instanceof Error ? error.message : "资料二维码生成失败", "error");
+                                }
+                              }}
+                              disabled={!onRequestMaterial}
+                            >资料二维码</button>
+                            <button type="button" onClick={() => { setLeadMessage(""); setLeadItem(item); }} disabled={!onSubmitLead}>预约洽谈</button>
+                          </div>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                  {materialQr ? (
+                    <div className="digital-display-guide-qr">
+                      <div>
+                        <strong>扫码获取资料</strong>
+                        <p>二维码有效期至 {new Date(materialQr.expires_at).toLocaleString("zh-CN")}</p>
+                        <a href={materialQr.url} target="_blank" rel="noreferrer">打开资料链接</a>
+                      </div>
+                      {materialQr.qr_data_url ? <img src={materialQr.qr_data_url} alt="资料二维码" /> : null}
+                      <button type="button" onClick={() => setMaterialQr(null)}>关闭</button>
+                    </div>
+                  ) : null}
+                </section>
               ) : null}
               {visibleMessages.length === 0 && !navigationResult ? (
                 <WelcomeOverviewCard
@@ -378,6 +495,11 @@ export function DigitalHumanDisplay({
                   type="button"
                   onClick={() => {
                     if (!live) return;
+                    if (suggestion === "预约洽谈" && guideItems[0] && onSubmitLead) {
+                      setLeadMessage("");
+                      setLeadItem(guideItems[0]);
+                      return;
+                    }
                     emitTouch("suggestion", suggestion);
                     onSend(suggestion);
                   }}
@@ -408,7 +530,6 @@ export function DigitalHumanDisplay({
                   edgeVoice={edgeVoice}
                   qwenModel={qwenModel}
                   qwenVoice={qwenVoice}
-                  deferSpeak={deferSpeak}
                 />
               ) : (
                 <>
@@ -465,9 +586,30 @@ export function DigitalHumanDisplay({
           {busy ? (
             <div className="digital-display-loading" role="status" aria-live="polite">
               <span className="digital-display-loader" aria-hidden />
-              <strong>{conversationPhase === "reconnecting" ? "正在重连数字人" : "正在加载数字人"}</strong>
+              <strong>正在加载数字人</strong>
               <span>{queueInfo?.position ? `当前排队第 ${queueInfo.position} 位，请稍候` : "正在建立 WebRTC 视频通道"}</span>
               <div className="digital-display-loading-track" aria-hidden><i /></div>
+            </div>
+          ) : null}
+
+          {leadItem ? (
+            <div className="digital-display-lead-modal" role="dialog" aria-modal="true" aria-label="预约洽谈">
+              <form className="digital-display-lead-form" onSubmit={submitLead}>
+                <div className="digital-display-lead-heading">
+                  <div>
+                    <span>预约洽谈</span>
+                    <strong>{leadItem.name}</strong>
+                  </div>
+                  <button type="button" onClick={() => setLeadItem(null)} aria-label="关闭预约表单">×</button>
+                </div>
+                <label>单位<input value={leadForm.companyName} onChange={(event) => setLeadForm((form) => ({ ...form, companyName: event.target.value }))} placeholder="请输入单位名称" /></label>
+                <label>联系人<input value={leadForm.contactName} onChange={(event) => setLeadForm((form) => ({ ...form, contactName: event.target.value }))} placeholder="请输入联系人" /></label>
+                <label>手机号<input value={leadForm.phone} onChange={(event) => setLeadForm((form) => ({ ...form, phone: event.target.value }))} placeholder="请输入手机号" inputMode="tel" /></label>
+                <label>邮箱（选填）<input value={leadForm.email} onChange={(event) => setLeadForm((form) => ({ ...form, email: event.target.value }))} placeholder="请输入邮箱" type="email" /></label>
+                <label className="digital-display-lead-consent"><input type="checkbox" checked={leadForm.consent} onChange={(event) => setLeadForm((form) => ({ ...form, consent: event.target.checked }))} />同意授权展会方联系我</label>
+                {leadMessage ? <p className="digital-display-lead-message" role="status">{leadMessage}</p> : null}
+                <button className="digital-display-lead-submit" type="submit" disabled={leadSaving}>{leadSaving ? "提交中..." : "提交预约"}</button>
+              </form>
             </div>
           ) : null}
 

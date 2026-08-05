@@ -7,8 +7,7 @@ import { RealtimeTestWorkspace } from "./RealtimeTestWorkspace";
 import { BroadcastPage, ExhibitionDetailPage, ExhibitionPage, ExhibitorPage, ExhibitPage, PointPage, RoutePage, SchedulePage, VenuePage } from "./EventOperationsPages";
 import { LeadOperationsPage } from "./LeadOperationsPages";
 import { ExplainFlowPage, ShoppingStrategyPage, WelcomeConfigPage } from "./InteractionManagementPages";
-import { ReportPage } from "./ReportPages";
-import { AuditLogPage, OpsMonitoringPage, PermissionManagementPage, RoleManagementPage, UserManagementPage } from "./SystemManagementPages";
+import { AuditLogPage, OpsMonitoringPage, RoleManagementPage, UserManagementPage } from "./SystemManagementPages";
 import { DocumentCenterPage, KnowledgeBasePage, MemoryCenterPage } from "./KnowledgeCenterPages";
 import {
   EnhancedAvatarPage,
@@ -63,6 +62,7 @@ const MENU_GROUPS: MenuItem[] = [
   {
     id: "asset", label: "数字人中心", children: [
       { id: "asset-avatar", label: "数字人形象", path: "/asset/avatar", permission: "asset:avatar" },
+      { id: "asset-gif", label: "动作素材", path: "/asset/gif", permission: "asset:gif" },
       { id: "asset-voice", label: "声音配置", path: "/asset/voice", permission: "asset:voice" },
       { id: "asset-scene", label: "场景绑定", path: "/asset/scene", permission: "asset:scene" },
       { id: "asset-idle", label: "待机内容", path: "/asset/idle", permission: "asset:idle" },
@@ -93,7 +93,6 @@ const MENU_GROUPS: MenuItem[] = [
 ];
 
 const PAGE_LABELS: Record<string, string> = {
-  "/report/interaction": "交互量与运营分析",
   "/dashboard": "概览",
   "/dashboard/todo": "待办",
   "/event/exhibition": "展会管理",
@@ -125,9 +124,10 @@ const PAGE_LABELS: Record<string, string> = {
   "/interact/welcome": "欢迎配置",
   "/interact/explain": "讲解流程",
   "/interact/shopping": "导购策略",
+  "/report/interaction": "数据分析",
 };
 
-const GROUP_LABELS: Record<string, string> = { event: "展会运营", lead: "展会运营", asset: "数字人中心", knowledge: "知识中心", interact: "交互管理", system: "系统管理" };
+const GROUP_LABELS: Record<string, string> = { event: "展会运营", lead: "展会运营", asset: "数字人中心", knowledge: "知识中心", interact: "交互管理", report: "运营分析", system: "系统管理" };
 
 function useAdminPath(): [AdminPath, (next: string) => void] {
   const [path, setPath] = useState(() => window.location.pathname || "/dashboard");
@@ -145,7 +145,7 @@ function useAdminPath(): [AdminPath, (next: string) => void] {
   return [path, navigate];
 }
 
-function Icon({ name }: { name: string }) {
+function Icon({ name, className = "h-4 w-4" }: { name: string; className?: string }) {
   const paths: Record<string, string> = {
     grid: "M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z",
     calendar: "M6 3v3m12-3v3M4 9h16M5 5h14a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z",
@@ -161,7 +161,7 @@ function Icon({ name }: { name: string }) {
     chevron: "M9 5l7 7-7 7",
     logout: "M10 5H5a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h5m5-4 4-4-4-4m4 4H9",
   };
-  return <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d={paths[name] ?? paths.grid} /></svg>;
+  return <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className={className}><path d={paths[name] ?? paths.grid} /></svg>;
 }
 
 function Logo() {
@@ -193,6 +193,7 @@ function EmptyState({ title, description }: { title: string; description: string
 
 type DashboardCollections = {
   data: DashboardData;
+  operations: Awaited<ReturnType<typeof adminApi.getOperationsReport>>;
   exhibitions: Awaited<ReturnType<typeof adminApi.listExhibitions>>;
   venues: Awaited<ReturnType<typeof adminApi.listVenues>>;
   points: Awaited<ReturnType<typeof adminApi.listPoints>>;
@@ -215,23 +216,25 @@ function DashboardPage({ navigate }: { navigate: (path: string) => void }) {
   const [snapshot, setSnapshot] = useState<DashboardCollections | null>(null);
   const [error, setError] = useState("");
   const [refreshing, setRefreshing] = useState(false);
+  const [reportFilters, setReportFilters] = useState<{ from: string; to: string; groupBy: "day" | "terminal" | "scene" | "intent" }>({ from: "", to: "", groupBy: "day" });
   const load = async () => {
     setRefreshing(true);
     setError("");
     try {
-      const [data, exhibitions, venues, points, exhibitors, exhibits, schedules, documents, qa, scripts, packages] = await Promise.all([
-        adminApi.getDashboard(), adminApi.listExhibitions(), adminApi.listVenues(), adminApi.listPoints(), adminApi.listExhibitors(), adminApi.listExhibits(), adminApi.listSchedules(), adminApi.listDocuments(), adminApi.listQa(), adminApi.listScripts(), adminApi.listPackages(),
+      const [data, operations, exhibitions, venues, points, exhibitors, exhibits, schedules, documents, qa, scripts, packages] = await Promise.all([
+        adminApi.getDashboard(), adminApi.getOperationsReport(reportFilters), adminApi.listExhibitions(), adminApi.listVenues(), adminApi.listPoints(), adminApi.listExhibitors(), adminApi.listExhibits(), adminApi.listSchedules(), adminApi.listDocuments(), adminApi.listQa(), adminApi.listScripts(), adminApi.listPackages(),
       ]);
-      setSnapshot({ data, exhibitions, venues, points, exhibitors, exhibits, schedules, documents, qa, scripts, packages });
+      setSnapshot({ data, operations, exhibitions, venues, points, exhibitors, exhibits, schedules, documents, qa, scripts, packages });
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "首页统计数据加载失败");
     } finally {
       setRefreshing(false);
     }
   };
-  useEffect(() => { void load(); }, []);
+  useEffect(() => { void load(); }, [reportFilters]);
 
   const data = snapshot?.data;
+  const operations = snapshot?.operations;
   const exhibitions = snapshot?.exhibitions ?? [];
   const venues = snapshot?.venues ?? [];
   const points = snapshot?.points ?? [];
@@ -261,11 +264,29 @@ function DashboardPage({ navigate }: { navigate: (path: string) => void }) {
     { label: "已结束", value: exhibitions.filter((item) => item.status === "teardown").length, tone: "violet" as const },
   ];
 
-  return <div className="px-6 py-8 xl:px-10 xl:py-10"><PageHeader eyebrow="MANAGEMENT ANALYTICS" title="运营分析" description="从展会运营、内容资产和发布状态三个维度掌握当前管理后台情况。" actions={<><Button variant="secondary" onClick={() => void load()} disabled={refreshing}>{refreshing ? "刷新中…" : "刷新数据"}</Button><Button onClick={() => navigate("/knowledge/base")}><Icon name="arrow" />处理待办</Button></>} />
+  const downloadReport = async () => {
+    try {
+      const file = await adminApi.exportReport(operations?.summary.exhibition_id, "xlsx", reportFilters);
+      const blob = file instanceof Blob ? file : new Blob([file], { type: "text/csv;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = file instanceof Blob ? "operations-report.xlsx" : "operations-report.csv";
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "报表导出失败");
+    }
+  };
+  const interactionDimension = operations?.dimensions.interaction ?? [];
+  const resourceDimension = operations?.dimensions.resource ?? [];
+  const dimensionMax = Math.max(...[...interactionDimension, ...resourceDimension].map((item) => item.count), 1);
+  return <div className="p-6 xl:p-8"><PageHeader eyebrow="Management Analytics" title="运营分析" description="从展会运营、内容资产和发布状态三个维度掌握当前管理后台情况。" actions={<><div className="flex flex-wrap items-center gap-2"><label className="text-[11px] text-slate-500">开始 <input type="date" value={reportFilters.from} onChange={(event) => setReportFilters((current) => ({ ...current, from: event.target.value }))} className="ml-1 rounded-lg border border-slate-200 px-2 py-1 text-xs" /></label><label className="text-[11px] text-slate-500">结束 <input type="date" value={reportFilters.to} onChange={(event) => setReportFilters((current) => ({ ...current, to: event.target.value }))} className="ml-1 rounded-lg border border-slate-200 px-2 py-1 text-xs" /></label><select value={reportFilters.groupBy} onChange={(event) => setReportFilters((current) => ({ ...current, groupBy: event.target.value as typeof current.groupBy }))} className="rounded-lg border border-slate-200 px-2 py-1 text-xs"><option value="day">按日</option><option value="terminal">按终端</option><option value="scene">按场景</option><option value="intent">按意图</option></select></div><Button variant="secondary" onClick={() => void load()} disabled={refreshing}>{refreshing ? "刷新中…" : "刷新数据"}</Button><Button variant="secondary" onClick={() => void downloadReport()}>导出报表</Button><Button onClick={() => navigate("/knowledge/base")}><Icon name="arrow" />处理待办</Button></>} />
     {error ? <div className="mb-5 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-700">{error}</div> : null}
     <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">{(data?.metrics ?? []).map((metric) => <Card key={metric.id} className="p-5"><div className="flex items-start justify-between"><span className="text-xs font-medium text-slate-500">{metric.label}</span><span className={`h-2.5 w-2.5 rounded-full ${metric.tone === "green" ? "bg-emerald-400" : metric.tone === "amber" ? "bg-amber-400" : metric.tone === "rose" ? "bg-rose-400" : metric.tone === "violet" ? "bg-violet-400" : "bg-cyan-400"}`} /></div><p className="mt-4 text-2xl font-semibold tracking-tight text-slate-950">{metric.value}</p><p className="mt-2 text-[11px] font-medium text-slate-400">{metric.trend}</p></Card>)}</div>
     <div className="mt-6 grid gap-6 xl:grid-cols-[1.25fr_0.75fr]"><Card className="!bg-slate-950 !text-white overflow-hidden"><div className="flex flex-wrap items-start justify-between gap-4 border-b border-white/10 px-5 py-5"><div><h2 className="mt-2 text-xl font-semibold">{currentExhibition?.name ?? "暂无运营中的展会"}</h2><p className="mt-1 text-xs text-slate-400">{currentExhibition ? `${currentExhibition.startDate} 至 ${currentExhibition.endDate} · ${currentExhibition.code}` : "请先在展会运营中配置并推进展会状态。"}</p></div><Badge tone={currentExhibition ? "green" : "amber"}>{currentExhibitionStatus}</Badge></div><div className="grid grid-cols-2 gap-4 p-5 sm:grid-cols-4"><div><p className="text-xs text-slate-400">运营展会</p><p className="mt-2 text-2xl font-semibold">{activeExhibitions}<span className="ml-1 text-sm font-normal text-slate-500">/ {exhibitions.length}</span></p></div><div><p className="text-xs text-slate-400">展商</p><p className="mt-2 text-2xl font-semibold">{exhibitors.length}</p></div><div><p className="text-xs text-slate-400">展品</p><p className="mt-2 text-2xl font-semibold">{exhibits.length}</p></div><div><p className="text-xs text-slate-400">活动排期</p><p className="mt-2 text-2xl font-semibold">{schedules.length}</p></div></div></Card><Card className="p-5"><div className="flex items-center justify-between"><div><h2 className="text-sm font-semibold text-slate-900">知识发布完成度</h2><p className="mt-1 text-xs text-slate-400">问答与发布包已发布占比</p></div><Badge tone={publishRate >= 80 ? "green" : publishRate >= 50 ? "amber" : "rose"}>{publishRate}%</Badge></div><div className="mt-5 flex items-center gap-5"><div className="relative flex h-28 w-28 shrink-0 items-center justify-center rounded-full" style={{ background: `conic-gradient(#0e9fba 0 ${publishRate}%, #e2e8f0 ${publishRate}% 100%)` }}><div className="flex h-20 w-20 flex-col items-center justify-center rounded-full bg-white"><span className="text-xl font-semibold text-slate-900">{publishRate}%</span><span className="text-[10px] text-slate-400">已发布</span></div></div><div className="min-w-0 flex-1 space-y-3 text-xs"><div className="flex items-center justify-between"><span className="text-slate-400">已发布内容</span><span className="font-semibold text-slate-800">{publishCompleted} / {publishTotal}</span></div><div className="flex items-center justify-between"><span className="text-slate-400">待审问答</span><span className="font-semibold text-amber-600">{pendingQa}</span></div><div className="flex items-center justify-between"><span className="text-slate-400">待审发布包</span><span className="font-semibold text-amber-600">{pendingPackages}</span></div></div></div></Card></div>
     <div className="mt-6 grid gap-6 xl:grid-cols-[1.1fr_0.9fr]"><Card className="p-5"><div className="flex items-center justify-between"><div><h2 className="text-sm font-semibold text-slate-900">运营资源结构</h2><p className="mt-1 text-xs text-slate-400">当前后台已建档资源数量</p></div><Badge tone="cyan">{exhibitorCoverage}% 展商有展品</Badge></div><div className="mt-6 space-y-5"><AnalysisBar label="展商" value={exhibitors.length} total={resourceMax} tone="cyan" /><AnalysisBar label="展品" value={exhibits.length} total={resourceMax} tone="violet" /><AnalysisBar label="场馆" value={venues.length} total={resourceMax} tone="green" /><AnalysisBar label="地图点位" value={points.length} total={resourceMax} tone="amber" /><AnalysisBar label="活动排期" value={schedules.length} total={resourceMax} tone="cyan" /></div></Card><Card className="p-5"><div className="flex items-center justify-between"><div><h2 className="text-sm font-semibold text-slate-900">展会状态分布</h2><p className="mt-1 text-xs text-slate-400">按当前生命周期统计</p></div><Badge tone="slate">{exhibitions.length} 个展会</Badge></div><div className="mt-6 space-y-5">{exhibitionStatuses.map((item) => <AnalysisBar key={item.label} label={item.label} value={item.value} total={Math.max(exhibitions.length, 1)} tone={item.tone} />)}</div><div className="mt-6 rounded-xl bg-slate-50 p-3 text-xs leading-5 text-slate-500">内容资料：{documents.length} 份文档 · {qa.length} 条问答 · {scripts.length} 套话术。{processingDocuments > 0 ? <span className="text-amber-700"> 当前有 {processingDocuments} 份文档仍在处理。</span> : null}</div></Card></div>
+    <div className="mt-6 grid gap-6 xl:grid-cols-[1.1fr_0.9fr]"><Card className="p-5"><div className="flex items-center justify-between"><div><h2 className="text-sm font-semibold text-slate-900">近 7 日交互趋势</h2><p className="mt-1 text-xs text-slate-400">导航、问答和导购均纳入交互统计</p></div><Badge tone="cyan">{operations?.summary.interaction_count ?? 0} 次交互</Badge></div><div className="mt-6 space-y-4">{(operations?.series ?? []).map((item) => <div key={item.date} className="grid grid-cols-[80px_1fr_36px] items-center gap-3 text-xs"><span className="text-slate-400">{item.date.slice(5)}</span><div className="h-2 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-cyan-500" style={{ width: `${Math.min(100, Math.max(0, (item.interactions / Math.max(...(operations?.series ?? []).map((value) => value.interactions), 1)) * 100))}%` }} /></div><span className="text-right font-semibold text-slate-700">{item.interactions}</span></div>)}</div></Card><Card className="p-5"><div className="flex items-center justify-between"><div><h2 className="text-sm font-semibold text-slate-900">实时维度</h2><p className="mt-1 text-xs text-slate-400">交互类型与资源建档明细</p></div><Badge tone="slate">{resourceDimension.length} 类资源</Badge></div><div className="mt-6 space-y-4">{interactionDimension.length ? interactionDimension.map((item) => <AnalysisBar key={`interaction-${item.label}`} label={item.label} value={item.count} total={dimensionMax} tone="cyan" />) : <p className="text-xs text-slate-400">暂无交互记录</p>}{resourceDimension.map((item) => <AnalysisBar key={`resource-${item.label}`} label={item.label} value={item.count} total={dimensionMax} tone="violet" />)}</div></Card></div>
     </div>;
 }
 
@@ -384,6 +405,18 @@ function flattenMenu(items: MenuItem[]): MenuItem[] {
   return items.flatMap((item) => item.path ? [item] : flattenMenu(item.children ?? []));
 }
 
+function menuIconName(id: string): string {
+  if (id === "dashboard") return "grid";
+  if (id === "report") return "chart";
+  if (id === "system" || id.startsWith("system-")) return "settings";
+  if (id === "interact" || id.startsWith("interact-")) return "chat";
+  if (id === "knowledge" || id.startsWith("knowledge-")) return "book";
+  if (id === "asset" || id.startsWith("asset-")) return "sparkle";
+  if (id === "event-live" || id === "event-lead") return "users";
+  if (id === "event-space") return "grid";
+  return "calendar";
+}
+
 function Sidebar({ user, path, navigate, collapsed, onCollapse, mobileOpen, onClose }: { user: AdminUser; path: string; navigate: (path: string) => void; collapsed: boolean; onCollapse: () => void; mobileOpen: boolean; onClose: () => void }) {
   const visible = MENU_GROUPS.filter((item) => hasVisibleMenuItem(user, item));
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
@@ -399,35 +432,41 @@ function Sidebar({ user, path, navigate, collapsed, onCollapse, mobileOpen, onCl
     onClose();
   };
 
-  return <aside aria-label="主菜单" className={`${collapsed ? "lg:w-[88px]" : "lg:w-[316px]"} fixed inset-y-0 left-0 z-50 flex w-[316px] shrink-0 -translate-x-full flex-col border-r border-slate-200 bg-white shadow-xl transition-all duration-200 lg:static lg:translate-x-0 lg:shadow-none ${mobileOpen ? "translate-x-0" : ""}`}>
-    <div className="flex h-[88px] shrink-0 items-center justify-between border-b border-slate-200 px-6">
+  return <aside aria-label="主菜单" className={`${collapsed ? "lg:w-[88px]" : "lg:w-[300px]"} fixed inset-y-0 left-0 z-50 flex w-[320px] shrink-0 -translate-x-full flex-col border-r border-slate-200 bg-white shadow-xl transition-all duration-200 lg:static lg:translate-x-0 lg:shadow-none ${mobileOpen ? "translate-x-0" : ""}`}>
+    <div className="flex h-[84px] shrink-0 items-center justify-between border-b border-slate-100 px-6">
       {collapsed ? <div className="mx-auto flex h-9 w-9 items-center justify-center rounded-xl bg-slate-950 text-cyan-300"><Icon name="sparkle" /></div> : <Logo />}
       <button type="button" onClick={onClose} aria-label="关闭菜单" className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700 lg:hidden"><span className="text-xl leading-none">×</span></button>
     </div>
-    <div className="flex-1 overflow-y-auto px-4 py-6">
+    <div className="flex-1 overflow-y-auto px-4 py-5">
       {(() => {
         const renderItems = (items: MenuItem[], level = 0): ReactNode => items.filter((item) => hasVisibleMenuItem(user, item)).map((item) => {
-          if (!item.children) return <NavButton key={item.id} item={item} path={path} navigate={goTo} collapsed={collapsed} />;
+          if (!item.children) return <NavButton key={item.id} item={item} path={path} navigate={goTo} collapsed={collapsed} level={level} />;
           const groupCollapsed = Boolean(collapsedGroups[item.id]);
-          return <div key={item.id} className={level ? "mt-2" : "mb-5"}>
-            <button type="button" onClick={() => !collapsed && toggleGroup(item.id)} aria-expanded={!groupCollapsed} title={collapsed ? item.label : undefined} className={`${collapsed ? "justify-center" : "justify-between px-3"} mb-1 flex w-full items-center rounded-lg py-1.5 text-[10px] font-bold uppercase tracking-[0.12em] ${level ? "text-slate-500" : "text-slate-400"} hover:bg-slate-50`}>
-              <span>{collapsed ? "•" : item.label}</span>
-              {!collapsed ? <span className={`transition-transform ${groupCollapsed ? "-rotate-90" : "rotate-90"}`}><Icon name="chevron" /></span> : null}
+          const groupClass = level === 0
+            ? "mb-5 rounded-2xl border border-slate-200 bg-slate-50/80 p-2 shadow-sm"
+            : "mt-3 ml-2 border-l-2 border-cyan-100 pl-2";
+          const groupButtonClass = level === 0
+            ? "border border-slate-200 bg-white px-3 py-3 text-base font-bold text-slate-900 shadow-sm"
+            : "bg-white/80 px-3 py-2.5 text-sm font-semibold text-slate-700";
+          return <div key={item.id} className={collapsed ? "mb-3" : groupClass}>
+            <button type="button" onClick={() => !collapsed && toggleGroup(item.id)} aria-expanded={!groupCollapsed} title={collapsed ? item.label : undefined} className={`${collapsed ? "justify-center" : `justify-between ${groupButtonClass}`} mb-1 flex w-full items-center rounded-xl tracking-[0.02em] hover:border-cyan-200 hover:bg-cyan-50/60`}>
+              <span className={`flex items-center ${collapsed ? "justify-center" : "gap-3"}`}><Icon name={menuIconName(item.id)} className="h-5 w-5 shrink-0" />{collapsed ? null : <span>{item.label}</span>}</span>
+              {!collapsed ? <span className={`transition-transform ${groupCollapsed ? "-rotate-90" : "rotate-90"}`}><Icon name="chevron" className="h-5 w-5" /></span> : null}
             </button>
-            {!collapsed && !groupCollapsed ? <div className={level ? "ml-2 space-y-1 border-l border-slate-100 pl-2" : "space-y-1"}>{renderItems(item.children, level + 1)}</div> : null}
+            {!collapsed && !groupCollapsed ? <div className={level === 0 ? "space-y-1" : "space-y-1.5"}>{renderItems(item.children, level + 1)}</div> : null}
           </div>;
         });
         return renderItems(visible);
       })()}
     </div>
-    <div className="shrink-0 border-t border-slate-100 p-3"><button type="button" onClick={onCollapse} title={collapsed ? "展开侧栏" : "收起侧栏"} className="flex w-full items-center justify-center rounded-xl py-2 text-xs text-slate-400 hover:bg-slate-50 hover:text-slate-700"><span className={`text-xl leading-none transition ${collapsed ? "rotate-180" : ""}`}>‹</span>{collapsed ? null : <span className="ml-2">收起侧栏</span>}</button></div>
+    <div className="shrink-0 border-t border-slate-100 p-3"><button type="button" onClick={onCollapse} title={collapsed ? "展开侧栏" : "收起侧栏"} className="flex w-full items-center justify-center rounded-xl py-2.5 text-sm text-slate-400 hover:bg-slate-50 hover:text-slate-700"><span className={`text-2xl leading-none transition ${collapsed ? "rotate-180" : ""}`}>‹</span>{collapsed ? null : <span className="ml-2">收起侧栏</span>}</button></div>
   </aside>;
 }
 
-function NavButton({ item, path, navigate, collapsed }: { item: MenuItem; path: string; navigate: (path: string) => void; collapsed: boolean }) {
+function NavButton({ item, path, navigate, collapsed, level }: { item: MenuItem; path: string; navigate: (path: string) => void; collapsed: boolean; level: number }) {
   const active = Boolean(item.path && (path === item.path || path.startsWith(`${item.path}/`)));
   const disabled = item.enabled === false;
-  return <button type="button" disabled={disabled} onClick={() => item.path && navigate(item.path)} title={disabled ? `${item.label}（规划中）` : item.label} className={`group flex w-full items-center rounded-2xl px-4 py-3 text-left text-sm font-semibold transition ${collapsed ? "justify-center" : "gap-3"} ${active ? "bg-cyan-50 text-cyan-700" : disabled ? "cursor-not-allowed text-slate-300" : "text-slate-500 hover:bg-slate-50 hover:text-slate-800"}`}><span className={active ? "text-cyan-600" : "text-slate-400"}><Icon name={item.id.includes("knowledge") ? "book" : item.id.includes("asset") ? "sparkle" : item.id.includes("interact") ? "chat" : item.id.includes("event") ? "calendar" : item.id === "report" ? "chart" : item.id === "system" ? "settings" : item.id === "lead" ? "users" : "grid"} /></span>{collapsed ? null : <><span className="flex-1">{item.label}</span>{disabled ? <span className="text-[10px] font-normal text-slate-300">Soon</span> : active ? <span className="h-1.5 w-1.5 rounded-full bg-cyan-500" /> : null}</>}</button>;
+  return <button type="button" disabled={disabled} onClick={() => item.path && navigate(item.path)} title={disabled ? `${item.label}（规划中）` : item.label} className={`group flex w-full items-center rounded-xl px-3 py-2.5 text-left text-sm font-semibold transition ${collapsed ? "justify-center" : `gap-3 ${level === 1 ? "pl-5" : "pl-4"}`} ${active ? "border-l-4 border-cyan-500 bg-cyan-50 text-cyan-700 shadow-sm" : disabled ? "cursor-not-allowed text-slate-300" : "border-l-4 border-transparent text-slate-600 hover:border-cyan-200 hover:bg-white hover:text-slate-900"}`}><span className={active ? "text-cyan-600" : "text-slate-400"}><Icon name={menuIconName(item.id)} className="h-5 w-5" /></span>{collapsed ? null : <><span className="flex-1">{item.label}</span>{disabled ? <span className="text-xs font-normal text-slate-300">Soon</span> : active ? <span className="h-2 w-2 rounded-full bg-cyan-500" /> : null}</>}</button>;
 }
 
 function MobileNav({ user, path, navigate }: { user: AdminUser; path: string; navigate: (path: string) => void }) { const links = flattenMenu(MENU_GROUPS).filter((item) => hasVisibleMenuItem(user, item)).slice(0, 6); return <div className="flex gap-1 overflow-x-auto border-b border-slate-200 bg-white px-3 py-2 lg:hidden">{links.map((item) => <button type="button" key={item.id} onClick={() => item.path && navigate(item.path)} className={`whitespace-nowrap rounded-lg px-3 py-2 text-xs font-semibold ${path === item.path ? "bg-cyan-50 text-cyan-700" : "text-slate-500"}`}>{item.label}</button>)}</div>; }
@@ -438,9 +477,14 @@ export function AdminApp() {
   const [collapsed, setCollapsed] = useState(() => { try { return window.localStorage.getItem("opentalking-admin-sidebar-collapsed") === "true"; } catch { return false; } });
   const [mobileOpen, setMobileOpen] = useState(false);
   useEffect(() => { window.localStorage.setItem("opentalking-admin-sidebar-collapsed", String(collapsed)); }, [collapsed]);
+  useEffect(() => {
+    const onAuthExpired = () => setUser(null);
+    window.addEventListener("opentalking-admin-auth-expired", onAuthExpired);
+    return () => window.removeEventListener("opentalking-admin-auth-expired", onAuthExpired);
+  }, []);
   useEffect(() => { setMobileOpen(false); }, [path]);
-  const login = async (username: string, password: string) => { const result = await adminApi.login(username, password); setUser(result.user); window.localStorage.setItem("opentalking-admin-session", JSON.stringify(result)); window.localStorage.setItem("opentalking-admin-token", result.token); navigate("/dashboard"); };
-  const logout = () => { void adminApi.logout().finally(() => { window.localStorage.removeItem("opentalking-admin-session"); window.localStorage.removeItem("opentalking-admin-token"); setUser(null); }); };
+  const login = async (username: string, password: string) => { const result = await adminApi.login(username, password); setUser(result.user); window.localStorage.setItem("opentalking-admin-session", JSON.stringify(result)); navigate("/dashboard"); };
+  const logout = () => { window.localStorage.removeItem("opentalking-admin-session"); setUser(null); };
   if (!user) return <LoginScreen onLogin={login} />;
   const title = PAGE_LABELS[path] ?? "管理模块";
   const isKnown = Boolean(PAGE_LABELS[path]);
@@ -449,7 +493,7 @@ export function AdminApp() {
   const exhibitionId = searchParams.get("id") ?? "";
   const initialExhibitionId = searchParams.get("exhibitionId") ?? "";
   const leadId = searchParams.get("id") ?? "";
-  return <div className="flex min-h-screen bg-[#f3f7f9] text-slate-900">{mobileOpen ? <button type="button" aria-label="关闭菜单" onClick={() => setMobileOpen(false)} className="fixed inset-0 z-40 bg-slate-950/25 lg:hidden" /> : null}<Sidebar user={user} path={path} navigate={navigate} collapsed={collapsed} onCollapse={() => setCollapsed((value) => !value)} mobileOpen={mobileOpen} onClose={() => setMobileOpen(false)} /><div className="flex min-w-0 flex-1 flex-col"><header className="sticky top-0 z-30 flex h-[72px] items-center justify-between border-b border-slate-200 bg-white/95 px-5 backdrop-blur lg:px-8"><div className="flex min-w-0 items-center gap-3"><button type="button" onClick={() => setMobileOpen(true)} aria-label="打开菜单" className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 lg:hidden"><span className="text-lg">☰</span></button><div className="hidden lg:block"><p className="text-xs text-slate-400">当前工作区</p><div className="mt-1 flex items-center gap-2"><span className="text-sm font-semibold text-slate-900">{GROUP_LABELS[path.split("/")[1]] || "运营总览"}</span><span className="text-slate-300">/</span><span className="text-sm text-slate-500">{title}</span></div></div><div className="lg:hidden"><Logo /></div></div><div className="flex items-center gap-2 sm:gap-4"><button type="button" onClick={() => { window.location.search = "mode=studio"; }} className="hidden rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:border-cyan-300 hover:text-cyan-700 sm:inline-flex">旧 Studio</button><div className="hidden h-7 w-px bg-slate-200 sm:block" /><div className="flex items-center gap-2"><div className="flex h-8 w-8 items-center justify-center rounded-full bg-cyan-100 text-xs font-bold text-cyan-700">{user.displayName.slice(0, 1)}</div><div className="hidden text-right sm:block"><p className="text-xs font-semibold text-slate-800">{user.displayName}</p><p className="text-[10px] text-slate-400">{roleLabel(user.role)}</p></div></div><button type="button" onClick={logout} title="退出登录" className="rounded-xl p-2 text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Icon name="logout" /></button></div></header><MobileNav user={user} path={path} navigate={navigate} /><main className="min-h-0 flex-1 overflow-auto">{!isKnown ? <ComingSoonPage title={title} /> : path === "/dashboard" || path === "/dashboard/todo" ? <DashboardPage navigate={navigate} /> : path === "/report/interaction" ? <ReportPage /> : path === "/lead" ? <LeadOperationsPage user={user} canWrite={eventCanWrite("lead:write")} canExport={canAccess(user.role, "lead:export")} canSensitive={canAccess(user.role, "lead:view_sensitive")} canFeedback={canAccess(user.role, "lead:feedback")} initialLeadId={leadId} initialExhibitionId={initialExhibitionId} onNavigate={navigate} /> : path === "/system/user" ? <UserManagementPage user={user} canWrite={eventCanWrite("system:user:write")} /> : path === "/system/role" ? <RoleManagementPage user={user} canWrite={eventCanWrite("system:role:write")} /> : path === "/system/permission" ? <PermissionManagementPage user={user} canWrite={eventCanWrite("system:role:write")} /> : path === "/system/audit" ? <AuditLogPage user={user} canWrite={false} canTrace={canAccess(user.role, "audit:trace")} onNavigate={navigate} /> : path === "/system/ops" ? <OpsMonitoringPage user={user} canWrite={false} canFailover={eventCanWrite("ops:failover")} /> : path === "/event/exhibition/detail" ? <ExhibitionDetailPage exhibitionId={exhibitionId} canWrite={eventCanWrite("event:exhibition:write")} onBack={() => navigate("/event/exhibition")} onNavigate={navigate} /> : path === "/event/exhibition" ? <ExhibitionPage canWrite={eventCanWrite("event:exhibition:write")} onOpenDetail={(id) => navigate(`/event/exhibition/detail?id=${encodeURIComponent(id)}`)} /> : path === "/event/exhibitor" ? <ExhibitorPage canWrite={eventCanWrite("event:exhibitor:write")} initialExhibitionId={initialExhibitionId} /> : path === "/event/exhibit" ? <ExhibitPage canWrite={eventCanWrite("event:exhibit")} initialExhibitionId={initialExhibitionId} /> : path === "/event/venue" ? <VenuePage canWrite={eventCanWrite("event:venue:write")} initialExhibitionId={initialExhibitionId} /> : path === "/event/point" ? <PointPage canWrite={eventCanWrite("event:point:write")} initialExhibitionId={initialExhibitionId} /> : path === "/event/route" ? <RoutePage canWrite={eventCanWrite("event:route:write")} initialExhibitionId={initialExhibitionId} /> : path === "/event/schedule" ? <SchedulePage canWrite={eventCanWrite("event:schedule:write")} initialExhibitionId={initialExhibitionId} /> : path === "/event/broadcast" ? <BroadcastPage canWrite={eventCanWrite("event:broadcast:write")} initialExhibitionId={initialExhibitionId} /> : path === "/asset/avatar" ? <EnhancedAvatarPage onDebug={(avatarId) => navigate(`/interact/test?avatarId=${encodeURIComponent(avatarId)}`)} /> : path === "/asset/gif" ? <EnhancedGifPage /> : path === "/asset/voice" ? <EnhancedVoicePage /> : path === "/asset/scene" ? <EnhancedScenePage /> : path === "/asset/idle" ? <EnhancedIdlePage /> : path === "/knowledge/document" ? <DocumentCenterPage /> : path === "/knowledge/base" ? <KnowledgeBasePage /> : path === "/knowledge/memory" ? <MemoryCenterPage /> : path === "/knowledge/qa" ? <EnhancedQaPage /> : path === "/knowledge/script" ? <EnhancedScriptPage /> : path === "/knowledge/package" ? <EnhancedPackagePage /> : path === "/interact/test" ? <RealtimeTestWorkspace /> : path === "/interact/welcome" ? <WelcomeConfigPage user={user} canWrite={eventCanWrite("interact:welcome:write")} initialExhibitionId={initialExhibitionId} /> : path === "/interact/explain" ? <ExplainFlowPage user={user} canWrite={eventCanWrite("interact:explain:write")} initialExhibitionId={initialExhibitionId} /> : path === "/interact/shopping" ? <ShoppingStrategyPage user={user} canWrite={eventCanWrite("interact:shopping:write")} initialExhibitionId={initialExhibitionId} /> : <ComingSoonPage title={title} />}</main></div></div>;
+  return <div className="flex min-h-screen bg-[#f3f7f9] text-slate-900">{mobileOpen ? <button type="button" aria-label="关闭菜单" onClick={() => setMobileOpen(false)} className="fixed inset-0 z-40 bg-slate-950/25 lg:hidden" /> : null}<Sidebar user={user} path={path} navigate={navigate} collapsed={collapsed} onCollapse={() => setCollapsed((value) => !value)} mobileOpen={mobileOpen} onClose={() => setMobileOpen(false)} /><div className="flex min-w-0 flex-1 flex-col"><header className="sticky top-0 z-30 flex h-[72px] items-center justify-between border-b border-slate-200 bg-white/95 px-5 backdrop-blur lg:px-8"><div className="flex min-w-0 items-center gap-3"><button type="button" onClick={() => setMobileOpen(true)} aria-label="打开菜单" className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 lg:hidden"><span className="text-lg">☰</span></button><div className="hidden lg:block"><p className="text-xs text-slate-400">当前工作区</p><div className="mt-1 flex items-center gap-2"><span className="text-sm font-semibold text-slate-900">{GROUP_LABELS[path.split("/")[1]] || "运营总览"}</span><span className="text-slate-300">/</span><span className="text-sm text-slate-500">{title}</span></div></div><div className="lg:hidden"><Logo /></div></div><div className="flex items-center gap-2 sm:gap-4"><button type="button" onClick={() => { window.location.search = "mode=studio"; }} className="hidden rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:border-cyan-300 hover:text-cyan-700 sm:inline-flex">旧 Studio</button><div className="hidden h-7 w-px bg-slate-200 sm:block" /><div className="flex items-center gap-2"><div className="flex h-8 w-8 items-center justify-center rounded-full bg-cyan-100 text-xs font-bold text-cyan-700">{user.displayName.slice(0, 1)}</div><div className="hidden text-right sm:block"><p className="text-xs font-semibold text-slate-800">{user.displayName}</p><p className="text-[10px] text-slate-400">{roleLabel(user.role)}</p></div></div><button type="button" onClick={logout} title="退出登录" className="rounded-xl p-2 text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Icon name="logout" /></button></div></header><MobileNav user={user} path={path} navigate={navigate} /><main className="min-h-0 flex-1 overflow-auto">{!isKnown ? <ComingSoonPage title={title} /> : path === "/dashboard" || path === "/dashboard/todo" || path === "/report/interaction" ? <DashboardPage navigate={navigate} /> : path === "/lead" ? <LeadOperationsPage user={user} canWrite={eventCanWrite("lead:write")} canExport={canAccess(user.role, "lead:export")} canSensitive={canAccess(user.role, "lead:view_sensitive")} canFeedback={canAccess(user.role, "lead:feedback")} initialLeadId={leadId} initialExhibitionId={initialExhibitionId} onNavigate={navigate} /> : path === "/system/user" ? <UserManagementPage user={user} canWrite={eventCanWrite("system:user:write")} /> : path === "/system/role" ? <RoleManagementPage user={user} canWrite={eventCanWrite("system:role:write")} /> : path === "/system/audit" ? <AuditLogPage user={user} canWrite={false} canTrace={canAccess(user.role, "audit:trace")} onNavigate={navigate} /> : path === "/system/ops" ? <OpsMonitoringPage user={user} canWrite={false} canFailover={eventCanWrite("ops:failover")} /> : path === "/event/exhibition/detail" ? <ExhibitionDetailPage exhibitionId={exhibitionId} canWrite={eventCanWrite("event:exhibition:write")} onBack={() => navigate("/event/exhibition")} onNavigate={navigate} /> : path === "/event/exhibition" ? <ExhibitionPage canWrite={eventCanWrite("event:exhibition:write")} onOpenDetail={(id) => navigate(`/event/exhibition/detail?id=${encodeURIComponent(id)}`)} /> : path === "/event/exhibitor" ? <ExhibitorPage canWrite={eventCanWrite("event:exhibitor:write")} initialExhibitionId={initialExhibitionId} /> : path === "/event/exhibit" ? <ExhibitPage canWrite={eventCanWrite("event:exhibit")} initialExhibitionId={initialExhibitionId} /> : path === "/event/venue" ? <VenuePage canWrite={eventCanWrite("event:venue:write")} initialExhibitionId={initialExhibitionId} /> : path === "/event/point" ? <PointPage canWrite={eventCanWrite("event:point:write")} initialExhibitionId={initialExhibitionId} /> : path === "/event/route" ? <RoutePage canWrite={eventCanWrite("event:route:write")} initialExhibitionId={initialExhibitionId} /> : path === "/event/schedule" ? <SchedulePage canWrite={eventCanWrite("event:schedule:write")} initialExhibitionId={initialExhibitionId} /> : path === "/event/broadcast" ? <BroadcastPage canWrite={eventCanWrite("event:broadcast:write")} initialExhibitionId={initialExhibitionId} /> : path === "/asset/avatar" ? <EnhancedAvatarPage onDebug={(avatarId) => navigate(`/interact/test?avatarId=${encodeURIComponent(avatarId)}`)} /> : path === "/asset/gif" ? <EnhancedGifPage /> : path === "/asset/voice" ? <EnhancedVoicePage /> : path === "/asset/scene" ? <EnhancedScenePage /> : path === "/asset/idle" ? <EnhancedIdlePage /> : path === "/knowledge/document" ? <DocumentCenterPage /> : path === "/knowledge/base" ? <KnowledgeBasePage /> : path === "/knowledge/memory" ? <MemoryCenterPage /> : path === "/knowledge/qa" ? <EnhancedQaPage /> : path === "/knowledge/script" ? <EnhancedScriptPage /> : path === "/knowledge/package" ? <EnhancedPackagePage /> : path === "/interact/test" ? <RealtimeTestWorkspace /> : path === "/interact/welcome" ? <WelcomeConfigPage user={user} canWrite={eventCanWrite("interact:welcome:write")} initialExhibitionId={initialExhibitionId} /> : path === "/interact/explain" ? <ExplainFlowPage user={user} canWrite={eventCanWrite("interact:explain:write")} initialExhibitionId={initialExhibitionId} /> : path === "/interact/shopping" ? <ShoppingStrategyPage user={user} canWrite={eventCanWrite("interact:shopping:write")} initialExhibitionId={initialExhibitionId} /> : <ComingSoonPage title={title} />}</main></div></div>;
 }
 
 export function adminRoleCanWrite(user: AdminUser, permission: Parameters<typeof canUseButton>[1]): boolean { return canUseButton(user.role, permission); }

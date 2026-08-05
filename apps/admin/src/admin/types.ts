@@ -91,6 +91,20 @@ export type DashboardData = {
   todos: Array<{ id: string; type: string; title: string; owner: string; time: string; path: string }>;
 };
 
+export type OperationsReport = {
+  summary: {
+    exhibition_id: string;
+    interaction_count: number;
+    online_terminals: number;
+    pending_knowledge: number;
+    new_leads: number;
+    alerts: number;
+    todo: DashboardData["todos"];
+  };
+  series: Array<{ date: string; interactions: number; leads: number; misses: number }>;
+  dimensions: Record<string, Array<{ label: string; count: number }>>;
+};
+
 export type ReportFilters = { exhibitionId?: string; scene?: string; terminalId?: string; from?: string; to?: string };
 export type ReportBucket = { key: string; count: number; averageDurationMs?: number; totalDurationMs?: number };
 export type ReportOperations = {
@@ -386,6 +400,7 @@ export type Lead = {
   interestedExhibitorIds: string[];
   interestedExhibitIds: string[];
   qrToken: string;
+  materialToken?: string | null;
   createdAt: string;
   statusHistory: Array<{ status: LeadStatus; operator: string; time: string; note?: string }>;
 };

@@ -195,6 +195,18 @@ def _summary_from_dir(path: Path) -> AvatarSummary:
                 speaker_faces={str(key): str(value) for key, value in speaker_faces.items()},
                 default_voices={str(key): str(value) for key, value in default_voices.items()},
             )
+    metadata = m.metadata if isinstance(m.metadata, dict) else {}
+    waiting_gif = str(metadata.get("waiting_gif") or "source/waiting.gif")
+    speaking_gif = str(metadata.get("speaking_gif") or "source/speaking.gif")
+    waiting_path = (path / waiting_gif).resolve()
+    speaking_path = (path / speaking_gif).resolve()
+    try:
+        waiting_path.relative_to(path.resolve())
+        speaking_path.relative_to(path.resolve())
+    except ValueError:
+        waiting_path = speaking_path = Path("__missing__")
+    has_waiting_gif = waiting_path.is_file()
+    has_speaking_gif = speaking_path.is_file()
     return AvatarSummary(
         id=m.id,
         name=m.name,
@@ -207,6 +219,8 @@ def _summary_from_dir(path: Path) -> AvatarSummary:
         matting_status=_avatar_matting_status(path / 'manifest.json'),
         duo_dialog=duo_capability,
         client_renderer=_client_renderer_capability(path),
+        waiting_gif_url=f"/avatars/{m.id}/gifs/waiting" if has_waiting_gif else None,
+        speaking_gif_url=f"/avatars/{m.id}/gifs/speaking" if has_speaking_gif else None,
     )
 
 
@@ -266,6 +280,32 @@ async def _read_upload_image(upload: UploadFile) -> Image.Image:
     return image.convert("RGBA") if "A" in image.getbands() else image.convert("RGB")
 
 
+async def _read_upload_gif(upload: UploadFile) -> tuple[Image.Image, bytes, dict[str, int]]:
+    raw = await upload.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="empty gif")
+    if len(raw) > 20 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="gif too large (max 20MB)")
+    suffix = Path(upload.filename or "asset.gif").suffix.lower()
+    if suffix != ".gif" and upload.content_type != "image/gif":
+        raise HTTPException(status_code=400, detail="unsupported gif format")
+    try:
+        with Image.open(BytesIO(raw)) as image:
+            if str(image.format or "").upper() != "GIF":
+                raise ValueError("not gif")
+            width, height = image.size
+            frames = int(getattr(image, "n_frames", 1))
+            duration_ms = 0
+            for index in range(frames):
+                image.seek(index)
+                duration_ms += int(image.info.get("duration", 0) or 0)
+            image.seek(0)
+            preview = image.convert("RGBA")
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail="invalid gif") from exc
+    return preview, raw, {"width": int(width), "height": int(height), "frames": frames, "duration_ms": duration_ms}
+
+
 async def _read_upload_video(upload: UploadFile) -> tuple[Image.Image, bytes, str]:
     raw = await upload.read()
     if not raw:
@@ -294,7 +334,7 @@ async def _read_upload_video(upload: UploadFile) -> tuple[Image.Image, bytes, st
 
 def _normalize_custom_avatar_model(model: str | None, fallback: str) -> str:
     value = (model or "").strip().lower()
-    if value in {"fasterliveportrait", "flashhead", "flashtalk", "mock", "musetalk", "quicktalk", "wav2lip"}:
+    if value in {"fasterliveportrait", "flashhead", "flashtalk", "gif", "mock", "musetalk", "quicktalk", "wav2lip"}:
         return value
     return fallback
 
@@ -1048,6 +1088,31 @@ async def get_client_renderer(avatar_id: str, request: Request) -> dict[str, Any
     return context.config
 
 
+@router.get("/{avatar_id}/gifs/{state}")
+async def get_avatar_gif(avatar_id: str, state: str, request: Request) -> FileResponse:
+    if state not in {"waiting", "speaking"}:
+        raise HTTPException(status_code=404, detail="gif state not found")
+    root = _avatars_root(request)
+    avatar_dir = (root / avatar_id).resolve()
+    try:
+        avatar_dir.relative_to(root)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="invalid avatar_id") from exc
+    manifest_path = avatar_dir / "manifest.json"
+    if not manifest_path.is_file():
+        raise HTTPException(status_code=404, detail="avatar not found")
+    metadata = dict((_read_manifest(manifest_path).get("metadata") or {}))
+    relative_path = str(metadata.get(f"{state}_gif") or f"source/{state}.gif")
+    gif_path = (avatar_dir / relative_path).resolve()
+    try:
+        gif_path.relative_to(avatar_dir)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="invalid gif path") from exc
+    if not gif_path.is_file() or gif_path.suffix.lower() != ".gif":
+        raise HTTPException(status_code=404, detail="gif not found")
+    return FileResponse(gif_path, media_type="image/gif")
+
+
 @router.get("/{avatar_id}/client-assets/{asset_path:path}")
 async def get_client_asset(avatar_id: str, asset_path: str, request: Request) -> Response:
     raw_path = request.scope.get("raw_path", b"")
@@ -1085,6 +1150,8 @@ async def create_custom_avatar(
     remove_background: bool = Form(default=False),
     image: UploadFile | None = File(default=None),
     video: UploadFile | None = File(default=None),
+    waiting_gif: UploadFile | None = File(default=None),
+    speaking_gif: UploadFile | None = File(default=None),
 ) -> AvatarSummary:
     display_name = name.strip()
     if not display_name:
@@ -1101,11 +1168,22 @@ async def create_custom_avatar(
 
     avatar_id = _unique_avatar_id(root, display_name)
     target_dir = root / avatar_id
-    if (image is None and video is None) or (image is not None and video is not None):
+    gif_mode = (model or "").strip().lower() == "gif" or waiting_gif is not None or speaking_gif is not None
+    if gif_mode:
+        if waiting_gif is None or speaking_gif is None or image is not None or video is not None:
+            raise HTTPException(status_code=400, detail="gif avatar requires both waiting_gif and speaking_gif")
+    elif (image is None and video is None) or (image is not None and video is not None):
         raise HTTPException(status_code=400, detail="provide exactly one image or video")
     video_body: bytes | None = None
     video_suffix = ".mp4"
-    if video is not None:
+    waiting_gif_body: bytes | None = None
+    speaking_gif_body: bytes | None = None
+    waiting_gif_meta: dict[str, int] = {}
+    speaking_gif_meta: dict[str, int] = {}
+    if gif_mode:
+        image_rgb, waiting_gif_body, waiting_gif_meta = await _read_upload_gif(waiting_gif)  # type: ignore[arg-type]
+        _, speaking_gif_body, speaking_gif_meta = await _read_upload_gif(speaking_gif)  # type: ignore[arg-type]
+    elif video is not None:
         image_rgb, video_body, video_suffix = await _read_upload_video(video)
     elif image is not None:
         image_rgb = await _read_upload_image(image)
@@ -1152,7 +1230,25 @@ async def create_custom_avatar(
         fitted_image.save(target_dir / "preview.png", format="PNG")
         fitted_image.save(target_dir / "reference.png", format="PNG")
         fitted_image.save(source_dir / "source.png", format="PNG")
-        if video_body is not None:
+        if gif_mode and waiting_gif_body is not None and speaking_gif_body is not None:
+            (source_dir / "waiting.gif").write_bytes(waiting_gif_body)
+            (source_dir / "speaking.gif").write_bytes(speaking_gif_body)
+            raw = _read_manifest(target_dir / "manifest.json")
+            metadata = dict(raw.get("metadata") or {})
+            metadata.update(
+                {
+                    "idle_mode": "gif",
+                    "reference_mode": "gif",
+                    "waiting_gif": "source/waiting.gif",
+                    "speaking_gif": "source/speaking.gif",
+                    "waiting_gif_meta": waiting_gif_meta,
+                    "speaking_gif_meta": speaking_gif_meta,
+                }
+            )
+            raw["model_type"] = "gif"
+            raw["metadata"] = metadata
+            _write_manifest(target_dir / "manifest.json", raw)
+        elif video_body is not None:
             video_name = f"source_video{video_suffix}"
             (source_dir / video_name).write_bytes(video_body)
             raw = _read_manifest(target_dir / "manifest.json")
