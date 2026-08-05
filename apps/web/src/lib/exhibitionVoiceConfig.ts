@@ -42,6 +42,7 @@ export function normalizeExhibitionVoiceConfig(
       exhibition_content: cleanKeywords(
         raw.keywords?.exhibition_content ?? groups.exhibition_content ?? groups.exhibitionContent,
       ),
+      shopping: cleanKeywords(raw.keywords?.shopping ?? groups.shopping),
     },
     supports_deferred_speak: raw.supports_deferred_speak,
   };
@@ -61,5 +62,11 @@ export function matchVoiceIntent(text: string, config: ExhibitionVoiceConfig): V
     const normalizedKeyword = normalizeVoiceText(keyword);
     return normalizedKeyword.length > 0 && normalized.includes(normalizedKeyword);
   });
-  return { intent: "exhibition_content", keyword: matchedContent ?? null };
+  if (matchedContent) return { intent: "exhibition_content", keyword: matchedContent };
+
+  const matchedShopping = config.keywords.shopping.find((keyword) => {
+    const normalizedKeyword = normalizeVoiceText(keyword);
+    return normalizedKeyword.length > 0 && normalized.includes(normalizedKeyword);
+  });
+  return matchedShopping ? { intent: "shopping", keyword: matchedShopping } : { intent: "exhibition_content", keyword: null };
 }
