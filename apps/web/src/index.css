@@ -242,6 +242,10 @@ body {
 .digital-display-welcome-card-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 14px; color: rgba(204, 236, 255, .68); font-size: 9px; line-height: 1.5; }
 .digital-display-welcome-card-footer button { flex: 0 0 auto; border: 1px solid rgba(185, 237, 255, .4); border-radius: 999px; padding: 7px 10px; color: #073761; background: #b9edff; font-size: 9px; font-weight: 700; cursor: pointer; }
 .digital-display-welcome-card-footer button:disabled { cursor: default; opacity: .45; }
+.digital-display-welcome-multimodal-button { display: block; width: 100%; margin-top: 10px; border: 1px solid rgba(168, 235, 255, .38); border-radius: 999px; padding: 7px 10px; color: #dff7ff; background: rgba(21, 122, 190, .32); font-size: 9px; font-weight: 700; cursor: pointer; }
+.digital-display-welcome-multimodal-button:hover { border-color: rgba(185, 237, 255, .7); background: rgba(63, 186, 236, .42); }
+.digital-display-multimodal-trigger { flex: 0 0 auto; border: 1px solid rgba(168, 235, 255, .4); border-radius: 999px; padding: 4px 7px; color: #dff7ff; background: rgba(21, 122, 190, .3); font-size: 9px; cursor: pointer; }
+.digital-display-multimodal-trigger:hover { background: rgba(63, 186, 236, .48); }
 .digital-display-chat-line { display: flex; max-width: 88%; align-items: flex-start; gap: 8px; color: rgba(245, 253, 255, .92); font-size: 12px; line-height: 1.65; }
 .digital-display-chat-line.is-user { align-self: flex-start; }
 .digital-display-chat-line.is-assistant { align-self: flex-end; }
@@ -289,6 +293,36 @@ body {
 .digital-display-interaction-button:disabled, .digital-display-interaction-option:disabled { cursor: default; opacity: .38; }
 .digital-display-interaction-link { border: 0; padding: 0; color: #a8eaff; background: transparent; font-size: 10px; font-weight: 600; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
 .digital-display-interaction-link:hover { color: #fff; }
+.digital-display-multimodal-panel { position: absolute; inset: 7% 4% 5%; z-index: 45; display: flex; min-height: 0; flex-direction: column; overflow: hidden; border: 1px solid rgba(181, 232, 255, .42); border-radius: 18px; padding: 15px; color: #eafaff; background: rgba(2, 24, 67, .96); box-shadow: 0 24px 60px rgba(0, 9, 42, .45); }
+.digital-display-multimodal-panel > header { display: flex; flex: 0 0 auto; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.digital-display-multimodal-panel header small, .digital-display-multimodal-card small { color: #9feaff; font-size: 9px; letter-spacing: .14em; }
+.digital-display-multimodal-panel header h2 { margin: 4px 0 0; font-size: 20px; }
+.digital-display-multimodal-panel header p { margin: 4px 0 0; color: rgba(210, 239, 255, .7); font-size: 10px; }
+.digital-display-multimodal-panel > header button { border: 1px solid rgba(181, 232, 255, .35); border-radius: 999px; padding: 7px 11px; color: #dff7ff; background: rgba(255,255,255,.06); font-size: 10px; cursor: pointer; }
+.digital-display-multimodal-notice { flex: 0 0 auto; margin: 10px 0 0; border: 1px solid rgba(255, 218, 144, .3); border-radius: 8px; padding: 7px 9px; color: #ffeac0; background: rgba(117, 82, 23, .24); font-size: 10px; line-height: 1.5; }
+.digital-display-multimodal-content { display: grid; min-height: 0; flex: 1; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 10px; overflow-y: auto; margin-top: 10px; padding-right: 2px; }
+.digital-display-multimodal-card { min-width: 0; border: 1px solid rgba(168, 235, 255, .28); border-radius: 12px; padding: 11px; color: rgba(239, 251, 255, .94); background: rgba(3, 54, 112, .54); }
+.digital-display-multimodal-card.is-highlight { border-color: rgba(255, 214, 128, .38); background: rgba(117, 82, 23, .25); }
+.digital-display-multimodal-card-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.digital-display-multimodal-card-heading strong, .digital-display-multimodal-card h3 { display: block; margin-top: 3px; color: #f3fcff; font-size: 14px; }
+.digital-display-multimodal-card-heading > span { flex: 0 0 auto; color: #9feeff; font-size: 10px; }
+.digital-display-multimodal-map-card { grid-row: span 2; }
+.digital-display-multimodal-map { position: relative; min-height: 210px; margin-top: 9px; overflow: hidden; border: 1px solid rgba(181, 232, 255, .22); border-radius: 10px; background: linear-gradient(145deg, rgba(10, 78, 132, .76), rgba(2, 25, 68, .92)); }
+.digital-display-multimodal-grid { position: absolute; inset: 0; opacity: .25; background-image: linear-gradient(rgba(181,232,255,.3) 1px, transparent 1px), linear-gradient(90deg, rgba(181,232,255,.3) 1px, transparent 1px); background-size: 25px 25px; }
+.digital-display-multimodal-map svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.digital-display-multimodal-map polyline { fill: none; stroke: #6ce4ff; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; filter: drop-shadow(0 0 4px rgba(108,228,255,.8)); }
+.digital-display-multimodal-marker { position: absolute; display: grid; width: 24px; height: 24px; transform: translate(-50%, -50%); place-items: center; border: 2px solid #eafaff; border-radius: 50%; color: #063964; background: #b9edff; font-size: 9px; font-weight: 700; box-shadow: 0 0 0 4px rgba(108,228,255,.18); }
+.digital-display-multimodal-marker.is-start { background: #f3d28c; }.digital-display-multimodal-marker.is-destination { background: #ff9aaa; color: #59172a; }
+.digital-display-multimodal-marker b { position: absolute; top: 27px; width: max-content; max-width: 80px; border-radius: 6px; padding: 3px 5px; color: #effbff; background: rgba(1, 26, 65, .82); font-size: 8px; font-weight: 500; }
+.digital-display-multimodal-copy { margin: 9px 0 0; color: rgba(210, 239, 255, .74); font-size: 10px; line-height: 1.55; }
+.digital-display-multimodal-list { display: grid; gap: 7px; margin-top: 9px; }
+.digital-display-multimodal-list-item { display: flex; gap: 8px; border: 1px solid rgba(181,232,255,.18); border-radius: 8px; padding: 8px; background: rgba(3,39,91,.45); }
+.digital-display-multimodal-list-item > i { display: grid; width: 20px; height: 20px; flex: 0 0 auto; place-items: center; border-radius: 50%; color: #063964; background: #b9edff; font-size: 9px; font-style: normal; font-weight: 700; }
+.digital-display-multimodal-list-item strong { color: #f3fcff; font-size: 11px; }.digital-display-multimodal-list-item span { float: right; margin-left: 5px; color: #9feeff; font-size: 9px; }.digital-display-multimodal-list-item p { margin: 4px 0 0; color: rgba(210,239,255,.68); font-size: 9px; line-height: 1.45; }
+.digital-display-multimodal-card dl { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 9px 0 0; }.digital-display-multimodal-card dl div { border-radius: 7px; padding: 7px; background: rgba(255,255,255,.08); }.digital-display-multimodal-card dt { color: rgba(210,239,255,.64); font-size: 9px; }.digital-display-multimodal-card dd { margin: 3px 0 0; color: #fff; font-size: 10px; font-weight: 700; }
+.digital-display-multimodal-qr { display: grid; grid-template-columns: 66px 1fr; gap: 9px; }.digital-display-multimodal-qr-image { display: grid; width: 66px; height: 66px; place-items: center; border-radius: 8px; padding: 6px; color: #758aa4; background: #f2f5f8; font-size: 9px; text-align: center; }.digital-display-multimodal-qr-image img { width: 100%; height: 100%; object-fit: contain; }.digital-display-multimodal-qr h3 { margin-top: 2px; }.digital-display-multimodal-qr em { display: inline-block; margin-top: 5px; border-radius: 999px; padding: 3px 6px; color: #ffe7b0; background: rgba(117,82,23,.34); font-size: 8px; font-style: normal; }.digital-display-multimodal-qr p { grid-column: 1 / -1; margin: 0; color: rgba(210,239,255,.68); font-size: 9px; line-height: 1.45; }
+.digital-display-multimodal-empty { display: grid; min-height: 120px; flex: 1; margin-top: 10px; place-items: center; border: 1px dashed rgba(181,232,255,.25); border-radius: 12px; color: rgba(210,239,255,.7); font-size: 11px; }
+.digital-display-multimodal-actions { flex: 0 0 auto; margin-top: 10px; border-top: 1px solid rgba(181,232,255,.18); padding-top: 8px; }.digital-display-multimodal-actions summary { cursor: pointer; color: rgba(210,239,255,.76); font-size: 10px; }.digital-display-multimodal-actions > div { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 7px; }.digital-display-multimodal-actions button { min-height: 30px; border: 1px solid rgba(181,232,255,.25); border-radius: 7px; color: #dff7ff; background: rgba(255,255,255,.05); font-size: 9px; cursor: pointer; }.digital-display-multimodal-actions button:disabled { cursor: default; opacity: .35; }
 
 @media (max-width: 760px) {
   .digital-display-shell { height: 100dvh; min-height: 580px; }

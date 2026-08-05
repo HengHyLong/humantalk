@@ -8,6 +8,7 @@ type WelcomeOverviewCardProps = {
   phase: WelcomePhase;
   replayDisabled?: boolean;
   onReplay?: () => void;
+  onOpenMultimodalPreview?: () => void;
 };
 
 function phaseHint(phase: WelcomePhase): string {
@@ -29,6 +30,7 @@ export function WelcomeOverviewCard({
   phase,
   replayDisabled = false,
   onReplay,
+  onOpenMultimodalPreview,
 }: WelcomeOverviewCardProps) {
   return (
     <article className="digital-display-welcome-card" aria-label="展会概览">
@@ -51,6 +53,11 @@ export function WelcomeOverviewCard({
           </button>
         ) : null}
       </div>
+      {onOpenMultimodalPreview ? (
+        <button type="button" className="digital-display-welcome-multimodal-button" onClick={onOpenMultimodalPreview}>
+          F02 多模态联动预览
+        </button>
+      ) : null}
     </article>
   );
 }

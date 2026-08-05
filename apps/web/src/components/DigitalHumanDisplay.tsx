@@ -18,8 +18,11 @@ import type { NavigationStep } from "../lib/navigationPresentation";
 import { createInputCaptureEvent, type InputCaptureEvent } from "../lib/inputCapture";
 import { createLiveInteractionAdapter, createInteractionPreviewAdapter } from "../lib/interactionAdapter";
 import { useInteractionController } from "../lib/useInteractionController";
+import { F02_DEVELOPMENT_PREVIEW, F02_UPDATED_PREVIEW_CARD } from "../lib/multimodalPreview";
+import { useMultimodalController } from "../lib/useMultimodalController";
 import { ChatInput } from "./ChatInput";
 import { InteractionControlPanel } from "./InteractionControlPanel";
+import { MultimodalPanel } from "./MultimodalPanel";
 import { NavigationGuideCard } from "./NavigationGuideCard";
 import { SceneStage } from "./SceneStage";
 import { WelcomeOverviewCard } from "./WelcomeOverviewCard";
@@ -112,6 +115,7 @@ export function DigitalHumanDisplay({
   const [draft, setDraft] = useState("");
   const [inputMode, setInputMode] = useState<"voice" | "keyboard">("voice");
   const [interactionPreviewOpen, setInteractionPreviewOpen] = useState(false);
+  const [multimodalPreviewOpen, setMultimodalPreviewOpen] = useState(false);
   const live = connection === "live" || connection === "expiring";
   const busy = connection === "connecting" || connection === "queued";
   const phaseLabel = conversationPhaseLabel(conversationPhase);
@@ -129,6 +133,7 @@ export function DigitalHumanDisplay({
   const previewInteractionAdapter = useMemo(createInteractionPreviewAdapter, []);
   const liveInteraction = useInteractionController(liveInteractionAdapter);
   const previewInteraction = useInteractionController(previewInteractionAdapter);
+  const multimodal = useMultimodalController();
 
   useEffect(() => {
     if (isSpeaking) {
@@ -161,6 +166,46 @@ export function DigitalHumanDisplay({
     emitTouch("interaction_preview_close");
   };
 
+  const openMultimodalPreview = () => {
+    multimodal.reset();
+    multimodal.publishMany(F02_DEVELOPMENT_PREVIEW);
+    setMultimodalPreviewOpen(true);
+    emitTouch("multimodal_preview_open");
+  };
+
+  const closeMultimodalPreview = () => {
+    multimodal.reset();
+    setMultimodalPreviewOpen(false);
+    emitTouch("multimodal_preview_close");
+  };
+
+  const updateMultimodalPreview = () => {
+    multimodal.publish("detail", F02_UPDATED_PREVIEW_CARD);
+    emitTouch("multimodal_revision_update");
+  };
+
+  const toggleMultimodalSupporting = () => {
+    const slot = multimodal.view.slots.find((item) => item.slotKey === "supporting");
+    const contentKey = slot?.presentation?.contentKey;
+    if (!contentKey) return;
+    if (slot.status === "hidden") multimodal.show("supporting", contentKey);
+    else if (slot.status === "visible") multimodal.hide("supporting", contentKey);
+  };
+
+  const degradeMultimodalQr = () => {
+    const slot = multimodal.view.slots.find((item) => item.slotKey === "action");
+    const contentKey = slot?.presentation?.contentKey;
+    if (contentKey) multimodal.degrade("action", contentKey);
+    emitTouch("multimodal_degrade", contentKey);
+  };
+
+  const clearMultimodal = () => {
+    for (const slot of multimodal.view.slots) {
+      if (slot.status !== "empty") multimodal.clear(slot.slotKey);
+    }
+    emitTouch("multimodal_clear");
+  };
+
   const submit = () => {
     const text = draft.trim();
     if (!text || !live) return;
@@ -188,6 +233,17 @@ export function DigitalHumanDisplay({
           <div className="digital-display-orbit digital-display-orbit-one" aria-hidden />
           <div className="digital-display-orbit digital-display-orbit-two" aria-hidden />
 
+          {multimodalPreviewOpen ? (
+            <MultimodalPanel
+              view={multimodal.view}
+              onUpdatePreview={updateMultimodalPreview}
+              onToggleSupporting={toggleMultimodalSupporting}
+              onClear={clearMultimodal}
+              onDegrade={degradeMultimodalQr}
+              onClose={closeMultimodalPreview}
+            />
+          ) : null}
+
           <aside className="digital-display-languages" aria-label="语言选择">
             {languages.map((language) => (
               <button
@@ -212,6 +268,9 @@ export function DigitalHumanDisplay({
                 {isSpeaking ? " · 正在播报" : ""}
               </span>
               <span className="digital-display-chat-state">{phaseLabel}</span>
+              <button type="button" className="digital-display-multimodal-trigger" onClick={openMultimodalPreview}>
+                F02 联动
+              </button>
             </div>
             <div className="digital-display-chat-feed" aria-live="polite">
               {exhibitionConfigNotice ? (
@@ -235,6 +294,7 @@ export function DigitalHumanDisplay({
                     emitTouch("welcome_replay");
                     onReplayWelcome();
                   } : undefined}
+                  onOpenMultimodalPreview={openMultimodalPreview}
                 />
               ) : null}
               {visibleMessages.map((message) => (
