@@ -148,12 +148,30 @@ if [[ -n "$web_host" ]]; then
   web_args+=(--host "$web_host")
 fi
 
+start_admin() {
+  local admin_dir="$script_dir/../apps/admin"
+  local admin_host="${web_host:-${OPENTALKING_WEB_HOST:-0.0.0.0}}"
+  local admin_port="${OPENTALKING_ADMIN_PORT:-5174}"
+  local admin_backend_port="${api_port:-${VITE_BACKEND_PORT:-${OPENTALKING_API_PORT:-${OPENTALKING_UNIFIED_PORT:-8000}}}}"
+
+  echo "Starting OpenTalking admin"
+  echo "  admin: $admin_dir"
+  echo "  url:   http://127.0.0.1:$admin_port"
+  (
+    cd "$admin_dir"
+    export VITE_BACKEND_PORT="$admin_backend_port"
+    npm run dev -- --host "$admin_host" --port "$admin_port"
+  ) &
+}
+
 if [[ "$backend" == "mock" ]]; then
   bash "$quickstart_dir/start_opentalking.sh" --mock "${start_args[@]}"
   bash "$quickstart_dir/start_frontend.sh" "${web_args[@]}"
+  start_admin
   echo ""
   echo "Open the app:"
   echo "  http://127.0.0.1:${web_port:-${OPENTALKING_WEB_PORT:-5173}}"
+  echo "  Admin: http://127.0.0.1:${OPENTALKING_ADMIN_PORT:-5174}"
   echo ""
   echo "Select mock / driverless mode to test without a real driver model."
   exit 0
@@ -216,10 +234,12 @@ fi
 
 bash "$quickstart_dir/start_opentalking.sh" "${start_args[@]}"
 bash "$quickstart_dir/start_frontend.sh" "${web_args[@]}"
+start_admin
 
 echo ""
 echo "Open the app:"
 echo "  http://127.0.0.1:${web_port:-${OPENTALKING_WEB_PORT:-5173}}"
+echo "  Admin: http://127.0.0.1:${OPENTALKING_ADMIN_PORT:-5174}"
 echo ""
 echo "Default model: $model"
 echo "Backend override: $model_env_name=$backend"
