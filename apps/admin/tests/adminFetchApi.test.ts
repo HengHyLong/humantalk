@@ -115,13 +115,19 @@ test("real Admin event operations map list, create, update, lifecycle and activa
     const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined;
     const call = { url: String(input), method: init?.method ?? "GET", body };
     calls.push(call);
-    if (call.url.endsWith("/admin/event/exhibitions") && call.method === "GET") return Response.json({ items: [{ id: "event-1" }], total: 1, page: 1, page_size: 9 });
+    if (call.url.endsWith("/admin/event/exhibitions?page=1&page_size=9") && call.method === "GET") return Response.json({ items: [{ id: "event-1" }], total: 1, page: 1, page_size: 9 });
     if (call.method === "DELETE") return new Response(null, { status: 204 });
     return Response.json({ ...body, id: call.url.includes("routes") ? "route-created" : call.url.includes("broadcast") ? "broadcast-1" : "event-1" });
   };
 
   const api = new FetchAdminApiClient();
   assert.equal((await api.listExhibitions())[0].id, "event-1");
+  await Promise.all([api.listExhibitors(), api.listExhibits(), api.listVenues(), api.listPoints(), api.listRoutes(), api.listSchedules(), api.listBroadcasts()]);
+  assert.deepEqual(
+    calls.slice(0, 8).map(({ url }) => new URL(url).pathname + new URL(url).search),
+    ["exhibitions", "exhibitors", "exhibits", "venues", "points", "routes", "schedules", "broadcasts"]
+      .map((resource) => `/api/v1/admin/event/${resource}?page=1&page_size=9`),
+  );
 
   const exhibition = { id: "new-event", name: "测试展会", code: "TEST", mainVenueId: null, hostUnit: "主办", organizerUnit: "承办", coOrganizerUnits: "", startDate: "2026-09-01", endDate: "2026-09-03", status: "preparing", description: "", boundAvatarId: null, boundModel: "QuickTalk", boundVoiceId: null, boundVoiceProvider: null, boundVoiceModel: null, boundSttProvider: null, boundSttModel: null, boundScene: null, knowledgeBaseIds: [], lifecycleHistory: [], createdAt: "", updatedAt: "" } satisfies Exhibition;
   await api.saveExhibition(exhibition);
@@ -146,7 +152,7 @@ test("real Admin event operations map list, create, update, lifecycle and activa
 
   const broadcast = { id: "broadcast-1", exhibitionId: "event-1", title: "安全提示", content: "请有序参观", priority: "high", targetTerminals: "全部终端", effectiveAt: "2026-09-01 08:00", status: "draft", createdAt: "", updatedAt: "" } satisfies EmergencyBroadcast;
   await api.transitionBroadcast(broadcast.id, "active");
-  assert.equal(calls.at(-1)?.url.endsWith("/admin/event/emergency-broadcasts/broadcast-1/activate"), true);
+  assert.equal(calls.at(-1)?.url.endsWith("/admin/event/broadcasts/broadcast-1/activate"), true);
   await api.deleteBroadcast(broadcast.id);
   assert.equal(calls.at(-1)?.method, "DELETE");
 });

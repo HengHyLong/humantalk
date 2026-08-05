@@ -714,6 +714,10 @@ export class FetchAdminApiClient extends MockAdminApiClient {
     return Array.isArray(payload) ? payload : payload.items;
   }
 
+  private requestEventList<T>(resource: "exhibitions" | "exhibitors" | "exhibits" | "venues" | "points" | "routes" | "schedules" | "broadcasts"): Promise<T[]> {
+    return this.requestList<T>(withQuery(`/admin/event/${resource}`, { page: "1", page_size: "9" }));
+  }
+
   private async requestText(path: string, retryAuth = true): Promise<string> {
     const token = window.localStorage.getItem(AUTH_TOKEN_KEY);
     const response = await fetch(buildAdminFetchUrl(`/v1${path}`), { headers: token ? { Authorization: `Bearer ${token}` } : {} });
@@ -735,7 +739,7 @@ export class FetchAdminApiClient extends MockAdminApiClient {
     });
   }
 
-  override async listExhibitions() { return this.requestList<Exhibition>("/admin/event/exhibitions"); }
+  override async listExhibitions() { return this.requestEventList<Exhibition>("exhibitions"); }
   override async saveExhibition(item: Exhibition) { return this.saveResource(item, "/admin/event/exhibitions"); }
   override async saveExhibitionRuntimeConfig(item: Exhibition) {
     return this.request<Exhibition>(`/admin/event/exhibitions/${encodeURIComponent(item.id)}/runtime-config`, {
@@ -756,39 +760,39 @@ export class FetchAdminApiClient extends MockAdminApiClient {
   override async deleteExhibition(id: string) { await this.request(`/admin/event/exhibitions/${encodeURIComponent(id)}`, { method: "DELETE" }); }
   override async transitionExhibition(id: string, status: ExhibitionStatus) { return this.request<Exhibition>(`/admin/event/exhibitions/${encodeURIComponent(id)}/lifecycle`, { method: "POST", body: JSON.stringify({ status }) }); }
 
-  override async listVenues() { return this.requestList<EventVenue>("/admin/event/venues"); }
+  override async listVenues() { return this.requestEventList<EventVenue>("venues"); }
   override async saveVenue(item: EventVenue) { return this.saveResource(item, "/admin/event/venues", `/admin/event/exhibitions/${encodeURIComponent(item.exhibitionId)}/venues`); }
   override async deleteVenue(id: string) { await this.request(`/admin/event/venues/${encodeURIComponent(id)}`, { method: "DELETE" }); }
 
-  override async listPoints() { return this.requestList<EventPoint>("/admin/event/points"); }
+  override async listPoints() { return this.requestEventList<EventPoint>("points"); }
   override async savePoint(item: EventPoint) { return this.saveResource(item, "/admin/event/points", `/admin/event/venues/${encodeURIComponent(item.venueId)}/points`); }
   override async deletePoint(id: string) { await this.request(`/admin/event/points/${encodeURIComponent(id)}`, { method: "DELETE" }); }
 
-  override async listRoutes() { return this.requestList<ExhibitionRoute>("/admin/event/routes"); }
+  override async listRoutes() { return this.requestEventList<ExhibitionRoute>("routes"); }
   override async saveRoute(item: ExhibitionRoute) { return this.saveResource(item, "/admin/event/routes", `/admin/event/venues/${encodeURIComponent(item.venueId)}/routes`); }
   override async deleteRoute(id: string) { await this.request(`/admin/event/routes/${encodeURIComponent(id)}`, { method: "DELETE" }); }
   override async uploadRouteImage(id: string, file: File) { const body = new FormData(); body.append("file", file); return this.request<{ url: string }>(`/admin/event/routes/${encodeURIComponent(id)}/image`, { method: "POST", body }); }
 
-  override async listExhibitors() { return this.requestList<Exhibitor>("/admin/event/exhibitors"); }
+  override async listExhibitors() { return this.requestEventList<Exhibitor>("exhibitors"); }
   override async saveExhibitor(item: Exhibitor) { return this.saveResource(item, "/admin/event/exhibitors", `/admin/event/exhibitions/${encodeURIComponent(item.exhibitionId)}/exhibitors`); }
   override async deleteExhibitor(id: string) { await this.request(`/admin/event/exhibitors/${encodeURIComponent(id)}`, { method: "DELETE" }); }
 
-  override async listExhibits() { return this.requestList<Exhibit>("/admin/event/exhibits"); }
+  override async listExhibits() { return this.requestEventList<Exhibit>("exhibits"); }
   override async saveExhibit(item: Exhibit) { return this.saveResource(item, "/admin/event/exhibits", `/admin/event/exhibitions/${encodeURIComponent(item.exhibitionId)}/exhibits`); }
   override async deleteExhibit(id: string) { await this.request(`/admin/event/exhibits/${encodeURIComponent(id)}`, { method: "DELETE" }); }
   override async uploadExhibitImage(id: string, file: File) { const body = new FormData(); body.append("file", file); return this.request<{ url: string }>(`/admin/event/exhibits/${encodeURIComponent(id)}/images`, { method: "POST", body }); }
 
-  override async listSchedules() { return this.requestList<EventSchedule>("/admin/event/schedules"); }
+  override async listSchedules() { return this.requestEventList<EventSchedule>("schedules"); }
   override async saveSchedule(item: EventSchedule) { return this.saveResource(item, "/admin/event/schedules", `/admin/event/exhibitions/${encodeURIComponent(item.exhibitionId)}/schedules`); }
   override async deleteSchedule(id: string) { await this.request(`/admin/event/schedules/${encodeURIComponent(id)}`, { method: "DELETE" }); }
 
-  override async listBroadcasts() { return this.requestList<EmergencyBroadcast>("/admin/event/emergency-broadcasts"); }
-  override async saveBroadcast(item: EmergencyBroadcast) { return this.saveResource(item, "/admin/event/emergency-broadcasts", `/admin/event/exhibitions/${encodeURIComponent(item.exhibitionId)}/emergency-broadcasts`); }
+  override async listBroadcasts() { return this.requestEventList<EmergencyBroadcast>("broadcasts"); }
+  override async saveBroadcast(item: EmergencyBroadcast) { return this.saveResource(item, "/admin/event/broadcasts"); }
   override async transitionBroadcast(id: string, status: EmergencyBroadcast["status"]) {
     const action = status === "active" ? "activate" : status === "ended" ? "end" : "transition";
-    return this.request<EmergencyBroadcast>(`/admin/event/emergency-broadcasts/${encodeURIComponent(id)}/${action}`, { method: "POST", body: action === "transition" ? JSON.stringify({ status }) : undefined });
+    return this.request<EmergencyBroadcast>(`/admin/event/broadcasts/${encodeURIComponent(id)}/${action}`, { method: "POST", body: action === "transition" ? JSON.stringify({ status }) : undefined });
   }
-  override async deleteBroadcast(id: string) { await this.request(`/admin/event/emergency-broadcasts/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+  override async deleteBroadcast(id: string) { await this.request(`/admin/event/broadcasts/${encodeURIComponent(id)}`, { method: "DELETE" }); }
 
   override async listAdminUsers(filters?: { keyword?: string; status?: AdminUserRecord["status"] }) {
     return this.requestList<AdminUserRecord>(withQuery("/admin/rbac/user", filters));
