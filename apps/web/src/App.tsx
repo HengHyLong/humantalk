@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { AvatarSelectionStage, type AgentConfig } from "./components/AvatarSelectionStage";
 import { BailianVoiceClone } from "./components/BailianVoiceClone";
 import { ChatInput } from "./components/ChatInput";
@@ -73,6 +73,10 @@ import {
 } from "./lib/ttsPreview";
 import type { VoiceCloneApplication } from "./lib/voiceCloneApply";
 import { startPlayback } from "./lib/webrtc";
+import {
+  conversationStateReducer,
+  createInitialConversationState,
+} from "./lib/sessionStateMachine";
 import {
   DEFAULT_EDGE_VOICE_ID,
   EDGE_VOICE_STORAGE_KEY,
@@ -909,6 +913,10 @@ export default function App() {
   /** 首帧已进入 WebRTC 后再叠字幕（与口型对齐）；旧版 Worker 无 speech.media_started 时用定时回退 */
   const subtitleMediaReadyRef = useRef(false);
   const subtitleFallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reconnectAttemptRef = useRef(0);
+  const reconnectTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
+  const reconnectSessionIdRef = useRef<string | null>(null);
+  const scheduleReconnectRef = useRef<() => void>(() => {});
 
   // Data
   const [avatars, setAvatars] = useState<AvatarSummary[]>([]);
@@ -945,6 +953,11 @@ export default function App() {
 
   // Connection
   const [connection, setConnection] = useState<ConnectionStatus>("idle");
+  const [conversationState, dispatchConversation] = useReducer(
+    conversationStateReducer,
+    undefined,
+    createInitialConversationState,
+  );
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
   const [queueInfo, setQueueInfo] = useState<QueueInfo | null>(null);
@@ -1917,6 +1930,73 @@ export default function App() {
     setRemoteStream(null);
   }, []);
 
+  const clearReconnectTimer = useCallback(() => {
+    if (reconnectTimerRef.current !== null) {
+      window.clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+  }, []);
+
+  const attemptPlaybackReconnect = useCallback(async () => {
+    const sid = reconnectSessionIdRef.current ?? sessionIdRef.current;
+    const video = videoRef.current;
+    if (!sid || !video) {
+      dispatchConversation({ type: "failed", message: "无法恢复当前会话" });
+      setConnection("error");
+      return;
+    }
+    try {
+      closePeerConnection();
+      const playback = await startPlayback(sid, video, {
+        onRemoteStream: (stream) => {
+          remoteStreamRef.current = stream;
+          setRemoteStream(stream);
+        },
+        onConnectionStateChange: (state) => {
+          if (state === "failed" || state === "disconnected") {
+            scheduleReconnectRef.current();
+          }
+        },
+      });
+      if (sessionIdRef.current !== sid) return;
+      pcRef.current = playback.pc;
+      remoteStreamRef.current = playback.remoteStream;
+      setRemoteStream(playback.remoteStream);
+      video.muted = false;
+      reconnectAttemptRef.current = 0;
+      reconnectSessionIdRef.current = sid;
+      setConnection("live");
+      dispatchConversation({ type: "reconnected", sessionId: sid });
+    } catch (error) {
+      console.warn("Failed to reconnect WebRTC playback", error);
+      if (sessionIdRef.current === sid) {
+        scheduleReconnectRef.current();
+      }
+    }
+  }, [closePeerConnection]);
+
+  const scheduleReconnect = useCallback(() => {
+    const sid = sessionIdRef.current;
+    if (!sid || reconnectTimerRef.current !== null) return;
+    const nextAttempt = reconnectAttemptRef.current + 1;
+    if (nextAttempt > 3) {
+      dispatchConversation({ type: "failed", code: "WEBRTC_RECONNECT_EXHAUSTED", message: "视频通道重连失败" });
+      setConnection("error");
+      return;
+    }
+    reconnectSessionIdRef.current = sid;
+    reconnectAttemptRef.current = nextAttempt;
+    dispatchConversation({ type: "transport_lost", message: "视频通道暂时中断" });
+    dispatchConversation({ type: "reconnect_requested", attempt: nextAttempt });
+    setConnection("connecting");
+    const delay = [0, 1000, 3000][nextAttempt - 1] ?? 3000;
+    reconnectTimerRef.current = window.setTimeout(() => {
+      reconnectTimerRef.current = null;
+      void attemptPlaybackReconnect();
+    }, delay);
+  }, [attemptPlaybackReconnect]);
+  scheduleReconnectRef.current = scheduleReconnect;
+
   const releaseSession = useCallback(async (sid: string, keepalive = false) => {
     try {
       await apiDelete(`/sessions/${sid}`, { keepalive });
@@ -1927,6 +2007,9 @@ export default function App() {
 
   const resetLiveState = useCallback(
     (clearMessages = false) => {
+      clearReconnectTimer();
+      reconnectAttemptRef.current = 0;
+      reconnectSessionIdRef.current = null;
       closePeerConnection();
       setSessionId(null);
       setActiveAsrProvider("");
@@ -1935,12 +2018,13 @@ export default function App() {
       setNavigationResult(null);
       setLastVoiceIntent(null);
       slotAcquiredRef.current = null;
+      dispatchConversation({ type: "reset" });
       clearSubtitleState();
       if (clearMessages) {
         setMessages([]);
       }
     },
-    [clearSubtitleState, closePeerConnection],
+    [clearReconnectTimer, clearSubtitleState, closePeerConnection],
   );
 
   const prewarmKey = useCallback((targetAvatarId: string, targetModel: string) => {
@@ -2070,6 +2154,7 @@ export default function App() {
         }
       } catch {
         setConnection("error");
+        dispatchConversation({ type: "failed", message: "运行时服务不可用" });
       }
     })();
   }, [loadVoices, syncRuntimeConfigSelection]);
@@ -2096,6 +2181,7 @@ export default function App() {
           slotAcquiredRef.current = null;
           setConnection("error");
           setQueueInfo({ position, message });
+          dispatchConversation({ type: "failed", message });
         }
       }
       if (ev === "session.expiring" && data && typeof data === "object") {
@@ -2117,6 +2203,10 @@ export default function App() {
       if (ev === "session.expired") {
         // Server force-closed the session, reset to idle
         setConnection("idle");
+        dispatchConversation({ type: "session_expired" });
+        clearReconnectTimer();
+        reconnectAttemptRef.current = 0;
+        reconnectSessionIdRef.current = null;
         setExpiringCountdown(null);
         setSessionId(null);
         setActiveAsrProvider("");
@@ -2131,10 +2221,12 @@ export default function App() {
       if (ev === "error") {
         const d = data && typeof data === "object" ? (data as { message?: string; code?: string }) : {};
         const detail = d.message || d.code || "语音合成失败，请切换可用音色后重试。";
+        dispatchConversation({ type: "failed", code: d.code, message: detail });
         appendAssistantError(detail);
         notify(`对话失败：${detail}`, "error");
       }
       if (ev === "speech.started") {
+        dispatchConversation({ type: "assistant_started" });
         const staleId = streamingAssistantMsgIdRef.current;
         const pendingId = pendingAssistantMsgIdRef.current;
         clearSubtitleState();
@@ -2170,6 +2262,7 @@ export default function App() {
         }
       }
       if (ev === "speech.ended") {
+        dispatchConversation({ type: "assistant_finished" });
         const d = data && typeof data === "object" ? (data as { text?: string }) : {};
         const fromEvent = typeof d.text === "string" ? d.text.trim() : "";
         const streamed = subtitleAccRef.current.trim();
@@ -2203,7 +2296,7 @@ export default function App() {
       }
     });
     return stop;
-  }, [appendAssistantError, clearSubtitleFallbackTimer, clearSubtitleState, flushSubtitleDisplay, flushSubtitleMessage, notify, sessionId]);
+  }, [appendAssistantError, clearReconnectTimer, clearSubtitleFallbackTimer, clearSubtitleState, flushSubtitleDisplay, flushSubtitleMessage, notify, sessionId]);
 
   // Resolves when FlashTalk slot is acquired (session.queued position=0)
   const slotAcquiredRef = useRef<(() => void) | null>(null);
@@ -2262,6 +2355,7 @@ export default function App() {
     setActiveAsrProvider(lockedAsrProvider);
     setAsrModel(sttModelForProvider(lockedAsrProvider));
     setConnection("connecting");
+    dispatchConversation({ type: "start_requested" });
     setQueueInfo(null);
     let createdSessionId: string | null = null;
     try {
@@ -2295,6 +2389,7 @@ export default function App() {
         knowledge_base_ids: knowledgeBaseIds,
       } satisfies CreateSessionRequest);
       createdSessionId = created.session_id;
+      dispatchConversation({ type: "session_created", sessionId: created.session_id });
       setSessionId(created.session_id);
       if (model === "fasterliveportrait") {
         setFasterliveportraitAppliedConfig(fasterliveportraitConfig);
@@ -2334,6 +2429,11 @@ export default function App() {
           remoteStreamRef.current = remoteStream;
           setRemoteStream(remoteStream);
         },
+        onConnectionStateChange: (state) => {
+          if (state === "failed" || state === "disconnected") {
+            scheduleReconnectRef.current();
+          }
+        },
       });
       pcRef.current = playback.pc;
       remoteStreamRef.current = playback.remoteStream;
@@ -2341,6 +2441,7 @@ export default function App() {
       setActiveAsrProvider(lockedAsrProvider);
       videoRef.current!.muted = false;
       setConnection("live");
+      dispatchConversation({ type: "transport_connected", sessionId: created.session_id });
       await apiPost(`/sessions/${created.session_id}/start`, {});
       notify("会话已连接，可以开始文本、语音或音频驱动。", "success");
     } catch (error) {
@@ -2350,6 +2451,10 @@ export default function App() {
       resetLiveState();
       console.warn("Failed to start session", error);
       setConnection("error");
+      dispatchConversation({
+        type: "failed",
+        message: error instanceof Error ? error.message : "会话启动失败",
+      });
       const detail = error instanceof ApiError ? error.detail : null;
       const msg = detail
         ? `启动会话失败：${detail}`
@@ -2587,6 +2692,7 @@ export default function App() {
   const routeRecognizedText = useCallback(async (rawText: string) => {
     const text = rawText.trim();
     if (!text || !sessionId) return;
+    dispatchConversation({ type: "input_submitted" });
     const match = matchVoiceIntent(
       text,
       exhibitionVoiceConfig ?? {
@@ -2636,6 +2742,7 @@ export default function App() {
 
   /** 流式 STT 成功后：defer_speak 模式交给意图路由，否则后端已自动入队。 */
   const handleSpeakAudioStreamResult = useCallback(({ text }: { text: string }) => {
+    dispatchConversation({ type: "input_submitted" });
     if (exhibitionVoiceConfig?.supports_deferred_speak === true) {
       void routeRecognizedText(text);
       return;
@@ -2655,6 +2762,7 @@ export default function App() {
   const handleSpeakAudio = useCallback(
     async (blob: Blob) => {
       if (!sessionId) return;
+      dispatchConversation({ type: "input_submitted" });
       speakAudioAbortRef.current?.abort();
       const ac = new AbortController();
       speakAudioAbortRef.current = ac;
@@ -2700,6 +2808,7 @@ export default function App() {
   const handleInterrupt = useCallback(() => {
     speakAudioAbortRef.current?.abort();
     if (!sessionId) return;
+    dispatchConversation({ type: "assistant_interrupted" });
     void apiPost(`/sessions/${sessionId}/interrupt`, {}).catch(() => {});
   }, [sessionId]);
 
@@ -3134,6 +3243,7 @@ export default function App() {
           avatarMaskUrl={selectedAvatarMaskUrl}
           clientRenderer={model === "mock" ? currentAvatar?.client_renderer ?? null : null}
           connection={connection}
+          conversationPhase={conversationState.phase}
           isSpeaking={isSpeaking}
           avatar={currentAvatar}
           modelLabel={selectedModelLabel}
