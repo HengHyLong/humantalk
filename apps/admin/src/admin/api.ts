@@ -39,6 +39,7 @@ import type {
   ReportFilters,
   ReportOperations,
   AuthSession,
+  AdminRole,
   PermissionCode,
   ButtonPermission,
 } from "./types";
@@ -47,6 +48,7 @@ export type GifCreateInput = Omit<GifAssetMeta, "id" | "createdAt"> & { file?: F
 
 const STORAGE_PREFIX = "opentalking-admin-";
 const AUTH_TOKEN_KEY = `${STORAGE_PREFIX}token`;
+const AUTH_REFRESH_TOKEN_KEY = `${STORAGE_PREFIX}refresh-token`;
 const now = () => new Date().toISOString();
 
 function buildAdminFetchUrl(path: string): string {
@@ -618,6 +620,25 @@ export class AdminApiError extends Error {
 }
 
 export class FetchAdminApiClient extends MockAdminApiClient {
+  private normalizeUser(payload: Partial<AdminUser> & { roles?: string[]; display_name?: string }): AdminUser {
+    const role = (payload.role || payload.roles?.[0] || "readonly") as AdminRole;
+    return {
+      id: String(payload.id || `user-${payload.username || "admin"}`),
+      username: String(payload.username || "admin"),
+      displayName: String(payload.displayName || payload.display_name || payload.username || "管理员"),
+      role,
+      permissions: (payload.permissions as PermissionCode[] | undefined) ?? ROLE_PERMISSIONS[role] ?? [],
+      buttonPermissions: (payload.buttonPermissions as ButtonPermission[] | undefined) ?? ROLE_BUTTON_PERMISSIONS[role] ?? [],
+    };
+  }
+
+  private expiresAt(payload: { expiresAt?: number; expires_at?: string | number; expires_in?: number }): number {
+    if (payload.expiresAt) return payload.expiresAt;
+    if (typeof payload.expires_at === "string") return Date.parse(payload.expires_at);
+    if (typeof payload.expires_at === "number") return payload.expires_at < 1_000_000_000_000 ? payload.expires_at * 1000 : payload.expires_at;
+    return Date.now() + (payload.expires_in ?? 3600) * 1000;
+  }
+
   private async request<T>(path: string, init?: RequestInit, retryAuth = true): Promise<T> {
     const token = window.localStorage.getItem(AUTH_TOKEN_KEY);
     const isMultipart = typeof FormData !== "undefined" && init?.body instanceof FormData;
@@ -641,24 +662,40 @@ export class FetchAdminApiClient extends MockAdminApiClient {
   }
 
   override async login(username: string, password: string) {
-    const payload = await this.request<AuthSession & { expires_at?: string | number }>("/auth/login", { method: "POST", body: JSON.stringify({ username, password }) }, false);
-    const session: AuthSession = { ...payload, expiresAt: payload.expiresAt ?? (typeof payload.expires_at === "string" ? Date.parse(payload.expires_at) : payload.expires_at) ?? Date.now() + 60 * 60 * 1000 };
-    window.localStorage.setItem(AUTH_TOKEN_KEY, session.token);
+    const payload = await this.request<AuthSession & { access_token?: string; refresh_token?: string; expires_at?: string | number; expires_in?: number }>("/auth/login", { method: "POST", body: JSON.stringify({ username, password }) }, false);
+    const token = payload.token || payload.access_token || "";
+    window.localStorage.setItem(AUTH_TOKEN_KEY, token);
+    if (payload.refresh_token) window.localStorage.setItem(AUTH_REFRESH_TOKEN_KEY, payload.refresh_token);
+    const session: AuthSession = { token, user: this.normalizeUser(payload.user), expiresAt: this.expiresAt(payload) };
     return session;
   }
 
-  override async getCurrentUser() { return this.request<AdminUser>("/auth/me"); }
+  override async getCurrentUser() {
+    const payload = await this.request<Partial<AdminUser> & { roles?: string[]; display_name?: string }>("/auth/me");
+    return this.normalizeUser(payload);
+  }
   override async refreshAuth() {
-    const payload = await this.request<AuthSession & { expires_at?: string | number }>("/auth/refresh", { method: "POST" }, false);
-    const session: AuthSession = { ...payload, expiresAt: payload.expiresAt ?? (typeof payload.expires_at === "string" ? Date.parse(payload.expires_at) : payload.expires_at) ?? Date.now() + 60 * 60 * 1000 };
-    window.localStorage.setItem(AUTH_TOKEN_KEY, session.token);
+    const refreshToken = window.localStorage.getItem(AUTH_REFRESH_TOKEN_KEY);
+    const payload = await this.request<Omit<AuthSession, "user"> & { access_token?: string; refresh_token?: string; expires_at?: string | number; expires_in?: number; user?: AdminUser }>("/auth/refresh", { method: "POST", body: JSON.stringify({ refresh_token: refreshToken }) }, false);
+    const token = payload.token || payload.access_token || "";
+    window.localStorage.setItem(AUTH_TOKEN_KEY, token);
+    if (payload.refresh_token) window.localStorage.setItem(AUTH_REFRESH_TOKEN_KEY, payload.refresh_token);
+    const user = payload.user ? this.normalizeUser(payload.user) : await this.getCurrentUser();
+    const session: AuthSession = { token, user, expiresAt: this.expiresAt(payload) };
     return session;
   }
   override async logout() {
-    try { await this.request<void>("/admin/auth/logout", { method: "POST" }, false); }
-    finally { window.localStorage.removeItem(AUTH_TOKEN_KEY); }
+    try { await this.request<void>("/auth/logout", { method: "POST" }, false); }
+    finally { window.localStorage.removeItem(AUTH_TOKEN_KEY); window.localStorage.removeItem(AUTH_REFRESH_TOKEN_KEY); }
   }
-  override async getPermissions() { return this.request<{ permissions: PermissionCode[]; buttonPermissions: ButtonPermission[] }>("/auth/permissions"); }
+  override async getPermissions() {
+    const payload = await this.request<{ permissions?: PermissionCode[]; buttonPermissions?: ButtonPermission[]; codes?: PermissionCode[]; roles?: string[] }>("/auth/permissions");
+    const role = (payload.roles?.[0] || "readonly") as AdminRole;
+    return {
+      permissions: payload.permissions ?? payload.codes ?? ROLE_PERMISSIONS[role] ?? [],
+      buttonPermissions: payload.buttonPermissions ?? ROLE_BUTTON_PERMISSIONS[role] ?? [],
+    };
+  }
 
   override async getDashboard() { return this.request<DashboardData>("/admin/report"); }
   override async getReport(filters: ReportFilters = {}) {

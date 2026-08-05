@@ -3,11 +3,11 @@ import react from "@vitejs/plugin-react";
 import { fileURLToPath, URL } from "node:url";
 
 const backendPort = process.env.VITE_BACKEND_PORT ?? "8000";
+const backendUrl = process.env.VITE_BACKEND_URL ?? `http://127.0.0.1:${backendPort}`;
 const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
 const allowedHosts = [".pod.compshare.cn"];
 const apiProxy = {
-  // target: `http://127.0.0.1:${backendPort}`,
-  target: `http://ai.oaii.cn:8210`,
+  target: backendUrl,
   changeOrigin: true,
   ws: true,
   rewrite: (p: string) => p.replace(/^\/api/, ""),
