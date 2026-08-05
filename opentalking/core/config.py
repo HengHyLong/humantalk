@@ -472,6 +472,13 @@ class Settings(BaseSettings):
     agent_lightrag_language: str = Field(default="Chinese")
     agent_lightrag_chunk_fallback_enabled: bool = Field(default=False)
 
+    # ---- Optional Dify knowledge-base integration ----
+    # Secrets stay on the API server. The unprefixed DIFY_* aliases are also
+    # accepted by the adapter for deployments that already use Dify defaults.
+    dify_api_base_url: str = Field(default="")
+    dify_dataset_api_key: str = Field(default="")
+    dify_timeout_sec: float = Field(default=30.0)
+
     # ---- Character memory provider ----
     memory_provider: str = "mem0"
     memory_enabled: bool = False
