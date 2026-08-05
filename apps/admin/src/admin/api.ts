@@ -34,11 +34,15 @@ import type {
   WelcomeConfig,
   ExplainFlow,
   ShoppingStrategy,
+  GatewayPolicy,
+  ReportFilters,
+  ReportOperations,
 } from "./types";
 
 const STORAGE_PREFIX = "opentalking-admin-";
 const now = () => new Date().toISOString();
 export type DownloadData = string | Blob;
+export type GifCreateInput = Omit<GifAssetMeta, "id" | "createdAt"> & { file?: File };
 
 function buildAdminFetchUrl(path: string): string {
   const base = typeof window === "undefined" ? "http://127.0.0.1:5173/" : window.location.href;
@@ -215,10 +219,11 @@ const DEFAULT_ALERTS: AlertEvent[] = [
 export interface AdminApiClient {
   login(username: string, password: string): Promise<{ token: string; user: AdminUser }>;
   getDashboard(): Promise<DashboardData>;
+  getReport(filters?: ReportFilters): Promise<ReportOperations>;
   getOperationsReport(filters?: { exhibitionId?: string; from?: string; to?: string; groupBy?: "day" | "terminal" | "scene" | "intent" }): Promise<OperationsReport>;
   exportReport(exhibitionId?: string, format?: "xlsx" | "csv", filters?: { from?: string; to?: string; groupBy?: "day" | "terminal" | "scene" | "intent" }): Promise<DownloadData>;
   listGifs(): Promise<GifAssetMeta[]>;
-  createGif(input: Omit<GifAssetMeta, "id" | "createdAt">): Promise<GifAssetMeta>;
+  createGif(input: GifCreateInput): Promise<GifAssetMeta>;
   uploadGif(file: File, input: Pick<GifAssetMeta, "name" | "scene" | "tags" | "status">): Promise<GifAssetMeta>;
   updateGif(id: string, patch: Partial<GifAssetMeta>): Promise<GifAssetMeta>;
   deleteGif(id: string): Promise<void>;
@@ -231,6 +236,7 @@ export interface AdminApiClient {
   saveSceneBinding(binding: SceneBinding): Promise<SceneBinding>;
   listIdle(): Promise<IdleContent[]>;
   saveIdle(item: IdleContent): Promise<IdleContent>;
+  deleteIdle(id: string): Promise<void>;
   listDocuments(): Promise<KnowledgeDocument[]>;
   uploadDocument(input: Pick<KnowledgeDocument, "title" | "fileName" | "type" | "exhibition">): Promise<KnowledgeDocument>;
   updateDocument(id: string, patch: Partial<KnowledgeDocument>): Promise<KnowledgeDocument>;
@@ -263,6 +269,7 @@ export interface AdminApiClient {
   resolveMissAction(id: string, action: "ignore" | "handled" | "create_qa", reason?: string, qa?: Record<string, unknown>): Promise<MissPoolItem>;
   listExhibitions(): Promise<Exhibition[]>;
   saveExhibition(item: Exhibition): Promise<Exhibition>;
+  saveExhibitionRuntimeConfig(item: Exhibition): Promise<Exhibition>;
   deleteExhibition(id: string): Promise<void>;
   transitionExhibition(id: string, status: ExhibitionStatus): Promise<Exhibition>;
   listVenues(): Promise<EventVenue[]>;
@@ -312,6 +319,8 @@ export interface AdminApiClient {
   getSystemMonitor(): Promise<SystemMonitor>;
   listAlerts(): Promise<AlertEvent[]>;
   acknowledgeAlert(id: string, operator?: string): Promise<AlertEvent>;
+  getGatewayPolicy(): Promise<GatewayPolicy>;
+  saveGatewayPolicy(policy: GatewayPolicy): Promise<GatewayPolicy>;
 }
 
 function buildUser(username: string, role: AdminUser["role"]): AdminUser {
@@ -415,6 +424,18 @@ export class MockAdminApiClient implements AdminApiClient {
     return JSON.stringify(report, null, 2);
   }
 
+  async getReport(filters: ReportFilters = {}): Promise<ReportOperations> {
+    return {
+      generatedAt: now(),
+      filters,
+      interaction: { total: 0, averageDurationMs: 0, byScene: [], byTerminal: [], byHour: [] },
+      hotspot: { items: [] },
+      hit: { total: 0, hit: 0, miss: 0, hitRate: 0, strongQaHit: 0, ragHit: 0 },
+      lead: { total: 0, converted: 0, conversionRate: 0, byStatus: [] },
+      resource: { items: [] },
+    };
+  }
+
   async listGifs() { return readStore("gifs", DEFAULT_GIFS); }
   async createGif(input: Omit<GifAssetMeta, "id" | "createdAt">) { const item = { ...input, id: `gif-${Date.now()}`, createdAt: now() }; writeStore("gifs", [item, ...await this.listGifs()]); return item; }
   async uploadGif(file: File, input: Pick<GifAssetMeta, "name" | "scene" | "tags" | "status">) {
@@ -432,6 +453,7 @@ export class MockAdminApiClient implements AdminApiClient {
   async saveSceneBinding(binding: SceneBinding) { await this.saveSceneBindings([...(await this.listSceneBindings()).filter((item) => item.scene !== binding.scene), binding]); return binding; }
   async listIdle() { return readStore<IdleContent[]>("idle", [{ id: "idle-1", type: "标语轮播", title: "西博会欢迎语", content: "欢迎来到 2026 西部博览会", interval: 8, exhibition: "2026 西部博览会", enabled: true }]); }
   async saveIdle(item: IdleContent) { const items = (await this.listIdle()).filter((candidate) => candidate.id !== item.id); const next = [item, ...items]; writeStore("idle", next); return item; }
+  async deleteIdle(id: string) { writeStore("idle", (await this.listIdle()).filter((item) => item.id !== id)); }
   async listDocuments() { return readStore("documents", DEFAULT_DOCUMENTS); }
   async uploadDocument(input: Pick<KnowledgeDocument, "title" | "fileName" | "type" | "exhibition">) { const item: KnowledgeDocument = { ...input, id: `doc-${Date.now()}`, parseStatus: "parsing", vectorStatus: "pending", chunks: 0, uploader: "当前用户", uploadedAt: now() }; writeStore("documents", [item, ...await this.listDocuments()]); window.setTimeout(() => { void this.patchDocument(item.id, { parseStatus: "parsed", vectorStatus: "indexed", chunks: 32 }); }, 1200); return item; }
   private async patchDocument(id: string, patch: Partial<KnowledgeDocument>) { const next = (await this.listDocuments()).map((item) => item.id === id ? { ...item, ...patch } : item); writeStore("documents", next); }
@@ -479,6 +501,7 @@ export class MockAdminApiClient implements AdminApiClient {
     writeStore("exhibitions", [saved, ...list.filter((candidate) => candidate.id !== item.id)]);
     return saved;
   }
+  async saveExhibitionRuntimeConfig(item: Exhibition) { return this.saveExhibition(item); }
   async transitionExhibition(id: string, status: Exhibition["status"]) {
     const list = await this.listExhibitions();
     const current = list.find((item) => item.id === id);
@@ -580,6 +603,8 @@ export class MockAdminApiClient implements AdminApiClient {
   async getSystemMonitor() { const monitor = readStore<SystemMonitor>("system-monitor", DEFAULT_MONITOR); const refreshed = { ...monitor, refreshedAt: now() }; writeStore("system-monitor", refreshed); return refreshed; }
   async listAlerts() { return readStore<AlertEvent[]>("alerts", DEFAULT_ALERTS); }
   async acknowledgeAlert(id: string, operator = "当前用户") { const list = await this.listAlerts(); const existing = list.find((item) => item.id === id); if (!existing) throw new Error("告警不存在"); const saved = { ...existing, status: "acknowledged" as const, acknowledgedBy: operator, acknowledgedAt: now() }; writeStore("alerts", [saved, ...list.filter((item) => item.id !== id)]); return saved; }
+  async getGatewayPolicy() { return readStore<GatewayPolicy>("gateway-policy", { id: "gateway-policy", name: "默认网关策略", whitelist: [], rateLimitPerMinute: 120, timeoutMs: 15000, fallbackMode: "text", enabled: true, updatedAt: now() }); }
+  async saveGatewayPolicy(policy: GatewayPolicy) { const saved = { ...policy, updatedAt: now() }; writeStore("gateway-policy", saved); return saved; }
 }
 
 function normalizeMenuPermissionNodes(nodes: PermissionNode[]): PermissionNode[] {
@@ -800,6 +825,8 @@ export class FetchAdminApiClient implements AdminApiClient {
     return this.request<OperationsReport>(`/admin/report/operations${queryString({ exhibition_id: filters.exhibitionId, from: filters.from, to: filters.to, group_by: filters.groupBy })}`);
   }
 
+  async getReport(filters: ReportFilters = {}) { return this.request<ReportOperations>(`/admin/report/operations${queryString(filters as Record<string, string | undefined>)}`); }
+
   async exportReport(exhibitionId?: string, format: "xlsx" | "csv" = "xlsx", filters: { from?: string; to?: string; groupBy?: "day" | "terminal" | "scene" | "intent" } = {}): Promise<DownloadData> {
     const path = `/admin/report/export${queryString({ exhibition_id: exhibitionId, format, from: filters.from, to: filters.to, group_by: filters.groupBy })}`;
     return format === "csv" ? this.download(path) : this.downloadFile(path);
@@ -824,7 +851,13 @@ export class FetchAdminApiClient implements AdminApiClient {
       createdAt: String(item.createdAt || item.created_at || ""),
     }));
   }
-  async createGif(input: Omit<GifAssetMeta, "id" | "createdAt">) { return this.saveCollection<GifAssetMeta>("assets", "gifs", input as JsonRecord); }
+  async createGif(input: GifCreateInput) {
+    if (input.file) {
+      const { file, ...metadata } = input;
+      return this.uploadGif(file, { name: metadata.name, scene: metadata.scene, tags: metadata.tags, status: metadata.status });
+    }
+    return this.saveCollection<GifAssetMeta>("assets", "gifs", input as JsonRecord);
+  }
   async uploadGif(file: File, input: Pick<GifAssetMeta, "name" | "scene" | "tags" | "status">) {
     const form = new FormData();
     form.set("file", file, file.name);
@@ -861,6 +894,7 @@ export class FetchAdminApiClient implements AdminApiClient {
   async saveSceneBinding(binding: SceneBinding) { return this.sceneBinding(await this.request<JsonRecord>(`/admin/assets/scene-bindings/${encodeURIComponent(binding.scene)}`, { method: "PUT", body: JSON.stringify({ scene: binding.scene, assets: binding.assets.map((item) => ({ asset_id: item.assetId, is_primary: item.isPrimary, order: item.order })) }) })); }
   async listIdle() { return this.collection<IdleContent>("assets", "idle-contents"); }
   async saveIdle(item: IdleContent) { return this.saveCollection<IdleContent>("assets", "idle-contents", item as JsonRecord); }
+  async deleteIdle(id: string) { await this.request(`/admin/assets/idle-contents/${encodeURIComponent(id)}`, { method: "DELETE" }); }
 
   async listDocuments() { return this.collection<KnowledgeDocument>("knowledge", "documents"); }
   async uploadDocument(input: Pick<KnowledgeDocument, "title" | "fileName" | "type" | "exhibition">) { return this.saveCollection<KnowledgeDocument>("knowledge", "documents", input as JsonRecord); }
@@ -919,6 +953,7 @@ export class FetchAdminApiClient implements AdminApiClient {
 
   async listExhibitions() { return (await this.collection<JsonRecord>("event", "exhibitions")).map((item) => this.exhibition(item)); }
   async saveExhibition(item: Exhibition) { return this.exhibition(await this.saveCollection<JsonRecord>("event", "exhibitions", item as JsonRecord)); }
+  async saveExhibitionRuntimeConfig(item: Exhibition) { return this.exhibition(await this.request<JsonRecord>(`/admin/event/exhibitions/${encodeURIComponent(item.id)}/runtime-config`, { method: "PUT", body: JSON.stringify(item) })); }
   async deleteExhibition(id: string) { await this.request(`/admin/event/exhibitions/${encodeURIComponent(id)}`, { method: "DELETE" }); }
   async transitionExhibition(id: string, status: ExhibitionStatus) { return this.exhibition(await this.request<JsonRecord>(`/admin/event/exhibitions/${encodeURIComponent(id)}/lifecycle`, { method: "POST", body: JSON.stringify({ status }) })); }
   async listVenues() { return this.collection<EventVenue>("event", "venues"); }
@@ -1024,6 +1059,8 @@ export class FetchAdminApiClient implements AdminApiClient {
     return items.map((item) => ({ ...item, id: String(item.id), type: String(item.type || ""), severity: item.severity === "warning" ? "normal" : item.severity, target: String(item.target || item.object || ""), content: String(item.content || ""), status: item.status === "open" ? "active" : item.status, occurredAt: String(item.occurredAt || item.createdAt || item.created_at || "") })) as AlertEvent[];
   }
   async acknowledgeAlert(id: string, _operator?: string) { return this.request<AlertEvent>(`/admin/alerts/${encodeURIComponent(id)}/acknowledge`, { method: "POST" }); }
+  async getGatewayPolicy() { return this.request<GatewayPolicy>("/admin/ops/gateway-policy"); }
+  async saveGatewayPolicy(policy: GatewayPolicy) { return this.request<GatewayPolicy>("/admin/ops/gateway-policy", { method: "PUT", body: JSON.stringify(policy) }); }
 }
 
 const runtimeEnv = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env ?? {};
