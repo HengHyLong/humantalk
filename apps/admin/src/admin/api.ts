@@ -38,6 +38,7 @@ import type {
   ReportFilters,
   ReportOperations,
 } from "./types";
+import type { KnowledgeBaseSummary as ApiKnowledgeBaseSummary, KnowledgeDocument as ApiKnowledgeDocument } from "../lib/api";
 
 const STORAGE_PREFIX = "opentalking-admin-";
 const REFRESH_TOKEN_KEY = `${STORAGE_PREFIX}refresh-token`;
@@ -254,6 +255,13 @@ export interface AdminApiClient {
   saveIdle(item: IdleContent): Promise<IdleContent>;
   deleteIdle(id: string): Promise<void>;
   listDocuments(): Promise<KnowledgeDocument[]>;
+  listKnowledgeBases(): Promise<ApiKnowledgeBaseSummary[]>;
+  listKnowledgeBaseDocuments(baseId: string): Promise<ApiKnowledgeDocument[]>;
+  createKnowledgeBase(name: string): Promise<ApiKnowledgeBaseSummary>;
+  renameKnowledgeBase(id: string, name: string): Promise<ApiKnowledgeBaseSummary>;
+  deleteKnowledgeBase(id: string): Promise<void>;
+  uploadKnowledgeBaseDocument(baseId: string, file: File): Promise<ApiKnowledgeDocument>;
+  uploadKnowledgeDocument(file: File): Promise<KnowledgeDocument>;
   uploadDocument(input: Pick<KnowledgeDocument, "title" | "fileName" | "type" | "exhibition">): Promise<KnowledgeDocument>;
   updateDocument(id: string, patch: Partial<KnowledgeDocument>): Promise<KnowledgeDocument>;
   deleteDocument(id: string): Promise<void>;
@@ -474,6 +482,13 @@ export class MockAdminApiClient implements AdminApiClient {
   async saveIdle(item: IdleContent) { const items = (await this.listIdle()).filter((candidate) => candidate.id !== item.id); const next = [item, ...items]; writeStore("idle", next); return item; }
   async deleteIdle(id: string) { writeStore("idle", (await this.listIdle()).filter((item) => item.id !== id)); }
   async listDocuments() { return readStore("documents", DEFAULT_DOCUMENTS); }
+  async listKnowledgeBases(): Promise<ApiKnowledgeBaseSummary[]> { return readStore("dify-knowledge-bases", []); }
+  async listKnowledgeBaseDocuments(_baseId: string): Promise<ApiKnowledgeDocument[]> { return []; }
+  async createKnowledgeBase(name: string): Promise<ApiKnowledgeBaseSummary> { const item: ApiKnowledgeBaseSummary = { id: `kb-${Date.now()}`, name, document_count: 0, ready_document_count: 0, error_document_count: 0, created_at: now(), updated_at: now() }; writeStore("dify-knowledge-bases", [item, ...(await this.listKnowledgeBases())]); return item; }
+  async renameKnowledgeBase(id: string, name: string): Promise<ApiKnowledgeBaseSummary> { const items = await this.listKnowledgeBases(); const next = items.map((item) => item.id === id ? { ...item, name, updated_at: now() } : item); writeStore("dify-knowledge-bases", next); return next.find((item) => item.id === id) ?? items[0]; }
+  async deleteKnowledgeBase(id: string) { writeStore("dify-knowledge-bases", (await this.listKnowledgeBases()).filter((item) => item.id !== id)); }
+  async uploadKnowledgeBaseDocument(baseId: string, file: File): Promise<ApiKnowledgeDocument> { return { id: `dify-doc-${Date.now()}`, kb_id: baseId, filename: file.name, mime_type: file.type || "application/octet-stream", bytes: file.size, sha256: "", status: "ready", error: null, chunk_count: 0, created_at: now(), updated_at: now() }; }
+  async uploadKnowledgeDocument(file: File): Promise<KnowledgeDocument> { return this.uploadDocument({ title: file.name, fileName: file.name, type: file.type || "document", exhibition: "" }); }
   async uploadDocument(input: Pick<KnowledgeDocument, "title" | "fileName" | "type" | "exhibition">) { const item: KnowledgeDocument = { ...input, id: `doc-${Date.now()}`, parseStatus: "parsing", vectorStatus: "pending", chunks: 0, uploader: "当前用户", uploadedAt: now() }; writeStore("documents", [item, ...await this.listDocuments()]); window.setTimeout(() => { void this.patchDocument(item.id, { parseStatus: "parsed", vectorStatus: "indexed", chunks: 32 }); }, 1200); return item; }
   private async patchDocument(id: string, patch: Partial<KnowledgeDocument>) { const next = (await this.listDocuments()).map((item) => item.id === id ? { ...item, ...patch } : item); writeStore("documents", next); }
   async updateDocument(id: string, patch: Partial<KnowledgeDocument>) { await this.patchDocument(id, patch); return (await this.listDocuments()).find((item) => item.id === id) ?? (await this.listDocuments())[0]; }
@@ -961,12 +976,44 @@ export class FetchAdminApiClient implements AdminApiClient {
   async deleteIdle(id: string) { await this.request(`/admin/assets/idle-contents/${encodeURIComponent(id)}`, { method: "DELETE" }); }
 
   async listDocuments() { return this.collection<KnowledgeDocument>("knowledge", "documents"); }
+  async listKnowledgeBases(): Promise<ApiKnowledgeBaseSummary[]> {
+    const payload = await this.request<{ data?: JsonRecord[]; items?: JsonRecord[] }>("/admin/knowledge/dify/datasets?page=1&limit=100");
+    const items = payload.data ?? payload.items ?? [];
+    return items.map((item) => ({ id: String(item.id), name: String(item.name ?? ""), document_count: Number(item.document_count ?? item.documentCount ?? 0), ready_document_count: Number(item.ready_document_count ?? item.document_count ?? 0), error_document_count: Number(item.error_document_count ?? 0), created_at: String(item.created_at ?? item.createdAt ?? ""), updated_at: String(item.updated_at ?? item.updatedAt ?? "") }));
+  }
+  async listKnowledgeBaseDocuments(baseId: string): Promise<ApiKnowledgeDocument[]> {
+    const payload = await this.request<{ data?: JsonRecord[]; items?: JsonRecord[] }>(`/admin/knowledge/dify/datasets/${encodeURIComponent(baseId)}/documents?page=1&limit=100`);
+    const items = payload.data ?? payload.items ?? [];
+    return items.map((item) => ({ id: String(item.id), kb_id: baseId, filename: String(item.name ?? item.filename ?? ""), mime_type: String(item.mime_type ?? ""), bytes: Number(item.bytes ?? item.size ?? 0), sha256: String(item.sha256 ?? ""), status: String(item.indexing_status ?? item.status ?? "processing"), error: item.error ? String(item.error) : null, chunk_count: Number(item.word_count ?? item.chunk_count ?? 0), created_at: String(item.created_at ?? ""), updated_at: String(item.updated_at ?? "") }));
+  }
+  async createKnowledgeBase(name: string): Promise<ApiKnowledgeBaseSummary> {
+    const item = await this.request<JsonRecord>("/admin/knowledge/dify/datasets", { method: "POST", body: JSON.stringify({ name }) });
+    return { id: String(item.id), name: String(item.name ?? name), document_count: 0, ready_document_count: 0, error_document_count: 0, created_at: String(item.created_at ?? ""), updated_at: String(item.updated_at ?? "") };
+  }
+  async renameKnowledgeBase(id: string, name: string): Promise<ApiKnowledgeBaseSummary> {
+    const item = await this.request<JsonRecord>(`/admin/knowledge/dify/datasets/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ name }) });
+    return { id: String(item.id ?? id), name: String(item.name ?? name), document_count: Number(item.document_count ?? 0), ready_document_count: Number(item.ready_document_count ?? item.document_count ?? 0), error_document_count: Number(item.error_document_count ?? 0), created_at: String(item.created_at ?? ""), updated_at: String(item.updated_at ?? "") };
+  }
+  async deleteKnowledgeBase(id: string) { await this.request(`/admin/knowledge/dify/datasets/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+  async uploadKnowledgeBaseDocument(baseId: string, file: File): Promise<ApiKnowledgeDocument> {
+    const form = new FormData();
+    form.set("file", file);
+    form.set("data", JSON.stringify({ name: file.name, indexing_technique: "high_quality", process_rule: { mode: "automatic" } }));
+    const item = await this.request<JsonRecord>(`/admin/knowledge/dify/datasets/${encodeURIComponent(baseId)}/documents/file`, { method: "POST", body: form });
+    return { id: String(item.document?.id ?? item.id ?? ""), kb_id: baseId, filename: String(item.document?.name ?? item.name ?? file.name), mime_type: file.type || "application/octet-stream", bytes: file.size, sha256: "", status: String(item.document?.indexing_status ?? item.indexing_status ?? "processing"), error: null, chunk_count: 0, created_at: now(), updated_at: now() };
+  }
+  async uploadKnowledgeDocument(file: File): Promise<KnowledgeDocument> {
+    const form = new FormData();
+    form.set("file", file);
+    const item = await this.request<JsonRecord>("/admin/knowledge/documents", { method: "POST", body: form });
+    return item as unknown as KnowledgeDocument;
+  }
   async uploadDocument(input: Pick<KnowledgeDocument, "title" | "fileName" | "type" | "exhibition">) { return this.saveCollection<KnowledgeDocument>("knowledge", "documents", input as JsonRecord); }
   async updateDocument(id: string, patch: Partial<KnowledgeDocument>) { return this.saveCollection<KnowledgeDocument>("knowledge", "documents", { ...patch, id }); }
   async deleteDocument(id: string) { await this.request(`/admin/knowledge/documents/${encodeURIComponent(id)}`, { method: "DELETE" }); }
   async listQa() { return this.collection<KnowledgeQa>("knowledge", "qa"); }
   async saveQa(item: KnowledgeQa) { return this.saveCollection<KnowledgeQa>("knowledge", "qa", item as JsonRecord); }
-  async transitionQa(id: string, status: KnowledgeQa["status"]) { return this.request<KnowledgeQa>(`/admin/knowledge/qa/${encodeURIComponent(id)}/transition`, { method: "POST", body: JSON.stringify({ status }) }); }
+  async transitionQa(id: string, status: KnowledgeQa["status"]) { return this.request<KnowledgeQa>(`/admin/knowledge/qa/${encodeURIComponent(id)}/transition`, { method: "POST", body: JSON.stringify({ status, operator: "admin" }) }); }
   async listQaVersions(id: string) { const response = await this.request<{ items?: Array<Record<string, unknown>> }>(`/admin/knowledge/qa/${encodeURIComponent(id)}/versions`); return response.items ?? []; }
   async rollbackQa(id: string, version: number, reason: string) { return this.request<KnowledgeQa>(`/admin/knowledge/qa/${encodeURIComponent(id)}/rollback`, { method: "POST", body: JSON.stringify({ version, reason }) }); }
   async deleteQa(id: string) { await this.request(`/admin/knowledge/qa/${encodeURIComponent(id)}`, { method: "DELETE" }); }
@@ -986,7 +1033,7 @@ export class FetchAdminApiClient implements AdminApiClient {
   async rollbackPackage(id: string, targetPackageId?: string, reason?: string) { return this.request<PublishPackage>(`/admin/knowledge/packages/${encodeURIComponent(id)}/rollback`, { method: "POST", body: JSON.stringify({ target_package_id: targetPackageId, reason }) }); }
   async listMissPool() { return this.collection<MissPoolItem>("knowledge", "miss-pool"); }
   async resolveMiss(id: string, status: MissPoolItem["status"]) { return this.resolveMissAction(id, status === "ignored" ? "ignore" : status === "converted_qa" ? "create_qa" : "handled"); }
-  async resolveMissAction(id: string, action: "ignore" | "handled" | "create_qa", reason?: string, qa?: Record<string, unknown>) { return this.request<MissPoolItem>(`/admin/knowledge/miss-pool/${encodeURIComponent(id)}/resolve`, { method: "POST", body: JSON.stringify({ action, reason, qa }) }); }
+  async resolveMissAction(id: string, action: "ignore" | "handled" | "create_qa", reason?: string, qa?: Record<string, unknown>) { const status = action === "ignore" ? "ignored" : action === "create_qa" ? "converted_qa" : "supplemented"; return this.request<MissPoolItem>(`/admin/knowledge/miss-pool/${encodeURIComponent(id)}/resolve`, { method: "POST", body: JSON.stringify({ action, status, reason, qa }) }); }
 
   async listWelcomeConfigs(exhibitionId?: string) {
     const [items, exhibitions] = await Promise.all([this.collection<JsonRecord>("interaction", "welcome-configs", { exhibition_id: exhibitionId }), this.listExhibitions()]);

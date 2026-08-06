@@ -310,12 +310,12 @@ test("real Admin knowledge workflow maps documents, QA, scripts, packages and mi
   await api.uploadDocument({ title: "展会手册", fileName: "manual.pdf", type: "PDF", exhibition: "测试展" }); assert.equal(calls.at(-1)?.method, "POST");
   await api.updateDocument("doc/1", { parseStatus: "failed" }); assert.equal(calls.at(-1)?.url.endsWith("/admin/knowledge/documents/doc%2F1"), true);
   await api.listQa(); assert.equal(calls.at(-1)?.url.endsWith("/admin/knowledge/qa?page=1&page_size=100"), true);
-  await api.transitionQa("qa/1", "published"); assert.deepEqual(calls.at(-1)?.body, { status: "published" });
+  await api.transitionQa("qa/1", "published"); assert.deepEqual(calls.at(-1)?.body, { status: "published", operator: "admin" });
   await api.listScripts(); assert.equal(calls.at(-1)?.url.endsWith("/admin/knowledge/scripts?page=1&page_size=100"), true);
   await api.listPackages(); assert.equal(calls.at(-1)?.url.endsWith("/admin/knowledge/packages?page=1&page_size=100"), true);
   await api.transitionPackage("pkg/1", "published"); assert.equal(calls.at(-1)?.url.endsWith("/admin/knowledge/packages/pkg%2F1/publish"), true);
   await api.listMissPool(); assert.equal(calls.at(-1)?.url.endsWith("/admin/knowledge/miss-pool?page=1&page_size=100"), true);
-  await api.resolveMiss("miss/1", "converted_qa"); assert.equal(calls.at(-1)?.body?.action, "create_qa");
+  await api.resolveMiss("miss/1", "converted_qa"); assert.deepEqual(calls.at(-1)?.body, { action: "create_qa", status: "converted_qa" });
 });
 
 test("real Admin leads and feedback map filtering, state, export and trace workflow", async () => {

@@ -434,7 +434,7 @@ function placeholderKnowledgeBaseSummary(id: string): KnowledgeBaseSummary {
   };
 }
 
-function normalizeKnowledgeBaseSummaries(response: KnowledgeBasesResponse): KnowledgeBaseSummary[] {
+export function normalizeKnowledgeBaseSummaries(response: KnowledgeBasesResponse): KnowledgeBaseSummary[] {
   const summaries = Array.isArray(response.knowledge_base_summaries)
     ? response.knowledge_base_summaries
     : [];
@@ -458,7 +458,7 @@ function normalizeKnowledgeBaseSummaries(response: KnowledgeBasesResponse): Know
   return Array.from(byId.values());
 }
 
-function normalizeSelectedKnowledgeBaseIds(
+export function normalizeSelectedKnowledgeBaseIds(
   response: AvatarKnowledgeBasesResponse,
   fallback: string[] = [],
 ): string[] {
@@ -1041,7 +1041,6 @@ export default function App() {
   const [selectedSceneIdsByAvatar, setSelectedSceneIdsByAvatar] = useState<Record<string, string>>(readStoredSceneIdsByAvatar);
   const avatarKnowledgeBasesSyncReadyRef = useRef(false);
   const lastPersistedAvatarKnowledgeBasesRef = useRef<Map<string, string[]>>(new Map());
-  const avatarKnowledgeBasesLoadSeqRef = useRef(0);
   const [assetLibraryTab, setAssetLibraryTab] = useState<AssetLibraryTab>("exports");
   const selectedModelStatus = modelStatuses.find((item) => item.id === model);
   const selectedModelBadge = modelConnectionBadge(selectedModelStatus, models.includes(model));
@@ -1203,6 +1202,7 @@ export default function App() {
   }, [notify, syncRuntimeConfigSelection]);
 
   const syncSessionKnowledgeBases = useCallback((knowledgeBaseIds: string[]) => {
+    return;
     const sid = sessionIdRef.current;
     if (!sid) return;
     const selectedIds = normalizeKnowledgeBaseIds(knowledgeBaseIds);
@@ -1237,8 +1237,8 @@ export default function App() {
 
   const refreshKnowledgeBases = useCallback(async () => {
     try {
-      const response = await apiGet<KnowledgeBasesResponse>("/agent/knowledge-bases");
-      setKnowledgeBaseSummaries(normalizeKnowledgeBaseSummaries(response));
+      const response = await apiGet<{ data?: Array<Record<string, unknown>> }>("/v1/admin/knowledge/dify/datasets?page=1&limit=100");
+      setKnowledgeBaseSummaries((response.data ?? []).map((item) => ({ id: String(item.id ?? ""), name: String(item.name ?? item.id ?? ""), document_count: Number(item.document_count ?? 0), ready_document_count: Number(item.ready_document_count ?? item.document_count ?? 0), error_document_count: Number(item.error_document_count ?? 0), created_at: String(item.created_at ?? ""), updated_at: String(item.updated_at ?? "") })).filter((item) => item.id));
     } catch (error) {
       console.warn("load knowledge bases failed", error);
       const detail = error instanceof ApiError ? error.detail : null;
@@ -1328,6 +1328,8 @@ export default function App() {
 
   const refreshAvatarKnowledgeBases = useCallback(async (targetAvatarId: string) => {
     if (!targetAvatarId) return;
+    return;
+    /* Legacy avatar-local knowledge linkage intentionally disabled; Dify is selected by exhibition.
     const seq = ++avatarKnowledgeBasesLoadSeqRef.current;
     avatarKnowledgeBasesSyncReadyRef.current = false;
     try {
@@ -1360,6 +1362,7 @@ export default function App() {
         avatarKnowledgeBasesSyncReadyRef.current = true;
       }
     }
+    */
   }, [notify]);
 
   const handleManageKnowledgeBases = useCallback(() => {
@@ -1449,7 +1452,7 @@ export default function App() {
   }, [conversationViewMode, workflow]);
 
   useEffect(() => {
-    if (selectedPersonaId) return;
+    if (selectedPersonaId || avatarId) return;
     void refreshAvatarKnowledgeBases(avatarId);
   }, [avatarId, refreshAvatarKnowledgeBases, selectedPersonaId]);
 
@@ -2225,7 +2228,6 @@ export default function App() {
     setQueueInfo(null);
     let createdSessionId: string | null = null;
     try {
-      const knowledgeBaseIds = normalizeKnowledgeBaseIds(agentConfig.knowledgeBaseIds);
       const selectedTtsVoice = resolveSelectableTtsVoice(ttsProvider, qwenVoice, bailianVoices);
       const created = await apiPost<CreateSessionResponse>("/sessions", {
         persona_id: selectedPersonaId || undefined,
@@ -2245,14 +2247,13 @@ export default function App() {
         fasterliveportrait_config:
           model === "fasterliveportrait" ? fasterliveportraitConfig : undefined,
         user_id: clientUserId,
-        agent_enabled: agentConfig.memoryEnabled || agentConfig.knowledgeEnabled || (memoryEnabled && Boolean(memoryLibraryId)),
+        exhibition_id: new URLSearchParams(window.location.search).get("exhibitionId") || "current",
+        agent_enabled: true,
         memory_enabled: agentConfig.memoryEnabled || (memoryEnabled && Boolean(memoryLibraryId)),
         memory_profile_id: MEMORY_PROFILE_ID,
         character_id: avatarId,
         memory_library_id: memoryEnabled && memoryLibraryId ? memoryLibraryId : undefined,
-        knowledge_enabled: agentConfig.knowledgeEnabled,
-        knowledge_base_id: knowledgeBaseIds[0],
-        knowledge_base_ids: knowledgeBaseIds,
+        knowledge_enabled: true,
       } satisfies CreateSessionRequest);
       createdSessionId = created.session_id;
       setSessionId(created.session_id);
