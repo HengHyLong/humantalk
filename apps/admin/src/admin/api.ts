@@ -149,9 +149,9 @@ const DEFAULT_VENUES: EventVenue[] = [
 ];
 
 const DEFAULT_POINTS: EventPoint[] = [
-  { id: "point-entrance", venueId: "venue-1", code: "ENT-01", name: "1号入口", type: "entrance", floor: "1F", x: 12, y: 48, exhibitorId: null, exhibitId: null, description: "主入口和签到服务台。", status: "active", createdAt: "2026-07-21 10:00", updatedAt: "2026-08-01 10:00" },
-  { id: "point-booth-a1", venueId: "venue-1", code: "BOOTH-A1-08", name: "A1馆智能制造展区", type: "booth", floor: "1F", x: 62, y: 36, exhibitorId: "exhibitor-1", exhibitId: "exhibit-1", description: "四川智造科技有限公司展位。", status: "active", createdAt: "2026-07-22 10:00", updatedAt: "2026-08-01 10:00" },
-  { id: "point-rest", venueId: "venue-1", code: "SERVICE-REST", name: "中央休息区", type: "facility", floor: "1F", x: 45, y: 70, exhibitorId: null, exhibitId: null, description: "观众休息和饮水区域。", status: "active", createdAt: "2026-07-22 10:10", updatedAt: "2026-08-01 10:00" },
+  { id: "point-entrance", exhibitionId: "exhibition-1", venueId: "venue-1", code: "ENT-01", name: "1号入口", type: "entrance", floor: "1F", x: 12, y: 48, exhibitorId: null, exhibitId: null, description: "主入口和签到服务台。", status: "active", createdAt: "2026-07-21 10:00", updatedAt: "2026-08-01 10:00" },
+  { id: "point-booth-a1", exhibitionId: "exhibition-1", venueId: "venue-1", code: "BOOTH-A1-08", name: "A1馆智能制造展区", type: "booth", floor: "1F", x: 62, y: 36, exhibitorId: "exhibitor-1", exhibitId: "exhibit-1", description: "四川智造科技有限公司展位。", status: "active", createdAt: "2026-07-22 10:00", updatedAt: "2026-08-01 10:00" },
+  { id: "point-rest", exhibitionId: "exhibition-1", venueId: "venue-1", code: "SERVICE-REST", name: "中央休息区", type: "facility", floor: "1F", x: 45, y: 70, exhibitorId: null, exhibitId: null, description: "观众休息和饮水区域。", status: "active", createdAt: "2026-07-22 10:10", updatedAt: "2026-08-01 10:00" },
 ];
 
 const DEFAULT_EXHIBITORS: Exhibitor[] = [
@@ -165,8 +165,8 @@ const DEFAULT_EXHIBITS: Exhibit[] = [
 ];
 
 const DEFAULT_ROUTES: ExhibitionRoute[] = [
-  { id: "route-1", venueId: "venue-1", name: "主入口到智能制造展区", type: "navigation", pointIds: ["point-entrance", "point-booth-a1"], directions: ["从1号入口沿中央通道向东直行。", "经过服务台后右转进入A1馆。"], estimatedMinutes: 4, description: "适合现场导航和数字人讲解。", status: "published", createdAt: "2026-07-28 09:00", updatedAt: "2026-08-01 17:20" },
-  { id: "route-2", venueId: "venue-1", name: "主入口到休息区", type: "navigation", pointIds: ["point-entrance", "point-rest"], directions: ["沿中央通道直行至服务设施区域。"], estimatedMinutes: 2, description: "适合现场导航和数字人讲解。", status: "published", createdAt: "2026-07-28 09:20", updatedAt: "2026-07-28 09:20" },
+  { id: "route-1", exhibitionId: "exhibition-1", venueId: "venue-1", name: "主入口到智能制造展区", type: "navigation", pointIds: ["point-entrance", "point-booth-a1"], directions: ["从1号入口沿中央通道向东直行。", "经过服务台后右转进入A1馆。"], estimatedMinutes: 4, description: "适合现场导航和数字人讲解。", status: "published", createdAt: "2026-07-28 09:00", updatedAt: "2026-08-01 17:20" },
+  { id: "route-2", exhibitionId: "exhibition-1", venueId: "venue-1", name: "主入口到休息区", type: "navigation", pointIds: ["point-entrance", "point-rest"], directions: ["沿中央通道直行至服务设施区域。"], estimatedMinutes: 2, description: "适合现场导航和数字人讲解。", status: "published", createdAt: "2026-07-28 09:20", updatedAt: "2026-07-28 09:20" },
 ];
 
 const DEFAULT_SCHEDULES: EventSchedule[] = [
@@ -591,7 +591,7 @@ export class MockAdminApiClient implements AdminApiClient {
       if (route.pointIds?.length) return route;
       const venueId = route.venueId ?? DEFAULT_VENUES.find((venue) => venue.exhibitionId === route.exhibitionId)?.id ?? route.exhibitionId ?? "";
       const pointIds = [route.from, route.to].map((name) => points.find((point) => point.venueId === venueId && point.name === name)?.id).filter((id): id is string => Boolean(id));
-      return { id: route.id, venueId, name: route.name, type: "navigation" as const, pointIds, directions: route.directions ?? [], estimatedMinutes: route.estimatedMinutes, description: route.description, status: route.status, createdAt: route.createdAt, updatedAt: route.updatedAt };
+      return { id: route.id, exhibitionId: route.exhibitionId ?? DEFAULT_VENUES.find((venue) => venue.id === venueId)?.exhibitionId ?? "", venueId, name: route.name, type: "navigation" as const, pointIds, directions: route.directions ?? [], estimatedMinutes: route.estimatedMinutes, description: route.description, status: route.status, createdAt: route.createdAt, updatedAt: route.updatedAt };
     });
   }
   async saveRoute(item: ExhibitionRoute) { const venue = (await this.listVenues()).find((candidate) => candidate.id === item.venueId); if (!venue) throw new Error("路线所属场地不存在"); const points = await this.listPoints(); if (item.pointIds.length < 2 || item.pointIds.some((id) => points.find((point) => point.id === id)?.venueId !== item.venueId)) throw new Error("路线至少需要两个属于同一场地的点位"); const saved = { ...item, updatedAt: now() }; writeStore("routes", [saved, ...(await this.listRoutes()).filter((candidate) => candidate.id !== item.id)]); return saved; }
@@ -1026,7 +1026,10 @@ export class FetchAdminApiClient implements AdminApiClient {
   async saveVenue(item: EventVenue) { return this.saveCollection<EventVenue>("event", "venues", item as JsonRecord); }
   async deleteVenue(id: string) { await this.request(`/admin/event/venues/${encodeURIComponent(id)}`, { method: "DELETE" }); }
   async listPoints() { return this.collection<EventPoint>("event", "points"); }
-  async savePoint(item: EventPoint) { return this.saveCollection<EventPoint>("event", "points", item as JsonRecord); }
+  async savePoint(item: EventPoint) {
+    const exhibitionId = item.exhibitionId || (await this.listVenues()).find((venue) => venue.id === item.venueId)?.exhibitionId || "";
+    return this.saveCollection<EventPoint>("event", "points", { ...item, exhibitionId });
+  }
   async deletePoint(id: string) { await this.request(`/admin/event/points/${encodeURIComponent(id)}`, { method: "DELETE" }); }
   async listExhibitors() { return this.collection<Exhibitor>("event", "exhibitors"); }
   async saveExhibitor(item: Exhibitor) { return this.saveCollection<Exhibitor>("event", "exhibitors", item as JsonRecord); }
@@ -1035,7 +1038,10 @@ export class FetchAdminApiClient implements AdminApiClient {
   async saveExhibit(item: Exhibit) { return this.saveCollection<Exhibit>("event", "exhibits", item as JsonRecord); }
   async deleteExhibit(id: string) { await this.request(`/admin/event/exhibits/${encodeURIComponent(id)}`, { method: "DELETE" }); }
   async listRoutes() { return this.collection<ExhibitionRoute>("event", "routes"); }
-  async saveRoute(item: ExhibitionRoute) { return this.saveCollection<ExhibitionRoute>("event", "routes", item as JsonRecord); }
+  async saveRoute(item: ExhibitionRoute) {
+    const exhibitionId = item.exhibitionId || (await this.listVenues()).find((venue) => venue.id === item.venueId)?.exhibitionId || "";
+    return this.saveCollection<ExhibitionRoute>("event", "routes", { ...item, exhibitionId });
+  }
   async deleteRoute(id: string) { await this.request(`/admin/event/routes/${encodeURIComponent(id)}`, { method: "DELETE" }); }
   async listBroadcasts() { return this.collection<EmergencyBroadcast>("event", "broadcasts"); }
   async saveBroadcast(item: EmergencyBroadcast) { return this.saveCollection<EmergencyBroadcast>("event", "broadcasts", item as JsonRecord); }

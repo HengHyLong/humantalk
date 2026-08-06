@@ -169,6 +169,29 @@ test("real Admin event operations map list, create, update, lifecycle and activa
   assert.equal(calls.at(-1)?.method, "DELETE");
 });
 
+test("real Admin infers exhibition scope when saving points and routes", async () => {
+  values.clear();
+  values.set("opentalking-admin-token", "event-token");
+  const calls: Array<{ url: string; method: string; body?: Record<string, unknown> }> = [];
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    const method = init?.method ?? "GET";
+    const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined;
+    calls.push({ url, method, body });
+    if (url.includes("/admin/event/venues?")) return Response.json({ items: [{ id: "venue-1", exhibitionId: "expo-1" }] });
+    if (url.endsWith("/admin/event/points") || url.endsWith("/admin/event/routes")) return Response.json({ ...(body?.data as Record<string, unknown>), id: "saved-event" });
+    return Response.json({ items: [] });
+  };
+
+  const api = new FetchAdminApiClient();
+  await api.savePoint({ id: "new-1", exhibitionId: "", venueId: "venue-1", code: "P-1", name: "点位", type: "other", floor: "1F", x: 1, y: 2, exhibitorId: null, exhibitId: null, description: "", status: "draft", createdAt: "", updatedAt: "" });
+  await api.saveRoute({ id: "new-2", exhibitionId: "", venueId: "venue-1", name: "路线", type: "navigation", pointIds: ["p1", "p2"], directions: [], estimatedMinutes: 1, description: "", status: "draft", createdAt: "", updatedAt: "" });
+  const writes = calls.filter((call) => call.method === "POST");
+  assert.equal(writes.length, 2);
+  assert.equal((writes[0].body?.data as Record<string, unknown>).exhibitionId, "expo-1");
+  assert.equal((writes[1].body?.data as Record<string, unknown>).exhibitionId, "expo-1");
+});
+
 test("real Admin system management maps RBAC, audit, monitor, alert and CSV endpoints", async () => {
   values.clear();
   values.set("opentalking-admin-token", "system-token");

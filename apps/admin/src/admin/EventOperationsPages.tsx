@@ -92,12 +92,12 @@ function emptyVenue(exhibitionId: string): EventVenue {
   return { id: `new-${Date.now()}`, exhibitionId, name: "", address: "", description: "", status: "draft", createdAt: "", updatedAt: "" };
 }
 
-function emptyPoint(venueId: string): EventPoint {
-  return { id: `new-${Date.now()}`, venueId, code: "", name: "", type: "other", floor: "1F", x: 50, y: 50, exhibitorId: null, exhibitId: null, description: "", status: "draft", createdAt: "", updatedAt: "" };
+function emptyPoint(venueId: string, exhibitionId = ""): EventPoint {
+  return { id: `new-${Date.now()}`, exhibitionId, venueId, code: "", name: "", type: "other", floor: "1F", x: 50, y: 50, exhibitorId: null, exhibitId: null, description: "", status: "draft", createdAt: "", updatedAt: "" };
 }
 
-function emptyRoute(venueId: string): ExhibitionRoute {
-  return { id: `new-${Date.now()}`, venueId, name: "", type: "navigation", pointIds: [], directions: [], estimatedMinutes: 0, description: "", status: "draft", createdAt: "", updatedAt: "" };
+function emptyRoute(venueId: string, exhibitionId = ""): ExhibitionRoute {
+  return { id: `new-${Date.now()}`, exhibitionId, venueId, name: "", type: "navigation", pointIds: [], directions: [], estimatedMinutes: 0, description: "", status: "draft", createdAt: "", updatedAt: "" };
 }
 
 function emptySchedule(exhibitionId: string): EventSchedule {
