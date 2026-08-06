@@ -11,6 +11,7 @@ from PIL import Image
 from apps.api.admin import AdminStore
 from apps.api.admin.middleware import AdminTraceMiddleware
 from apps.api.admin.routes import public_router, router
+from apps.api.routes import admin_assets
 
 
 def _client(tmp_path) -> TestClient:
@@ -58,6 +59,10 @@ def _gif_bytes() -> bytes:
 
 def test_asset_write_contract_supports_bearer_tokens_dual_gifs_and_scene_binding(tmp_path) -> None:
     with _client(tmp_path) as client:
+        schema = client.app.openapi()
+        assert "get" in schema["paths"]["/api/v1/admin/assets/scene-bindings/{scene}"]
+        upload_schema = schema["paths"]["/api/v1/admin/assets/gifs"]["post"]
+        assert "GifAssetResponse" in str(upload_schema["responses"]["200"])
         headers = _login(client)
         waiting = client.post(
             "/api/v1/admin/assets/gifs",
@@ -78,6 +83,8 @@ def test_asset_write_contract_supports_bearer_tokens_dual_gifs_and_scene_binding
         assert waiting_item["preview_url"] == waiting_item["previewUrl"]
         assert waiting_item["duration_ms"] == waiting_item["durationMs"]
         assert waiting_item["size_bytes"] == waiting_item["sizeBytes"]
+        assert waiting_item["fileName"] == "waiting.gif"
+        assert "filename" not in waiting_item
         assert waiting_item["tags"] == ["欢迎"]
 
         scene = client.put(
@@ -147,3 +154,27 @@ def test_asset_write_permission_denial_has_traceable_contract(tmp_path) -> None:
         assert detail["code"] == "ASSET_PERMISSION_DENIED"
         assert detail["detail"] == "当前用户无 GIF 写入权限"
         assert detail["trace_id"]
+
+
+def test_compatibility_asset_router_exposes_single_scene_get(tmp_path) -> None:
+    app = FastAPI()
+    app.state.settings = SimpleNamespace(admin_data_dir=str(tmp_path / "admin"))
+    app.state.admin_tokens = {
+        "asset-token": {
+            "expiresAt": int(time.time()) + 3600,
+            "user": {"id": "user-content", "username": "content.operator", "role": "content_ops", "permissions": ["asset:scene:write"]},
+        }
+    }
+    app.include_router(admin_assets.router, prefix="/api/v1")
+    with TestClient(app) as client:
+        headers = {"Authorization": "Bearer asset-token"}
+        saved = client.put(
+            "/api/v1/admin/assets/scene-bindings/welcome",
+            headers=headers,
+            json={"scene": "welcome", "assets": []},
+        )
+        assert saved.status_code == 200
+        fetched = client.get("/api/v1/admin/assets/scene-bindings/welcome", headers=headers)
+        assert fetched.status_code == 200
+        assert fetched.json()["scene"] == "welcome"
+        assert fetched.json()["status"] == "active"

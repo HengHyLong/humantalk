@@ -36,6 +36,8 @@ def test_admin_gif_upload_update_preview_and_delete(tmp_path: Path) -> None:
         assert item["kind"] == "gif"
         assert item["width"] == 1
         assert item["height"] == 1
+        assert item["fileName"] == "welcome.gif"
+        assert "filename" not in item
         assert item["tags"] == ["欢迎", "微笑"]
 
         listed = client.get("/api/v1/admin/assets?kind=gif")
@@ -85,7 +87,10 @@ def test_scene_binding_uses_collection_read_and_item_write_contract(tmp_path: Pa
         )
         assert saved.status_code == 200
         assert saved.json()["scene"] == "welcome"
-        assert client.get("/api/v1/admin/assets/scene-bindings/welcome").status_code == 405
+        fetched = client.get("/api/v1/admin/assets/scene-bindings/welcome")
+        assert fetched.status_code == 200
+        assert fetched.json()["scene"] == "welcome"
+        assert fetched.json()["status"] == "active"
         listed = client.get("/api/v1/admin/assets/scene-bindings")
         assert listed.status_code == 200
         assert any(item["scene"] == "welcome" for item in listed.json())

@@ -157,6 +157,8 @@ def test_guide_material_lead_report_and_gif_upload(tmp_path) -> None:
         uploaded = upload.json()
         assert uploaded["frames"] == 1
         assert uploaded["previewUrl"].startswith("/api/v1/admin/assets/gifs/")
+        assert uploaded["fileName"] == "guide.gif"
+        assert "filename" not in uploaded
         file_response = client.get(uploaded["previewUrl"], headers=headers)
         assert file_response.status_code == 200
         assert file_response.content.startswith(b"GIF")

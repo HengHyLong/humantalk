@@ -114,6 +114,26 @@ class SceneBindingBody(BaseModel):
         return data
 
 
+class GifAssetResponse(BaseModel):
+    id: str
+    name: str = ""
+    scene: str = "idle"
+    tags: list[str] = Field(default_factory=list)
+    width: int = 0
+    height: int = 0
+    frames: int = 0
+    duration_ms: int = 0
+    durationMs: int = 0
+    size_bytes: int = 0
+    sizeBytes: int = 0
+    preview_url: str = ""
+    previewUrl: str = ""
+    fileName: str = ""
+    mimeType: str = "application/octet-stream"
+    kind: str = "gif"
+    status: str = "active"
+
+
 class MaterialTokenResponse(BaseModel):
     token: str
     exhibition_id: str
@@ -424,19 +444,22 @@ def _gif_response(record: dict[str, Any]) -> dict[str, Any]:
     preview_url = str(record.get("preview_url") or record.get("previewUrl") or record.get("url") or "")
     duration_ms = int(record.get("duration_ms") or record.get("durationMs") or 0)
     size_bytes = int(record.get("size_bytes") or record.get("sizeBytes") or 0)
+    file_name = str(record.get("fileName") or record.get("filename") or "")
+    normalized = {key: value for key, value in record.items() if key != "filename"}
     return {
-        **record,
+        **normalized,
         "preview_url": preview_url,
         "previewUrl": preview_url,
         "duration_ms": duration_ms,
         "durationMs": duration_ms,
         "size_bytes": size_bytes,
         "sizeBytes": size_bytes,
+        "fileName": file_name,
     }
 
 
-@router.post("/admin/assets/gifs")
-@router.post("/admin/assets/gifs/upload")
+@router.post("/admin/assets/gifs", response_model=GifAssetResponse)
+@router.post("/admin/assets/gifs/upload", response_model=GifAssetResponse)
 async def upload_gif(
     request: Request,
     file: UploadFile = File(...),
@@ -478,7 +501,6 @@ async def upload_gif(
         {
             "id": record_id,
             "name": (name or file.filename or record_id).strip(),
-            "filename": file.filename or record_id,
             "fileName": file.filename or record_id,
             "mimeType": file.content_type or "application/octet-stream",
             "sizeBytes": len(content),
