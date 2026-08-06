@@ -185,6 +185,10 @@ class AdminStore:
             ("menu-asset-voice", "menu-assets", "asset:voice", "声音配置", "menu", "/asset/voice"),
             ("menu-asset-scene", "menu-assets", "asset:scene", "场景绑定", "menu", "/asset/scene"),
             ("menu-asset-idle", "menu-assets", "asset:idle", "待机内容", "menu", "/asset/idle"),
+            ("button-asset-gif-write", "menu-asset-gif", "asset:gif:write", "GIF 写入", "button", ""),
+            ("button-asset-scene-write", "menu-asset-scene", "asset:scene:write", "场景写入", "button", ""),
+            ("button-asset-voice-write", "menu-asset-voice", "asset:voice:write", "声音配置写入", "button", ""),
+            ("button-asset-idle-write", "menu-asset-idle", "asset:idle:write", "待机内容写入", "button", ""),
             ("menu-knowledge", None, "knowledge", "知识中心", "menu", ""),
             ("menu-knowledge-document", "menu-knowledge", "knowledge:document", "文档资料", "menu", "/knowledge/document"),
             ("menu-knowledge-qa", "menu-knowledge", "knowledge:qa", "问答知识", "menu", "/knowledge/qa"),
@@ -223,15 +227,16 @@ class AdminStore:
                     (role_id, code, name, description, now, now),
                 )
             all_permissions = [row[0] for row in conn.execute("SELECT id FROM admin_permissions")]
-            content_codes = {"dashboard:view", "event", "event:exhibition", "event:exhibitor", "event:exhibit", "event:venue", "event:point", "event:route", "event:schedule", "event:broadcast", "interaction", "interact:welcome", "interact:explain", "interact:shopping", "lead:view", "lead:view_sensitive", "lead:export", "lead:feedback", "asset", "asset:avatar", "asset:gif", "asset:voice", "asset:scene", "asset:idle", "knowledge", "knowledge:document", "knowledge:base", "knowledge:memory", "knowledge:qa", "knowledge:script", "knowledge:publish", "knowledge:miss"}
+            content_codes = {"dashboard:view", "event", "event:exhibition", "event:exhibitor", "event:exhibit", "event:venue", "event:point", "event:route", "event:schedule", "event:broadcast", "interaction", "interact:welcome", "interact:explain", "interact:shopping", "lead:view", "lead:view_sensitive", "lead:export", "lead:feedback", "asset", "asset:avatar", "asset:gif", "asset:gif:write", "asset:voice", "asset:voice:write", "asset:scene", "asset:scene:write", "asset:idle", "asset:idle:write", "knowledge", "knowledge:document", "knowledge:base", "knowledge:memory", "knowledge:qa", "knowledge:script", "knowledge:publish", "knowledge:miss"}
             data_codes = {"dashboard:view", "report:export", "lead:view", "lead:export"}
             audit_codes = {"dashboard:view", "system", "system:audit", "audit:trace"}
-            for role_code, codes in (("sys_admin", set(row[1] for row in permissions)), ("content_ops", content_codes), ("data_viewer", data_codes), ("security_audit", audit_codes), ("readonly", set(row[1] for row in permissions))):
+            readonly_codes = {"dashboard:view", "asset:avatar", "asset:gif", "asset:voice", "asset:scene", "asset:idle", "interact:welcome", "interact:explain", "interact:shopping", "knowledge:script", "report:interaction", "system:ops"}
+            for role_code, codes in (("sys_admin", set(row[1] for row in permissions)), ("content_ops", content_codes), ("data_viewer", data_codes), ("security_audit", audit_codes), ("readonly", readonly_codes)):
                 role = conn.execute("SELECT id FROM admin_roles WHERE code=?", (role_code,)).fetchone()
                 if not role:
                     continue
                 for permission_id, code, *_ in conn.execute("SELECT id,code,name,kind,path FROM admin_permissions"):
-                    if code in codes or permission_id in all_permissions and role_code in {"sys_admin", "readonly"}:
+                    if code in codes or permission_id in all_permissions and role_code == "sys_admin":
                         conn.execute("INSERT OR IGNORE INTO admin_role_permissions(role_id,permission_id) VALUES (?,?)", (role[0], permission_id))
             user = conn.execute("SELECT id FROM admin_users WHERE username='admin'").fetchone()
             if not user:

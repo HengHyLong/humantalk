@@ -2459,7 +2459,6 @@ export default function App() {
         });
         if (!update.accepted) return;
         subtitleBufferRef.current = update.buffer;
-        const presentation = getSubtitlePresentation(subtitleBufferRef.current, active.scopeKey, active.turnKey, Date.now());
         if (subtitleMediaReadyRef.current) {
           flushSubtitleDisplay();
           flushSubtitleMessage();

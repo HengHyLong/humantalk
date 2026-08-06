@@ -48,6 +48,8 @@ export type ButtonPermission =
   | "event:broadcast:write"
   | "asset:gif:write"
   | "asset:scene:write"
+  | "asset:voice:write"
+  | "asset:idle:write"
   | "knowledge:qa:write"
   | "knowledge:publish:approve"
   | "knowledge:rollback"

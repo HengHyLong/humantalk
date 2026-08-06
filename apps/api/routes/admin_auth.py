@@ -46,6 +46,8 @@ ROLE_BUTTON_PERMISSIONS: dict[str, frozenset[str]] = {
         {
             "asset:gif:write",
             "asset:scene:write",
+            "asset:voice:write",
+            "asset:idle:write",
             "interact:welcome:write",
             "interact:explain:write",
             "interact:shopping:write",
@@ -57,6 +59,8 @@ ROLE_BUTTON_PERMISSIONS: dict[str, frozenset[str]] = {
         {
             "asset:gif:write",
             "asset:scene:write",
+            "asset:voice:write",
+            "asset:idle:write",
             "interact:welcome:write",
             "interact:explain:write",
             "interact:shopping:write",
