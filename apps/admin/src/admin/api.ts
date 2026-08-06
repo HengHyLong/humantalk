@@ -986,7 +986,13 @@ export class FetchAdminApiClient implements AdminApiClient {
   async deleteRoute(id: string) { await this.request(`/admin/event/routes/${encodeURIComponent(id)}`, { method: "DELETE" }); }
   async listBroadcasts() { return this.collection<EmergencyBroadcast>("event", "broadcasts"); }
   async saveBroadcast(item: EmergencyBroadcast) { return this.saveCollection<EmergencyBroadcast>("event", "broadcasts", item as JsonRecord); }
-  async transitionBroadcast(id: string, status: EmergencyBroadcast["status"]) { return this.saveCollection<EmergencyBroadcast>("event", "broadcasts", { id, status }); }
+  async transitionBroadcast(id: string, status: EmergencyBroadcast["status"]) {
+    if (status === "active" || status === "ended") {
+      const action = status === "active" ? "activate" : "end";
+      return this.request<EmergencyBroadcast>(`/admin/event/broadcasts/${encodeURIComponent(id)}/${action}`, { method: "POST" });
+    }
+    return this.saveCollection<EmergencyBroadcast>("event", "broadcasts", { id, status });
+  }
   async deleteBroadcast(id: string) { await this.request(`/admin/event/broadcasts/${encodeURIComponent(id)}`, { method: "DELETE" }); }
   async listSchedules() { return this.collection<EventSchedule>("event", "schedules"); }
   async saveSchedule(item: EventSchedule) { return this.saveCollection<EventSchedule>("event", "schedules", item as JsonRecord); }
