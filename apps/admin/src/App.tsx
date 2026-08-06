@@ -1013,7 +1013,7 @@ export default function App() {
     }
   });
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
-  const toastTimersRef = useRef<Map<string, ReturnType<typeof window.setTimeout>>>(new Map());
+  const toastTimersRef = useRef<Map<string, number>>(new Map());
   const [recordingSaving, setRecordingSaving] = useState(false);
   const [ftRecordPhase, setFtRecordPhase] = useState<"idle" | "recording" | "stopped">("idle");
   const [ftRecordBusy, setFtRecordBusy] = useState(false);

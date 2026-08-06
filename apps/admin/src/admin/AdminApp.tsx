@@ -484,7 +484,7 @@ export function AdminApp() {
   }, []);
   useEffect(() => { setMobileOpen(false); }, [path]);
   const login = async (username: string, password: string) => { const result = await adminApi.login(username, password); setUser(result.user); window.localStorage.setItem("opentalking-admin-session", JSON.stringify(result)); navigate("/dashboard"); };
-  const logout = () => { window.localStorage.removeItem("opentalking-admin-session"); setUser(null); };
+  const logout = () => { window.localStorage.removeItem("opentalking-admin-session"); window.localStorage.removeItem("opentalking-admin-token"); window.localStorage.removeItem("opentalking-admin-refresh-token"); setUser(null); };
   if (!user) return <LoginScreen onLogin={login} />;
   const title = PAGE_LABELS[path] ?? "管理模块";
   const isKnown = Boolean(PAGE_LABELS[path]);

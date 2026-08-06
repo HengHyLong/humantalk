@@ -40,6 +40,7 @@ import type {
 } from "./types";
 
 const STORAGE_PREFIX = "opentalking-admin-";
+const REFRESH_TOKEN_KEY = `${STORAGE_PREFIX}refresh-token`;
 const now = () => new Date().toISOString();
 export type DownloadData = string | Blob;
 export type GifCreateInput = Omit<GifAssetMeta, "id" | "createdAt"> & { file?: File };
@@ -69,8 +70,22 @@ function writeStore<T>(key: string, value: T): void {
 function readStoredSessionToken(): string {
   try {
     const raw = window.localStorage.getItem("opentalking-admin-session");
-    const session = raw ? JSON.parse(raw) as { token?: unknown } : null;
-    return typeof session?.token === "string" ? session.token : "";
+    const session = raw ? JSON.parse(raw) as { token?: unknown; accessToken?: unknown; access_token?: unknown } : null;
+    const token = session?.token ?? session?.accessToken ?? session?.access_token;
+    return typeof token === "string" ? token : "";
+  } catch {
+    return "";
+  }
+}
+
+function readStoredRefreshToken(): string {
+  try {
+    const stored = window.localStorage.getItem(REFRESH_TOKEN_KEY);
+    if (stored) return stored;
+    const raw = window.localStorage.getItem("opentalking-admin-session");
+    const session = raw ? JSON.parse(raw) as { refreshToken?: unknown; refresh_token?: unknown } : null;
+    const token = session?.refreshToken ?? session?.refresh_token;
+    return typeof token === "string" ? token : "";
   } catch {
     return "";
   }
@@ -217,7 +232,7 @@ const DEFAULT_ALERTS: AlertEvent[] = [
 ];
 
 export interface AdminApiClient {
-  login(username: string, password: string): Promise<{ token: string; user: AdminUser }>;
+  login(username: string, password: string): Promise<{ token: string; refreshToken?: string; user: AdminUser }>;
   getDashboard(): Promise<DashboardData>;
   getReport(filters?: ReportFilters): Promise<ReportOperations>;
   getOperationsReport(filters?: { exhibitionId?: string; from?: string; to?: string; groupBy?: "day" | "terminal" | "scene" | "intent" }): Promise<OperationsReport>;
@@ -676,7 +691,40 @@ export class FetchAdminApiClient implements AdminApiClient {
     return window.localStorage.getItem(`${STORAGE_PREFIX}token`) || readStoredSessionToken();
   }
 
-  private async request<T>(path: string, init: RequestInit = {}, tokenOverride?: string): Promise<T> {
+  private refreshToken(): string {
+    return window.localStorage.getItem(REFRESH_TOKEN_KEY) || readStoredRefreshToken();
+  }
+
+  private storeTokens(accessToken: string, refreshToken?: string): void {
+    if (accessToken) window.localStorage.setItem(`${STORAGE_PREFIX}token`, accessToken);
+    if (refreshToken) window.localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
+  }
+
+  private clearSession(): void {
+    window.localStorage.removeItem(`${STORAGE_PREFIX}token`);
+    window.localStorage.removeItem(REFRESH_TOKEN_KEY);
+    window.localStorage.removeItem("opentalking-admin-session");
+    window.dispatchEvent(new CustomEvent("opentalking-admin-auth-expired"));
+  }
+
+  private async refreshAccessToken(): Promise<string | null> {
+    const refreshToken = this.refreshToken();
+    if (!refreshToken) return null;
+    try {
+      const response = await this.request<JsonRecord>("/auth/refresh", {
+        method: "POST",
+        body: JSON.stringify({ refresh_token: refreshToken }),
+      }, "", false);
+      const accessToken = String(response.access_token || response.token || "");
+      if (!accessToken) return null;
+      this.storeTokens(accessToken, typeof response.refresh_token === "string" ? response.refresh_token : refreshToken);
+      return accessToken;
+    } catch {
+      return null;
+    }
+  }
+
+  private async request<T>(path: string, init: RequestInit = {}, tokenOverride?: string, allowRefresh = true): Promise<T> {
     const token = tokenOverride ?? this.token();
     const response = await fetch(buildAdminFetchUrl(`/v1${path}`), {
       ...init,
@@ -686,10 +734,10 @@ export class FetchAdminApiClient implements AdminApiClient {
         ...init.headers,
       },
     });
-    if (response.status === 401 && path !== "/auth/login") {
-      window.localStorage.removeItem(`${STORAGE_PREFIX}token`);
-      window.localStorage.removeItem("opentalking-admin-session");
-      window.dispatchEvent(new CustomEvent("opentalking-admin-auth-expired"));
+    if (response.status === 401 && allowRefresh && path !== "/auth/login" && path !== "/auth/refresh") {
+      const accessToken = await this.refreshAccessToken();
+      if (accessToken) return this.request<T>(path, init, accessToken, false);
+      this.clearSession();
     }
     if (!response.ok) {
       let detail = `Admin API ${response.status}`;
@@ -786,15 +834,17 @@ export class FetchAdminApiClient implements AdminApiClient {
     };
   }
 
-  async login(username: string, password: string): Promise<{ token: string; user: AdminUser }> {
+  async login(username: string, password: string): Promise<{ token: string; refreshToken?: string; user: AdminUser }> {
     const response = await this.request<JsonRecord>("/auth/login", { method: "POST", body: JSON.stringify({ username, password }) });
     const token = String(response.token || response.access_token || "");
-    window.localStorage.setItem(`${STORAGE_PREFIX}token`, token);
+    const refreshToken = typeof response.refresh_token === "string" ? response.refresh_token : undefined;
+    this.storeTokens(token, refreshToken);
     const permissions = await this.request<JsonRecord>("/auth/permissions", {}, token);
     const roleCode = String(response.user?.roles?.[0] || "sys_admin") as AdminUser["role"];
     const role = (ROLE_PERMISSIONS[roleCode] ? roleCode : "readonly") as AdminUser["role"];
     return {
       token,
+      refreshToken,
       user: {
         id: String(response.user?.id || ""),
         username: String(response.user?.username || username),

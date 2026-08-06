@@ -45,6 +45,7 @@ test("real Admin login persists token and uses the /api/v1 prefix", async () => 
   assert.equal(calls[1].url.endsWith("/api/v1/auth/permissions"), true);
   assert.equal(calls[1].authorization, "Bearer jwt-login");
   assert.equal(values.get("opentalking-admin-token"), "jwt-login");
+  assert.equal(values.get("opentalking-admin-refresh-token"), "refresh-login");
   assert.equal(session.user.role, "sys_admin");
   assert.deepEqual(session.user.permissions, ["dashboard:view"]);
 });
@@ -66,6 +67,35 @@ test("real Admin clears its session and emits auth-expired after 401", async () 
   assert.equal(values.has("opentalking-admin-token"), false);
   assert.equal(values.has("opentalking-admin-session"), false);
   assert.deepEqual(dispatchedEvents, ["opentalking-admin-auth-expired"]);
+});
+
+test("real Admin refreshes an expired access token with the stored refresh token", async () => {
+  values.clear();
+  values.set("opentalking-admin-token", "expired-token");
+  values.set("opentalking-admin-refresh-token", "refresh-token");
+  const calls: Array<{ url: string; authorization: string | null; body?: Record<string, unknown> }> = [];
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    const headers = new Headers(init?.headers);
+    const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined;
+    calls.push({ url, authorization: headers.get("Authorization"), body });
+    if (url.endsWith("/api/v1/auth/refresh")) return Response.json({ access_token: "renewed-token", refresh_token: "rotated-refresh" });
+    if (headers.get("Authorization") === "Bearer expired-token") return Response.json({ detail: "Token expired" }, { status: 401 });
+    return Response.json({ interaction_count: 0, online_terminals: 0, pending_knowledge: 0, new_leads: 0, alerts: 0, todo: [] });
+  };
+
+  const data = await new FetchAdminApiClient().getDashboard();
+  assert.equal(data.metrics.length, 5);
+  assert.deepEqual(calls.map((call) => new URL(call.url).pathname), [
+    "/api/v1/admin/report",
+    "/api/v1/auth/refresh",
+    "/api/v1/admin/report",
+  ]);
+  assert.equal(calls[1].authorization, null);
+  assert.deepEqual(calls[1].body, { refresh_token: "refresh-token" });
+  assert.equal(calls[2].authorization, "Bearer renewed-token");
+  assert.equal(values.get("opentalking-admin-token"), "renewed-token");
+  assert.equal(values.get("opentalking-admin-refresh-token"), "rotated-refresh");
 });
 
 test("real Admin errors expose the backend detail message", async () => {
