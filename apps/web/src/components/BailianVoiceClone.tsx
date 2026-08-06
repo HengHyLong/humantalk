@@ -221,7 +221,7 @@ export function BailianVoiceClone({ onSuccess, onClose }: BailianVoiceCloneProps
       setRecorderPhase("recording");
       timerRef.current = window.setInterval(() => {
         setElapsedMs(elapsedBeforePauseRef.current + Math.max(0, Date.now() - recordStartedAtRef.current));
-      }, 250);
+      }, 250) as unknown as number;
     } catch (e) {
       stopTracks();
       clearTimer();
@@ -270,7 +270,7 @@ export function BailianVoiceClone({ onSuccess, onClose }: BailianVoiceCloneProps
     setRecorderPhase("recording");
     timerRef.current = window.setInterval(() => {
       setElapsedMs(elapsedBeforePauseRef.current + Math.max(0, Date.now() - recordStartedAtRef.current));
-    }, 250);
+    }, 250) as unknown as number;
   }, []);
 
   const togglePlayback = useCallback(async () => {
