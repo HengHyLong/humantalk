@@ -160,12 +160,15 @@ def collect_runtime_monitor(request: Request, store: AdminStore) -> dict[str, An
         _path_service("service-knowledge", "Agent Knowledge", str(getattr(settings, "agent_knowledge_root", "")), "知识库目录"),
         _path_service("service-admin-media", "Admin Media", str(getattr(settings, "admin_media_root", "")), "管理端媒体目录"),
     ]
+    sample_at = utc_now()
     history = getattr(request.app.state, "admin_monitor_history", None)
     if history is None:
         history = {"cpu": [], "memory": []}
         request.app.state.admin_monitor_history = history
-    history["cpu"] = [*history["cpu"], cpu][-20:]
-    history["memory"] = [*history["memory"], memory][-20:]
+    # Keep enough points for a 24-hour window. The UI filters these points by
+    # their actual collection time instead of treating them as fixed slots.
+    history["cpu"] = [*history["cpu"], {"at": sample_at, "value": cpu}][-288:]
+    history["memory"] = [*history["memory"], {"at": sample_at, "value": memory}][-288:]
 
     alerts: list[dict[str, Any]] = []
     alerts.extend(item for service in services if (item := _runtime_alert(service)) is not None)
