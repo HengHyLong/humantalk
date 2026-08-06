@@ -249,6 +249,7 @@ export function RouteDetailPage({ routeId, onBack }: { routeId: string; onBack: 
   const [points, setPoints] = useState<EventPoint[]>([]);
   const [error, setError] = useState("");
   useEffect(() => { void Promise.all([adminApi.listRoutes(), adminApi.listVenues(), adminApi.listPoints()]).then(([routes, nextVenues, nextPoints]) => { setRoute(routes.find((item) => item.id === routeId) ?? null); setVenues(nextVenues); setPoints(nextPoints); }).catch(() => setError("路线详情读取失败，请检查服务状态。")); }, [routeId]);
+  useEffect(() => { if (!routeId) return; void adminApi.listRoutes().then((routes) => setRoute((current) => current ?? routes.find((item) => item.id === routeId || item.name === routeId) ?? null)); }, [routeId]);
   if (error) return <div className="p-6 xl:p-8"><Header eyebrow="展会运营 / 空间导览 / 路线" title="路线详情" description="查看路线点位顺序、导航指引和场地图。" action={<Button variant="secondary" onClick={onBack}>返回路线列表</Button>} /><p className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</p></div>;
   if (!route) return <div className="p-6 xl:p-8"><Header eyebrow="展会运营 / 空间导览 / 路线" title="路线详情" description="正在读取路线配置。" action={<Button variant="secondary" onClick={onBack}>返回路线列表</Button>} /><Card className="p-10 text-center text-sm text-slate-400">路线加载中…</Card></div>;
   const venueName = venues.find((item) => item.id === route.venueId)?.name ?? route.venueId;
