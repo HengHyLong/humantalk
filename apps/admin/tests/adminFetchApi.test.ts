@@ -45,6 +45,7 @@ test("real Admin login persists token and uses the /api/v1 prefix", async () => 
   assert.equal(calls[1].url.endsWith("/api/v1/auth/permissions"), true);
   assert.equal(calls[1].authorization, "Bearer jwt-login");
   assert.equal(values.get("opentalking-admin-token"), "jwt-login");
+  assert.equal(values.get("opentalking-admin-refresh-token"), "refresh-login");
   assert.equal(session.user.role, "sys_admin");
   assert.deepEqual(session.user.permissions, ["dashboard:view"]);
 });
@@ -66,6 +67,35 @@ test("real Admin clears its session and emits auth-expired after 401", async () 
   assert.equal(values.has("opentalking-admin-token"), false);
   assert.equal(values.has("opentalking-admin-session"), false);
   assert.deepEqual(dispatchedEvents, ["opentalking-admin-auth-expired"]);
+});
+
+test("real Admin refreshes an expired access token with the stored refresh token", async () => {
+  values.clear();
+  values.set("opentalking-admin-token", "expired-token");
+  values.set("opentalking-admin-refresh-token", "refresh-token");
+  const calls: Array<{ url: string; authorization: string | null; body?: Record<string, unknown> }> = [];
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    const headers = new Headers(init?.headers);
+    const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined;
+    calls.push({ url, authorization: headers.get("Authorization"), body });
+    if (url.endsWith("/api/v1/auth/refresh")) return Response.json({ access_token: "renewed-token", refresh_token: "rotated-refresh" });
+    if (headers.get("Authorization") === "Bearer expired-token") return Response.json({ detail: "Token expired" }, { status: 401 });
+    return Response.json({ interaction_count: 0, online_terminals: 0, pending_knowledge: 0, new_leads: 0, alerts: 0, todo: [] });
+  };
+
+  const data = await new FetchAdminApiClient().getDashboard();
+  assert.equal(data.metrics.length, 5);
+  assert.deepEqual(calls.map((call) => new URL(call.url).pathname), [
+    "/api/v1/admin/report",
+    "/api/v1/auth/refresh",
+    "/api/v1/admin/report",
+  ]);
+  assert.equal(calls[1].authorization, null);
+  assert.deepEqual(calls[1].body, { refresh_token: "refresh-token" });
+  assert.equal(calls[2].authorization, "Bearer renewed-token");
+  assert.equal(values.get("opentalking-admin-token"), "renewed-token");
+  assert.equal(values.get("opentalking-admin-refresh-token"), "rotated-refresh");
 });
 
 test("real Admin errors expose the backend detail message", async () => {
@@ -137,6 +167,29 @@ test("real Admin event operations map list, create, update, lifecycle and activa
   assert.equal(calls.at(-1)?.url.endsWith("/admin/event/broadcasts/broadcast-1/activate"), true);
   await api.deleteBroadcast(broadcast.id);
   assert.equal(calls.at(-1)?.method, "DELETE");
+});
+
+test("real Admin infers exhibition scope when saving points and routes", async () => {
+  values.clear();
+  values.set("opentalking-admin-token", "event-token");
+  const calls: Array<{ url: string; method: string; body?: Record<string, unknown> }> = [];
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    const method = init?.method ?? "GET";
+    const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined;
+    calls.push({ url, method, body });
+    if (url.includes("/admin/event/venues?")) return Response.json({ items: [{ id: "venue-1", exhibitionId: "expo-1" }] });
+    if (url.endsWith("/admin/event/points") || url.endsWith("/admin/event/routes")) return Response.json({ ...(body?.data as Record<string, unknown>), id: "saved-event" });
+    return Response.json({ items: [] });
+  };
+
+  const api = new FetchAdminApiClient();
+  await api.savePoint({ id: "new-1", exhibitionId: "", venueId: "venue-1", code: "P-1", name: "点位", type: "other", floor: "1F", x: 1, y: 2, exhibitorId: null, exhibitId: null, description: "", status: "draft", createdAt: "", updatedAt: "" });
+  await api.saveRoute({ id: "new-2", exhibitionId: "", venueId: "venue-1", name: "路线", type: "navigation", pointIds: ["p1", "p2"], directions: [], estimatedMinutes: 1, description: "", status: "draft", createdAt: "", updatedAt: "" });
+  const writes = calls.filter((call) => call.method === "POST");
+  assert.equal(writes.length, 2);
+  assert.equal((writes[0].body?.data as Record<string, unknown>).exhibitionId, "expo-1");
+  assert.equal((writes[1].body?.data as Record<string, unknown>).exhibitionId, "expo-1");
 });
 
 test("real Admin system management maps RBAC, audit, monitor, alert and CSV endpoints", async () => {

@@ -317,6 +317,7 @@ export type PointStatus = "draft" | "active" | "inactive";
 
 export type EventPoint = {
   id: string;
+  exhibitionId: string;
   venueId: string;
   code: string;
   name: string;
@@ -337,6 +338,7 @@ export type RouteType = "navigation" | "tour" | "emergency";
 
 export type ExhibitionRoute = {
   id: string;
+  exhibitionId: string;
   venueId: string;
   name: string;
   type: RouteType;
