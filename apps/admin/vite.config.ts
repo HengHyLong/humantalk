@@ -29,7 +29,9 @@ const apiProxy = {
 };
 
 export default defineConfig({
-  base: "./",
+  // Admin uses browser history routing and is served from the site root.
+  // Root-relative assets must remain valid after refreshing a nested route.
+  base: "/",
   plugins: [react()],
   server: {
     port: 5173,
