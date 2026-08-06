@@ -3,6 +3,7 @@ import { EDGE_ZH_VOICES } from "../constants/edgeZhVoices";
 import type {
   AdminUser,
   DashboardData,
+  OperationsReport,
   EventSchedule,
   EventVenue,
   EmergencyBroadcast,
@@ -29,36 +30,23 @@ import type {
   PermissionNode,
   AuditLog,
   SystemMonitor,
-  TerminalStatus,
-  InteractionRecord,
-  GatewayPolicy,
   AlertEvent,
   WelcomeConfig,
   ExplainFlow,
   ShoppingStrategy,
+  GatewayPolicy,
   ReportFilters,
   ReportOperations,
-  AuthSession,
-  AdminRole,
-  PermissionCode,
-  ButtonPermission,
 } from "./types";
 
-export type GifCreateInput = Omit<GifAssetMeta, "id" | "createdAt"> & { file?: File };
-
 const STORAGE_PREFIX = "opentalking-admin-";
-const AUTH_TOKEN_KEY = `${STORAGE_PREFIX}token`;
-const AUTH_REFRESH_TOKEN_KEY = `${STORAGE_PREFIX}refresh-token`;
 const now = () => new Date().toISOString();
+export type DownloadData = string | Blob;
+export type GifCreateInput = Omit<GifAssetMeta, "id" | "createdAt"> & { file?: File };
 
 function buildAdminFetchUrl(path: string): string {
   const base = typeof window === "undefined" ? "http://127.0.0.1:5173/" : window.location.href;
   return new URL(`/api${path}`, base).toString();
-}
-
-function withQuery(path: string, params?: Record<string, string | undefined>): string {
-  const query = new URLSearchParams(Object.entries(params ?? {}).filter((entry): entry is [string, string] => Boolean(entry[1])));
-  return query.size ? `${path}?${query.toString()}` : path;
 }
 
 function readStore<T>(key: string, fallback: T): T {
@@ -75,6 +63,16 @@ function writeStore<T>(key: string, value: T): void {
     window.localStorage.setItem(`${STORAGE_PREFIX}${key}`, JSON.stringify(value));
   } catch {
     // Mock data is best effort when browser storage is unavailable.
+  }
+}
+
+function readStoredSessionToken(): string {
+  try {
+    const raw = window.localStorage.getItem("opentalking-admin-session");
+    const session = raw ? JSON.parse(raw) as { token?: unknown } : null;
+    return typeof session?.token === "string" ? session.token : "";
+  } catch {
+    return "";
   }
 }
 
@@ -219,15 +217,14 @@ const DEFAULT_ALERTS: AlertEvent[] = [
 ];
 
 export interface AdminApiClient {
-  login(username: string, password: string): Promise<AuthSession>;
-  getCurrentUser(): Promise<AdminUser>;
-  refreshAuth(): Promise<AuthSession>;
-  logout(): Promise<void>;
-  getPermissions(): Promise<{ permissions: PermissionCode[]; buttonPermissions: ButtonPermission[] }>;
+  login(username: string, password: string): Promise<{ token: string; user: AdminUser }>;
   getDashboard(): Promise<DashboardData>;
   getReport(filters?: ReportFilters): Promise<ReportOperations>;
+  getOperationsReport(filters?: { exhibitionId?: string; from?: string; to?: string; groupBy?: "day" | "terminal" | "scene" | "intent" }): Promise<OperationsReport>;
+  exportReport(exhibitionId?: string, format?: "xlsx" | "csv", filters?: { from?: string; to?: string; groupBy?: "day" | "terminal" | "scene" | "intent" }): Promise<DownloadData>;
   listGifs(): Promise<GifAssetMeta[]>;
   createGif(input: GifCreateInput): Promise<GifAssetMeta>;
+  uploadGif(file: File, input: Pick<GifAssetMeta, "name" | "scene" | "tags" | "status">): Promise<GifAssetMeta>;
   updateGif(id: string, patch: Partial<GifAssetMeta>): Promise<GifAssetMeta>;
   deleteGif(id: string): Promise<void>;
   listVoiceConfigs(): Promise<VoiceAsset[]>;
@@ -235,6 +232,8 @@ export interface AdminApiClient {
   deleteVoiceConfig(id: string): Promise<void>;
   listSceneBindings(): Promise<SceneBinding[]>;
   saveSceneBindings(bindings: SceneBinding[]): Promise<SceneBinding[]>;
+  getSceneBinding(scene: string): Promise<SceneBinding>;
+  saveSceneBinding(binding: SceneBinding): Promise<SceneBinding>;
   listIdle(): Promise<IdleContent[]>;
   saveIdle(item: IdleContent): Promise<IdleContent>;
   deleteIdle(id: string): Promise<void>;
@@ -245,6 +244,8 @@ export interface AdminApiClient {
   listQa(): Promise<KnowledgeQa[]>;
   saveQa(item: KnowledgeQa): Promise<KnowledgeQa>;
   transitionQa(id: string, status: KnowledgeQa["status"]): Promise<KnowledgeQa>;
+  listQaVersions(id: string): Promise<Array<Record<string, unknown>>>;
+  rollbackQa(id: string, version: number, reason: string): Promise<KnowledgeQa>;
   deleteQa(id: string): Promise<void>;
   listScripts(): Promise<ScriptTemplate[]>;
   saveScript(item: ScriptTemplate): Promise<ScriptTemplate>;
@@ -260,13 +261,15 @@ export interface AdminApiClient {
   listPackages(): Promise<PublishPackage[]>;
   createPackage(input: Pick<PublishPackage, "name" | "exhibition" | "qaCount" | "documentCount">): Promise<PublishPackage>;
   transitionPackage(id: string, status: PublishPackage["status"]): Promise<PublishPackage>;
+  submitPackage(id: string, reason?: string): Promise<PublishPackage>;
+  publishPackage(id: string, reason?: string): Promise<PublishPackage>;
+  rollbackPackage(id: string, targetPackageId?: string, reason?: string): Promise<PublishPackage>;
   listMissPool(): Promise<MissPoolItem[]>;
   resolveMiss(id: string, status: MissPoolItem["status"]): Promise<MissPoolItem>;
+  resolveMissAction(id: string, action: "ignore" | "handled" | "create_qa", reason?: string, qa?: Record<string, unknown>): Promise<MissPoolItem>;
   listExhibitions(): Promise<Exhibition[]>;
   saveExhibition(item: Exhibition): Promise<Exhibition>;
-  getExhibitionRuntimeConfig(id: string): Promise<Exhibition>;
   saveExhibitionRuntimeConfig(item: Exhibition): Promise<Exhibition>;
-  validateExhibitionRuntimeConfig(item: Exhibition): Promise<{ valid?: boolean; [key: string]: unknown }>;
   deleteExhibition(id: string): Promise<void>;
   transitionExhibition(id: string, status: ExhibitionStatus): Promise<Exhibition>;
   listVenues(): Promise<EventVenue[]>;
@@ -281,11 +284,9 @@ export interface AdminApiClient {
   listExhibits(): Promise<Exhibit[]>;
   saveExhibit(item: Exhibit): Promise<Exhibit>;
   deleteExhibit(id: string): Promise<void>;
-  uploadExhibitImage(id: string, file: File): Promise<{ url: string }>;
   listRoutes(): Promise<ExhibitionRoute[]>;
   saveRoute(item: ExhibitionRoute): Promise<ExhibitionRoute>;
   deleteRoute(id: string): Promise<void>;
-  uploadRouteImage(id: string, file: File): Promise<{ url: string }>;
   listBroadcasts(): Promise<EmergencyBroadcast[]>;
   saveBroadcast(item: EmergencyBroadcast): Promise<EmergencyBroadcast>;
   transitionBroadcast(id: string, status: EmergencyBroadcast["status"]): Promise<EmergencyBroadcast>;
@@ -297,7 +298,7 @@ export interface AdminApiClient {
   getLead(id: string): Promise<Lead | null>;
   saveLead(item: Lead): Promise<Lead>;
   updateLeadStatus(id: string, status: LeadStatus, note?: string): Promise<Lead>;
-  exportLeads(filters?: { exhibitionId?: string; keyword?: string; status?: string; from?: string; to?: string }): Promise<string>;
+  exportLeads(filters?: { exhibitionId?: string; keyword?: string; status?: string; from?: string; to?: string }, format?: "xlsx" | "csv"): Promise<DownloadData>;
   listFeedback(filters?: { exhibitionId?: string; keyword?: string; status?: Feedback["status"] }): Promise<Feedback[]>;
   resolveFeedback(id: string, note: string, operator?: string): Promise<Feedback>;
   listAdminUsers(filters?: { keyword?: string; status?: AdminUserRecord["status"] }): Promise<AdminUserRecord[]>;
@@ -318,9 +319,6 @@ export interface AdminApiClient {
   getSystemMonitor(): Promise<SystemMonitor>;
   listAlerts(): Promise<AlertEvent[]>;
   acknowledgeAlert(id: string, operator?: string): Promise<AlertEvent>;
-  listTerminals(filters?: { exhibitionId?: string; status?: TerminalStatus["status"] }): Promise<TerminalStatus[]>;
-  listInteractionRecords(filters?: { exhibitionId?: string; terminalId?: string; from?: string; to?: string }): Promise<InteractionRecord[]>;
-  exportInteractionRecords(filters?: { exhibitionId?: string; terminalId?: string; from?: string; to?: string }): Promise<string>;
   getGatewayPolicy(): Promise<GatewayPolicy>;
   saveGatewayPolicy(policy: GatewayPolicy): Promise<GatewayPolicy>;
 }
@@ -376,15 +374,8 @@ function migrateInteractionMockData(): void {
 export class MockAdminApiClient implements AdminApiClient {
   async login(username: string, password: string) {
     if (username !== "admin" || password !== "Admin@123456") throw new Error("账号或密码不正确");
-    const session = { token: `mock-jwt-${Date.now()}`, user: buildUser(username, "sys_admin"), expiresAt: Date.now() + 60 * 60 * 1000 };
-    writeStore("token", session.token);
-    return session;
+    return { token: `mock-jwt-${Date.now()}`, user: buildUser(username, "sys_admin") };
   }
-
-  async getCurrentUser() { return buildUser("admin", "sys_admin"); }
-  async refreshAuth() { return this.login("admin", "Admin@123456"); }
-  async logout() { try { window.localStorage.removeItem(AUTH_TOKEN_KEY); } catch { /* best effort */ } }
-  async getPermissions() { const user = await this.getCurrentUser(); return { permissions: user.permissions, buttonPermissions: user.buttonPermissions }; }
 
   async getDashboard(): Promise<DashboardData> {
     const [qa, packages, documents, missPool] = await Promise.all([this.listQa(), this.listPackages(), this.listDocuments(), this.listMissPool()]);
@@ -411,10 +402,32 @@ export class MockAdminApiClient implements AdminApiClient {
     };
   }
 
-  async getReport(): Promise<ReportOperations> {
+  async getOperationsReport(_filters?: { exhibitionId?: string; from?: string; to?: string; groupBy?: "day" | "terminal" | "scene" | "intent" }): Promise<OperationsReport> {
+    const dashboard = await this.getDashboard();
+    return {
+      summary: {
+        exhibition_id: "exhibition-1",
+        interaction_count: Number(dashboard.metrics.find((item) => item.id === "interactions")?.value.replace(/,/g, "") || 0),
+        online_terminals: Number(dashboard.metrics.find((item) => item.id === "terminals")?.value.split("/")[0].trim() || 0),
+        pending_knowledge: Number(dashboard.metrics.find((item) => item.id === "pending")?.value || 0),
+        new_leads: Number(dashboard.metrics.find((item) => item.id === "leads")?.value || 0),
+        alerts: Number(dashboard.metrics.find((item) => item.id === "backlog")?.value || 0),
+        todo: dashboard.todos,
+      },
+      series: [],
+      dimensions: { interaction: [], hotspot: [], lead: [], resource: [] },
+    };
+  }
+
+  async exportReport(): Promise<DownloadData> {
+    const report = await this.getOperationsReport();
+    return JSON.stringify(report, null, 2);
+  }
+
+  async getReport(filters: ReportFilters = {}): Promise<ReportOperations> {
     return {
       generatedAt: now(),
-      filters: {},
+      filters,
       interaction: { total: 0, averageDurationMs: 0, byScene: [], byTerminal: [], byHour: [] },
       hotspot: { items: [] },
       hit: { total: 0, hit: 0, miss: 0, hitRate: 0, strongQaHit: 0, ragHit: 0 },
@@ -424,7 +437,11 @@ export class MockAdminApiClient implements AdminApiClient {
   }
 
   async listGifs() { return readStore("gifs", DEFAULT_GIFS); }
-  async createGif(input: GifCreateInput) { const { file: _file, ...metadata } = input; const item = { ...metadata, id: `gif-${Date.now()}`, createdAt: now() }; writeStore("gifs", [item, ...await this.listGifs()]); return item; }
+  async createGif(input: Omit<GifAssetMeta, "id" | "createdAt">) { const item = { ...input, id: `gif-${Date.now()}`, createdAt: now() }; writeStore("gifs", [item, ...await this.listGifs()]); return item; }
+  async uploadGif(file: File, input: Pick<GifAssetMeta, "name" | "scene" | "tags" | "status">) {
+    const previewUrl = typeof URL.createObjectURL === "function" ? URL.createObjectURL(file) : `mock://${file.name}`;
+    return this.createGif({ ...input, kind: "gif", previewUrl, width: 0, height: 0, frames: 0, durationMs: 0, fileName: file.name, sizeBytes: file.size });
+  }
   async updateGif(id: string, patch: Partial<GifAssetMeta>) { const items = await this.listGifs(); const next = items.map((item) => item.id === id ? { ...item, ...patch } : item); writeStore("gifs", next); return next.find((item) => item.id === id) ?? items[0]; }
   async deleteGif(id: string) { writeStore("gifs", (await this.listGifs()).filter((item) => item.id !== id)); }
   async listVoiceConfigs() { return readStore<VoiceAsset[]>("voice-configs", []); }
@@ -432,6 +449,8 @@ export class MockAdminApiClient implements AdminApiClient {
   async deleteVoiceConfig(id: string) { writeStore("voice-configs", (await this.listVoiceConfigs()).filter((item) => item.id !== id)); }
   async listSceneBindings() { return readStore<SceneBinding[]>("scene-bindings", [{ scene: "welcome", assets: [{ assetId: "gif-welcome", isPrimary: true, order: 0 }] }, { scene: "explain", assets: [{ assetId: "gif-explain", isPrimary: true, order: 0 }] }, { scene: "idle", assets: [{ assetId: "gif-idle", isPrimary: true, order: 0 }] }]); }
   async saveSceneBindings(bindings: SceneBinding[]) { writeStore("scene-bindings", bindings); return bindings; }
+  async getSceneBinding(scene: string) { return (await this.listSceneBindings()).find((item) => item.scene === scene) ?? { scene, assets: [] }; }
+  async saveSceneBinding(binding: SceneBinding) { await this.saveSceneBindings([...(await this.listSceneBindings()).filter((item) => item.scene !== binding.scene), binding]); return binding; }
   async listIdle() { return readStore<IdleContent[]>("idle", [{ id: "idle-1", type: "标语轮播", title: "西博会欢迎语", content: "欢迎来到 2026 西部博览会", interval: 8, exhibition: "2026 西部博览会", enabled: true }]); }
   async saveIdle(item: IdleContent) { const items = (await this.listIdle()).filter((candidate) => candidate.id !== item.id); const next = [item, ...items]; writeStore("idle", next); return item; }
   async deleteIdle(id: string) { writeStore("idle", (await this.listIdle()).filter((item) => item.id !== id)); }
@@ -443,6 +462,8 @@ export class MockAdminApiClient implements AdminApiClient {
   async listQa() { return readStore("qa", DEFAULT_QA); }
   async saveQa(item: KnowledgeQa) { const list = await this.listQa(); const next = [item, ...list.filter((candidate) => candidate.id !== item.id)]; writeStore("qa", next); return item; }
   async transitionQa(id: string, status: KnowledgeQa["status"]) { const list = await this.listQa(); const next = list.map((item) => item.id === id ? { ...item, status, reviewer: status === "published" ? "当前用户" : item.reviewer, updatedAt: now() } : item); writeStore("qa", next); return next.find((item) => item.id === id) ?? list[0]; }
+  async listQaVersions(id: string) { const item = (await this.listQa()).find((candidate) => candidate.id === id); return item ? [...item.history, { version: item.version, question: item.question, answer: item.answer, status: item.status, updatedAt: item.updatedAt }] : []; }
+  async rollbackQa(id: string, version: number, reason: string) { const item = (await this.listQa()).find((candidate) => candidate.id === id); const target = item?.history.find((candidate) => candidate.version === version); if (!item || !target) throw new Error("QA 版本不存在"); return this.saveQa({ ...item, version, answer: target.answer, status: "draft", updatedAt: now(), history: [...item.history, { ...target, version: item.version + 1, reason }] }); }
   async deleteQa(id: string) { await this.transitionQa(id, "archived"); }
   async listScripts() { migrateInteractionMockData(); return readStore("scripts", DEFAULT_SCRIPTS); }
   async saveScript(item: ScriptTemplate) { const next = [item, ...(await this.listScripts()).filter((candidate) => candidate.id !== item.id)]; writeStore("scripts", next); return item; }
@@ -452,15 +473,19 @@ export class MockAdminApiClient implements AdminApiClient {
   async listExplainFlows(exhibitionId?: string) { migrateInteractionMockData(); return (await readStore<ExplainFlow[]>("explain-flows", DEFAULT_EXPLAIN_FLOWS)).filter((item) => !exhibitionId || exhibitionId === "all" || item.exhibitionId === exhibitionId); }
   async saveExplainFlow(item: ExplainFlow) { const exhibition = (await this.listExhibitions()).find((candidate) => candidate.id === item.exhibitionId); if (!exhibition) throw new Error("讲解流程所属展会不存在"); const scripts = await this.listScripts(); if (!scripts.some((script) => script.id === item.scriptId && script.scene === "explain")) throw new Error("讲解流程必须关联讲解话术"); const saved = { ...item, exhibitionName: exhibition.name, updatedAt: now() }; writeStore("explain-flows", [saved, ...(await this.listExplainFlows()).filter((candidate) => candidate.id !== item.id)]); return saved; }
   async deleteExplainFlow(id: string) { writeStore("explain-flows", (await this.listExplainFlows()).filter((item) => item.id !== id)); }
-  async listShoppingStrategies(exhibitionId?: string): Promise<ShoppingStrategy[]> { migrateInteractionMockData(); return (await readStore<ShoppingStrategy[]>("shopping-strategies", DEFAULT_SHOPPING_STRATEGIES)).map((item) => ({ ...item, exhibitIds: item.exhibitIds ?? [] })).filter((item) => !exhibitionId || exhibitionId === "all" || item.exhibitionId === exhibitionId); }
-  async saveShoppingStrategy(item: ShoppingStrategy): Promise<ShoppingStrategy> { const exhibition = (await this.listExhibitions()).find((candidate) => candidate.id === item.exhibitionId); if (!exhibition) throw new Error("导购策略所属展会不存在"); const exhibits = await this.listExhibits(); const exhibitIds = (item.exhibitIds || []).filter((id) => exhibits.some((exhibit) => exhibit.id === id && exhibit.exhibitionId === item.exhibitionId)); if (exhibitIds.length !== (item.exhibitIds || []).length) throw new Error("导购策略关联的展品必须属于所选展会"); const saved = { ...item, exhibitionName: exhibition.name, exhibitIds, updatedAt: now() }; writeStore("shopping-strategies", [saved, ...(await this.listShoppingStrategies()).filter((candidate) => candidate.id !== item.id)]); return saved; }
+  async listShoppingStrategies(exhibitionId?: string) { migrateInteractionMockData(); return (await readStore<ShoppingStrategy[]>("shopping-strategies", DEFAULT_SHOPPING_STRATEGIES)).map((item) => ({ ...item, exhibitIds: item.exhibitIds ?? [] })).filter((item) => !exhibitionId || exhibitionId === "all" || item.exhibitionId === exhibitionId); }
+  async saveShoppingStrategy(item: ShoppingStrategy) { const exhibition = (await this.listExhibitions()).find((candidate) => candidate.id === item.exhibitionId); if (!exhibition) throw new Error("导购策略所属展会不存在"); const exhibits = await this.listExhibits(); const exhibitIds = (item.exhibitIds || []).filter((id) => exhibits.some((exhibit) => exhibit.id === id && exhibit.exhibitionId === item.exhibitionId)); if (exhibitIds.length !== (item.exhibitIds || []).length) throw new Error("导购策略关联的展品必须属于所选展会"); const saved = { ...item, exhibitionName: exhibition.name, exhibitIds, updatedAt: now() }; writeStore("shopping-strategies", [saved, ...(await this.listShoppingStrategies()).filter((candidate) => candidate.id !== item.id)]); return saved; }
   async deleteShoppingStrategy(id: string) { writeStore("shopping-strategies", (await this.listShoppingStrategies()).filter((item) => item.id !== id)); }
   async listPackages() { return readStore("packages", DEFAULT_PACKAGES); }
   async createPackage(input: Pick<PublishPackage, "name" | "exhibition" | "qaCount" | "documentCount">) { const item: PublishPackage = { ...input, id: `pkg-${Date.now()}`, status: "draft", version: 1, creator: "当前用户", updatedAt: now() }; writeStore("packages", [item, ...await this.listPackages()]); return item; }
   async transitionPackage(id: string, status: PublishPackage["status"]) { const list = await this.listPackages(); const next = list.map((item) => item.id === id ? { ...item, status, reviewer: status === "published" ? "当前用户" : item.reviewer, updatedAt: now() } : item); writeStore("packages", next); return next.find((item) => item.id === id) ?? list[0]; }
+  async submitPackage(id: string, reason?: string) { void reason; return this.transitionPackage(id, "pending_review"); }
+  async publishPackage(id: string, reason?: string) { void reason; return this.transitionPackage(id, "published"); }
+  async rollbackPackage(id: string, targetPackageId?: string, reason?: string) { void reason; const current = await this.transitionPackage(id, "rolled_back"); if (targetPackageId) await this.transitionPackage(targetPackageId, "published"); return current; }
   async listMissPool() { return readStore("miss-pool", DEFAULT_MISS); }
   async resolveMiss(id: string, status: MissPoolItem["status"]) { const list = await this.listMissPool(); const next = list.map((item) => item.id === id ? { ...item, status } : item); writeStore("miss-pool", next); return next.find((item) => item.id === id) ?? list[0]; }
-  async listExhibitions(): Promise<Exhibition[]> {
+  async resolveMissAction(id: string, action: "ignore" | "handled" | "create_qa", reason?: string, qa?: Record<string, unknown>) { void reason; void qa; return this.resolveMiss(id, action === "ignore" ? "ignored" : action === "create_qa" ? "converted_qa" : "supplemented"); }
+  async listExhibitions() {
     const legacyStatus: Record<string, Exhibition["status"]> = { draft: "preparing", active: "operating", ended: "teardown", archived: "teardown" };
     return (await readStore<Exhibition[]>("exhibitions", DEFAULT_EXHIBITIONS)).map((item) => ({ ...item, mainVenueId: item.mainVenueId ?? null, status: legacyStatus[item.status] ?? item.status, boundModel: item.boundModel ?? "", boundVoiceId: item.boundVoiceId ?? null, boundVoiceProvider: item.boundVoiceProvider ?? null, boundVoiceModel: item.boundVoiceModel ?? null, boundSttProvider: item.boundSttProvider ?? null, boundSttModel: item.boundSttModel ?? null, boundScene: item.boundScene ?? null, lifecycleHistory: item.lifecycleHistory ?? [] }));
   }
@@ -476,17 +501,8 @@ export class MockAdminApiClient implements AdminApiClient {
     writeStore("exhibitions", [saved, ...list.filter((candidate) => candidate.id !== item.id)]);
     return saved;
   }
-  async getExhibitionRuntimeConfig(id: string) {
-    const item = (await this.listExhibitions()).find((candidate) => candidate.id === id);
-    if (!item) throw new Error("展会不存在");
-    return item;
-  }
   async saveExhibitionRuntimeConfig(item: Exhibition) { return this.saveExhibition(item); }
-  async validateExhibitionRuntimeConfig(item: Exhibition) {
-    const exhibition = await this.getExhibitionRuntimeConfig(item.id).catch(() => null);
-    return { valid: Boolean(exhibition), exhibitionId: item.id };
-  }
-  async transitionExhibition(id: string, status: Exhibition["status"]): Promise<Exhibition> {
+  async transitionExhibition(id: string, status: Exhibition["status"]) {
     const list = await this.listExhibitions();
     const current = list.find((item) => item.id === id);
     if (!current) throw new Error("展会不存在");
@@ -540,7 +556,6 @@ export class MockAdminApiClient implements AdminApiClient {
   async listExhibits() { return readStore<Exhibit[]>("exhibits", DEFAULT_EXHIBITS); }
   async saveExhibit(item: Exhibit) { const exhibitor = (await this.listExhibitors()).find((candidate) => candidate.id === item.exhibitorId); if (!exhibitor || exhibitor.exhibitionId !== item.exhibitionId) throw new Error("展品与展商必须属于同一场展会"); const saved = { ...item, updatedAt: now() }; writeStore("exhibits", [saved, ...(await this.listExhibits()).filter((candidate) => candidate.id !== item.id)]); return saved; }
   async deleteExhibit(id: string) { if ((await this.listPoints()).some((item) => item.exhibitId === id)) throw new Error("该展品仍被点位关联，请先解除关联后再删除。"); writeStore("exhibits", (await this.listExhibits()).filter((item) => item.id !== id)); }
-  async uploadExhibitImage(_id: string, file: File) { return { url: URL.createObjectURL(file) }; }
   async listRoutes() {
     const routes = await readStore<Array<ExhibitionRoute & { exhibitionId?: string; from?: string; to?: string }>>("routes", DEFAULT_ROUTES);
     const points = await this.listPoints();
@@ -553,7 +568,6 @@ export class MockAdminApiClient implements AdminApiClient {
   }
   async saveRoute(item: ExhibitionRoute) { const venue = (await this.listVenues()).find((candidate) => candidate.id === item.venueId); if (!venue) throw new Error("路线所属场地不存在"); const points = await this.listPoints(); if (item.pointIds.length < 2 || item.pointIds.some((id) => points.find((point) => point.id === id)?.venueId !== item.venueId)) throw new Error("路线至少需要两个属于同一场地的点位"); const saved = { ...item, updatedAt: now() }; writeStore("routes", [saved, ...(await this.listRoutes()).filter((candidate) => candidate.id !== item.id)]); return saved; }
   async deleteRoute(id: string) { writeStore("routes", (await this.listRoutes()).filter((item) => item.id !== id)); }
-  async uploadRouteImage(_id: string, file: File) { return { url: URL.createObjectURL(file) }; }
   async listBroadcasts() { return readStore<EmergencyBroadcast[]>("broadcasts", DEFAULT_BROADCASTS); }
   async saveBroadcast(item: EmergencyBroadcast) { const saved = { ...item, updatedAt: now() }; writeStore("broadcasts", [saved, ...(await this.listBroadcasts()).filter((candidate) => candidate.id !== item.id)]); return saved; }
   async transitionBroadcast(id: string, status: EmergencyBroadcast["status"]) { const list = await this.listBroadcasts(); const next = list.map((item) => item.id === id ? { ...item, status, updatedAt: now() } : item); writeStore("broadcasts", next); return next.find((item) => item.id === id) ?? list[0]; }
@@ -570,11 +584,11 @@ export class MockAdminApiClient implements AdminApiClient {
   async updateLeadStatus(id: string, status: LeadStatus, note?: string) { const list = await this.listLeads(); const existing = list.find((item) => item.id === id); if (!existing) throw new Error("线索不存在"); const saved = { ...existing, status, statusHistory: [...existing.statusHistory, { status, operator: "当前用户", time: now(), note }] }; writeStore("leads", [saved, ...list.filter((item) => item.id !== id)]); return saved; }
   async exportLeads(filters: { exhibitionId?: string; keyword?: string; status?: string; from?: string; to?: string } = {}) { const rows = await this.listLeads(filters as { exhibitionId?: string; keyword?: string; status?: LeadStatus; from?: string; to?: string }); return [["线索ID", "展会", "单位名称", "联系人", "状态", "创建时间"], ...rows.map((item) => [item.id, item.exhibitionName, item.companyName, item.contactName, item.status, item.createdAt])].map((row) => row.map((cell) => `"${String(cell).replaceAll('"', '""')}"`).join(",")).join("\n"); }
   async listFeedback(filters: { exhibitionId?: string; keyword?: string; status?: Feedback["status"] } = {}) { const keyword = filters.keyword?.trim().toLowerCase(); return (await readStore<Feedback[]>("feedback", DEFAULT_FEEDBACK)).filter((item) => (!filters.exhibitionId || filters.exhibitionId === "all" || item.exhibitionId === filters.exhibitionId) && (!filters.status || item.status === filters.status) && (!keyword || `${item.content} ${item.type} ${item.traceId}`.toLowerCase().includes(keyword))); }
-  async resolveFeedback(id: string, note: string, operator = "当前用户"): Promise<Feedback> { const list = await this.listFeedback(); const existing = list.find((item) => item.id === id); if (!existing) throw new Error("反馈不存在"); const saved: Feedback = { ...existing, status: "handled", note, handledBy: operator, handledAt: now() }; writeStore("feedback", [saved, ...list.filter((item) => item.id !== id)]); return saved; }
+  async resolveFeedback(id: string, note: string, operator = "当前用户") { const list = await this.listFeedback(); const existing = list.find((item) => item.id === id); if (!existing) throw new Error("反馈不存在"); const saved = { ...existing, status: "handled" as const, note, handledBy: operator, handledAt: now() }; writeStore("feedback", [saved, ...list.filter((item) => item.id !== id)]); return saved; }
   async listAdminUsers(filters: { keyword?: string; status?: AdminUserRecord["status"] } = {}) { const keyword = filters.keyword?.trim().toLowerCase(); return (await readStore<AdminUserRecord[]>("admin-users", DEFAULT_ADMIN_USERS)).filter((item) => (!filters.status || item.status === filters.status) && (!keyword || [item.username, item.displayName, item.email].some((value) => value.toLowerCase().includes(keyword)))); }
   async saveAdminUser(item: AdminUserRecord) { const saved = { ...item, updatedAt: now() } as AdminUserRecord; writeStore("admin-users", [saved, ...(await this.listAdminUsers()).filter((candidate) => candidate.id !== item.id)]); return saved; }
   async deleteAdminUser(id: string) { writeStore("admin-users", (await this.listAdminUsers()).filter((item) => item.id !== id)); }
-  async resetAdminPassword(_id: string): Promise<void> { return undefined; }
+  async resetAdminPassword(_id: string) { return undefined; }
   async exportAdminUsers(filters: { keyword?: string; status?: AdminUserRecord["status"] } = {}) { const rows = await this.listAdminUsers(filters); return [["用户名", "昵称", "邮箱", "部门", "状态", "创建日期"], ...rows.map((item) => [item.username, item.displayName, item.email, item.department, item.status, item.createdAt])].map((row) => row.join(",")).join("\n"); }
   async listRoles() { const stored = readStore<RoleRecord[]>("roles", DEFAULT_ROLES); if (stored.some((role) => role.permissionIds.some((permission) => permission.startsWith("permission-")))) { writeStore("roles", DEFAULT_ROLES); return DEFAULT_ROLES; } return stored; }
   async saveRole(item: RoleRecord) { const saved = { ...item, updatedAt: now() } as RoleRecord; writeStore("roles", [saved, ...(await this.listRoles()).filter((candidate) => candidate.id !== item.id)]); return saved; }
@@ -584,21 +598,12 @@ export class MockAdminApiClient implements AdminApiClient {
   async deletePermissionNode(id: string) { const flat = flattenPermissionNodes(await this.listPermissionTree()); const ids = new Set([id]); let changed = true; while (changed) { changed = false; flat.forEach((item) => { if (item.parentId && ids.has(item.parentId) && !ids.has(item.id)) { ids.add(item.id); changed = true; } }); } writeStore("permissions", flat.filter((item) => !ids.has(item.id))); }
   async listAuditLogs(filters: { username?: string; ip?: string; keyword?: string; from?: string; to?: string } = {}) { const keyword = filters.keyword?.trim().toLowerCase(); return (await readStore<AuditLog[]>("audit-logs", DEFAULT_AUDIT_LOGS)).filter((item) => (!filters.username || item.username.includes(filters.username)) && (!filters.ip || item.ip.includes(filters.ip)) && (!keyword || `${item.description} ${item.traceId}`.toLowerCase().includes(keyword)) && (!filters.from || item.createdAt.slice(0, 10) >= filters.from) && (!filters.to || item.createdAt.slice(0, 10) <= filters.to)); }
   async getTraceRecord(id: string) { const list = await this.listAuditLogs(); return list.find((item) => item.id === id || item.traceId === id) ?? null; }
-  async exportAuditLogs(filters: { username?: string; ip?: string; keyword?: string; from?: string; to?: string } = {}) {
-    // The existing user-management page historically called this method with only `keyword`.
-    // Preserve that UI contract while routing it to the correct user export dataset.
-    if (Object.keys(filters).every((key) => key === "keyword")) return this.exportAdminUsers({ keyword: filters.keyword });
-    const rows = await this.listAuditLogs(filters);
-    return [["Trace ID", "用户名", "IP", "描述", "请求耗时", "创建日期"], ...rows.map((item) => [item.traceId, item.username, item.ip, item.description, `${item.durationMs}ms`, item.createdAt])].map((row) => row.join(",")).join("\n");
-  }
+  async exportAuditLogs(filters: { username?: string; ip?: string; keyword?: string; from?: string; to?: string } = {}) { const rows = await this.listAuditLogs(filters); return [["Trace ID", "用户名", "IP", "描述", "请求耗时", "创建日期"], ...rows.map((item) => [item.traceId, item.username, item.ip, item.description, `${item.durationMs}ms`, item.createdAt])].map((row) => row.join(",")).join("\n"); }
   async clearAuditLogs() { writeStore("audit-logs", []); }
   async getSystemMonitor() { const monitor = readStore<SystemMonitor>("system-monitor", DEFAULT_MONITOR); const refreshed = { ...monitor, refreshedAt: now() }; writeStore("system-monitor", refreshed); return refreshed; }
   async listAlerts() { return readStore<AlertEvent[]>("alerts", DEFAULT_ALERTS); }
-  async acknowledgeAlert(id: string, operator = "当前用户"): Promise<AlertEvent> { const list = await this.listAlerts(); const existing = list.find((item) => item.id === id); if (!existing) throw new Error("告警不存在"); const saved = { ...existing, status: "acknowledged" as const, acknowledgedBy: operator, acknowledgedAt: now() }; writeStore("alerts", [saved, ...list.filter((item) => item.id !== id)]); return saved; }
-  async listTerminals(filters: { exhibitionId?: string; status?: TerminalStatus["status"] } = {}) { const items = (await this.getSystemMonitor()).terminals; return items.filter((item) => (!filters.exhibitionId || item.exhibitionId === filters.exhibitionId) && (!filters.status || item.status === filters.status)); }
-  async listInteractionRecords(_filters: { exhibitionId?: string; terminalId?: string; from?: string; to?: string } = {}) { return readStore<InteractionRecord[]>("interaction-records", []); }
-  async exportInteractionRecords(filters: { exhibitionId?: string; terminalId?: string; from?: string; to?: string } = {}) { const rows = await this.listInteractionRecords(filters); return [["记录ID", "展会", "终端", "会话", "意图", "知识命中", "耗时", "时间", "Trace ID"], ...rows.map((item) => [item.id, item.exhibitionId, item.terminalId, item.sessionId, item.intent, item.knowledgeHit ? "是" : "否", item.latencyMs, item.occurredAt, item.traceId])].map((row) => row.join(",")).join("\n"); }
-  async getGatewayPolicy() { return readStore<GatewayPolicy>("gateway-policy", { id: "default", name: "默认网关策略", whitelist: [], rateLimitPerMinute: 60, timeoutMs: 15000, fallbackMode: "text", enabled: true, updatedAt: now() }); }
+  async acknowledgeAlert(id: string, operator = "当前用户") { const list = await this.listAlerts(); const existing = list.find((item) => item.id === id); if (!existing) throw new Error("告警不存在"); const saved = { ...existing, status: "acknowledged" as const, acknowledgedBy: operator, acknowledgedAt: now() }; writeStore("alerts", [saved, ...list.filter((item) => item.id !== id)]); return saved; }
+  async getGatewayPolicy() { return readStore<GatewayPolicy>("gateway-policy", { id: "gateway-policy", name: "默认网关策略", whitelist: [], rateLimitPerMinute: 120, timeoutMs: 15000, fallbackMode: "text", enabled: true, updatedAt: now() }); }
   async saveGatewayPolicy(policy: GatewayPolicy) { const saved = { ...policy, updatedAt: now() }; writeStore("gateway-policy", saved); return saved; }
 }
 
@@ -623,324 +628,443 @@ function flattenPermissionNodes(nodes: PermissionNode[]): PermissionNode[] {
   return nodes.flatMap((node) => [{ ...node, children: undefined }, ...(node.children ? flattenPermissionNodes(node.children) : [])]);
 }
 
-export class AdminApiError extends Error {
-  constructor(message: string, public status: number, public code?: string, public traceId?: string) {
-    super(message);
-    this.name = "AdminApiError";
-  }
+type AdminPage<T> = { items?: T[]; total?: number; page?: number; page_size?: number };
+type JsonRecord = Record<string, any>;
+
+function queryString(params: Record<string, string | number | undefined>): string {
+  const query = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== "" && value !== "all") query.set(key, String(value));
+  });
+  const encoded = query.toString();
+  return encoded ? `?${encoded}` : "";
 }
 
-export class FetchAdminApiClient extends MockAdminApiClient {
-  private normalizeUser(payload: Partial<AdminUser> & { roles?: string[]; display_name?: string }): AdminUser {
-    const role = (payload.role || payload.roles?.[0] || "readonly") as AdminRole;
-    return {
-      id: String(payload.id || `user-${payload.username || "admin"}`),
-      username: String(payload.username || "admin"),
-      displayName: String(payload.displayName || payload.display_name || payload.username || "管理员"),
-      role,
-      permissions: (payload.permissions as PermissionCode[] | undefined) ?? ROLE_PERMISSIONS[role] ?? [],
-      buttonPermissions: (payload.buttonPermissions as ButtonPermission[] | undefined) ?? ROLE_BUTTON_PERMISSIONS[role] ?? [],
-    };
+function isClientDraftId(value: unknown): boolean {
+  const id = String(value || "");
+  return /^(?:new|user|role|welcome-config|explain-flow|shopping-strategy|voice-local|idle|doc|qa|script|package|gif|lead)-\d+$/.test(id);
+}
+
+function stringArray(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map((item) => String(item)).filter(Boolean);
+  if (typeof value === "string") return value.split(/[,，\n]/).map((item) => item.trim()).filter(Boolean);
+  return [];
+}
+
+function normalizeWelcomeTrigger(value: unknown): string[] {
+  if (Array.isArray(value)) return stringArray(value);
+  const trigger = String(value || "");
+  if (trigger === "terminal_start") return ["终端启动"];
+  if (trigger === "user_nearby") return ["用户靠近"];
+  if (trigger === "wake_word") return ["唤醒词"];
+  return trigger ? [trigger] : [];
+}
+
+export class FetchAdminApiClient implements AdminApiClient {
+  private token(): string {
+    return window.localStorage.getItem(`${STORAGE_PREFIX}token`) || readStoredSessionToken();
   }
 
-  private expiresAt(payload: { expiresAt?: number; expires_at?: string | number; expires_in?: number }): number {
-    if (payload.expiresAt) return payload.expiresAt;
-    if (typeof payload.expires_at === "string") return Date.parse(payload.expires_at);
-    if (typeof payload.expires_at === "number") return payload.expires_at < 1_000_000_000_000 ? payload.expires_at * 1000 : payload.expires_at;
-    return Date.now() + (payload.expires_in ?? 3600) * 1000;
-  }
-
-  private async request<T>(path: string, init?: RequestInit, retryAuth = true): Promise<T> {
-    const token = window.localStorage.getItem(AUTH_TOKEN_KEY);
-    const isMultipart = typeof FormData !== "undefined" && init?.body instanceof FormData;
-    const response = await fetch(buildAdminFetchUrl(`/v1${path}`), { ...init, headers: { ...(!isMultipart ? { "Content-Type": "application/json" } : {}), ...(token ? { Authorization: `Bearer ${token}` } : {}), ...init?.headers } });
-    if (response.status === 401 && retryAuth && path !== "/auth/login" && path !== "/auth/refresh") {
-      try {
-        await this.refreshAuth();
-        return this.request<T>(path, init, false);
-      } catch {
-        window.localStorage.removeItem(AUTH_TOKEN_KEY);
-      }
+  private async request<T>(path: string, init: RequestInit = {}, tokenOverride?: string): Promise<T> {
+    const token = tokenOverride ?? this.token();
+    const response = await fetch(buildAdminFetchUrl(`/v1${path}`), {
+      ...init,
+      headers: {
+        ...(init.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...init.headers,
+      },
+    });
+    if (response.status === 401 && path !== "/auth/login") {
+      window.localStorage.removeItem(`${STORAGE_PREFIX}token`);
+      window.localStorage.removeItem("opentalking-admin-session");
+      window.dispatchEvent(new CustomEvent("opentalking-admin-auth-expired"));
     }
     if (!response.ok) {
-      const traceId = response.headers.get("X-Trace-ID") ?? undefined;
-      let detail: { code?: string; detail?: string; message?: string; trace_id?: string } = {};
-      try { detail = await response.json() as typeof detail; } catch { /* non-JSON error */ }
-      throw new AdminApiError(detail.detail || detail.message || `请求失败（HTTP ${response.status}）`, response.status, detail.code, detail.trace_id || traceId);
+      let detail = `Admin API ${response.status}`;
+      try {
+        const payload = await response.json() as JsonRecord;
+        const body = payload.detail ?? payload;
+        detail = typeof body === "string" ? body : body.detail || body.code || detail;
+      } catch { /* keep status fallback */ }
+      throw new Error(detail);
     }
     if (response.status === 204) return undefined as T;
     return response.json() as Promise<T>;
   }
 
-  override async login(username: string, password: string) {
-    const payload = await this.request<AuthSession & { access_token?: string; refresh_token?: string; expires_at?: string | number; expires_in?: number }>("/auth/login", { method: "POST", body: JSON.stringify({ username, password }) }, false);
-    const token = payload.token || payload.access_token || "";
-    window.localStorage.setItem(AUTH_TOKEN_KEY, token);
-    if (payload.refresh_token) window.localStorage.setItem(AUTH_REFRESH_TOKEN_KEY, payload.refresh_token);
-    const session: AuthSession = { token, user: this.normalizeUser(payload.user), expiresAt: this.expiresAt(payload) };
-    return session;
-  }
-
-  override async getCurrentUser() {
-    const payload = await this.request<Partial<AdminUser> & { roles?: string[]; display_name?: string }>("/auth/me");
-    return this.normalizeUser(payload);
-  }
-  override async refreshAuth() {
-    const refreshToken = window.localStorage.getItem(AUTH_REFRESH_TOKEN_KEY);
-    const payload = await this.request<Omit<AuthSession, "user"> & { access_token?: string; refresh_token?: string; expires_at?: string | number; expires_in?: number; user?: AdminUser }>("/auth/refresh", { method: "POST", body: JSON.stringify({ refresh_token: refreshToken }) }, false);
-    const token = payload.token || payload.access_token || "";
-    window.localStorage.setItem(AUTH_TOKEN_KEY, token);
-    if (payload.refresh_token) window.localStorage.setItem(AUTH_REFRESH_TOKEN_KEY, payload.refresh_token);
-    const user = payload.user ? this.normalizeUser(payload.user) : await this.getCurrentUser();
-    const session: AuthSession = { token, user, expiresAt: this.expiresAt(payload) };
-    return session;
-  }
-  override async logout() {
-    try { await this.request<void>("/auth/logout", { method: "POST" }, false); }
-    finally { window.localStorage.removeItem(AUTH_TOKEN_KEY); window.localStorage.removeItem(AUTH_REFRESH_TOKEN_KEY); }
-  }
-  override async getPermissions() {
-    const payload = await this.request<{ permissions?: PermissionCode[]; buttonPermissions?: ButtonPermission[]; codes?: PermissionCode[]; roles?: string[] }>("/auth/permissions");
-    const role = (payload.roles?.[0] || "readonly") as AdminRole;
-    return {
-      permissions: payload.permissions ?? payload.codes ?? ROLE_PERMISSIONS[role] ?? [],
-      buttonPermissions: payload.buttonPermissions ?? ROLE_BUTTON_PERMISSIONS[role] ?? [],
-    };
-  }
-
-  override async getDashboard() { return this.request<DashboardData>("/admin/report"); }
-  override async getReport(filters: ReportFilters = {}) {
-    const query = new URLSearchParams();
-    if (filters.exhibitionId) query.set("exhibition_id", filters.exhibitionId);
-    if (filters.scene) query.set("scene", filters.scene);
-    if (filters.terminalId) query.set("terminal_id", filters.terminalId);
-    if (filters.from) query.set("from", filters.from);
-    if (filters.to) query.set("to", filters.to);
-    const suffix = query.toString() ? `?${query.toString()}` : "";
-    return this.request<ReportOperations>(`/admin/report/operations${suffix}`);
-  }
-
-  private async requestList<T>(path: string): Promise<T[]> {
-    const payload = await this.request<T[] | { items: T[] }>(path);
-    return Array.isArray(payload) ? payload : payload.items;
-  }
-
-  private requestEventList<T>(resource: "exhibitions" | "exhibitors" | "exhibits" | "venues" | "points" | "routes" | "schedules" | "broadcasts"): Promise<T[]> {
-    return this.requestList<T>(withQuery(`/admin/event/${resource}`, { page: "1", page_size: "9" }));
-  }
-
-  private async requestText(path: string, retryAuth = true): Promise<string> {
-    const token = window.localStorage.getItem(AUTH_TOKEN_KEY);
-    const response = await fetch(buildAdminFetchUrl(`/v1${path}`), { headers: token ? { Authorization: `Bearer ${token}` } : {} });
-    if (response.status === 401 && retryAuth) {
-      await this.refreshAuth();
-      return this.requestText(path, false);
-    }
-    if (!response.ok) throw new AdminApiError(`请求失败（HTTP ${response.status}）`, response.status, undefined, response.headers.get("X-Trace-ID") ?? undefined);
+  private async download(path: string): Promise<string> {
+    const response = await fetch(buildAdminFetchUrl(`/v1${path}`), { headers: this.token() ? { Authorization: `Bearer ${this.token()}` } : {} });
+    if (!response.ok) throw new Error(`Admin API ${response.status}`);
     return response.text();
   }
 
-  private saveResource<T extends { id: string }>(item: T, collectionPath: string, createPath = collectionPath): Promise<T> {
-    const isNew = !item.id || item.id.startsWith("new-") || /^(user|role|permission|welcome|explain|shopping)-\d{10,}$/.test(item.id);
-    const { id: _clientId, ...createBody } = item;
-    const body = isNew ? createBody : item;
-    return this.request<T>(isNew ? createPath : `${collectionPath}/${encodeURIComponent(item.id)}`, {
-      method: isNew ? "POST" : "PATCH",
-      body: JSON.stringify(body),
-    });
+  private async downloadFile(path: string): Promise<Blob> {
+    const response = await fetch(buildAdminFetchUrl(`/v1${path}`), { headers: this.token() ? { Authorization: `Bearer ${this.token()}` } : {} });
+    if (!response.ok) throw new Error(`Admin API ${response.status}`);
+    return response.blob();
   }
 
-  override async listExhibitions() { return this.requestEventList<Exhibition>("exhibitions"); }
-  override async saveExhibition(item: Exhibition) { return this.saveResource(item, "/admin/event/exhibitions"); }
-  override async getExhibitionRuntimeConfig(id: string) {
-    return this.request<Exhibition>(`/admin/event/exhibitions/${encodeURIComponent(id)}/runtime-config`);
+  private async list<T>(path: string, params: Record<string, string | number | undefined> = {}): Promise<T[]> {
+    const payload = await this.request<AdminPage<T> | T[]>(`${path}${queryString(params)}`);
+    return Array.isArray(payload) ? payload : payload.items ?? [];
   }
-  override async saveExhibitionRuntimeConfig(item: Exhibition) {
-    return this.request<Exhibition>(`/admin/event/exhibitions/${encodeURIComponent(item.id)}/runtime-config`, {
-      method: "PUT",
-      body: JSON.stringify({
-        boundAvatarId: item.boundAvatarId,
-        boundModel: item.boundModel,
-        boundVoiceId: item.boundVoiceId,
-        boundVoiceProvider: item.boundVoiceProvider,
-        boundVoiceModel: item.boundVoiceModel,
-        boundSttProvider: item.boundSttProvider,
-        boundSttModel: item.boundSttModel,
-        boundScene: item.boundScene,
-        knowledgeBaseIds: item.knowledgeBaseIds,
+
+  private data<T>(payload: T): string { return JSON.stringify({ data: payload }); }
+
+  private async collection<T>(domain: string, resource: string, params: Record<string, string | number | undefined> = {}): Promise<T[]> {
+    return this.list<T>(`/admin/${domain}/${resource}`, { page: 1, page_size: 100, ...params });
+  }
+
+  private async saveCollection<T>(domain: string, resource: string, item: JsonRecord): Promise<T> {
+    const existing = Boolean(item.id) && !isClientDraftId(item.id);
+    const path = existing ? `/admin/${domain}/${resource}/${encodeURIComponent(String(item.id))}` : `/admin/${domain}/${resource}`;
+    return this.request<T>(path, { method: existing ? "PATCH" : "POST", body: this.data(item) });
+  }
+
+  private exhibition(item: JsonRecord): Exhibition {
+    return { mainVenueId: null, hostUnit: "", organizerUnit: "", coOrganizerUnits: "", boundAvatarId: null, boundModel: "mock", boundVoiceId: null, boundVoiceProvider: null, boundVoiceModel: null, boundSttProvider: null, boundSttModel: null, boundScene: null, knowledgeBaseIds: [], lifecycleHistory: [], status: "preparing", description: "", ...item, id: String(item.id), name: String(item.name || item.code || item.id), code: String(item.code || item.id), startDate: String(item.startDate || ""), endDate: String(item.endDate || ""), createdAt: String(item.createdAt || item.created_at || ""), updatedAt: String(item.updatedAt || item.updated_at || "") } as Exhibition;
+  }
+
+  private welcomeConfig(item: JsonRecord, exhibitions: Exhibition[]): WelcomeConfig {
+    return {
+      id: String(item.id || ""),
+      exhibitionId: String(item.exhibitionId || ""),
+      exhibitionName: String(item.exhibitionName || exhibitions.find((exhibition) => exhibition.id === item.exhibitionId)?.name || ""),
+      triggers: normalizeWelcomeTrigger(item.triggers ?? item.trigger),
+      scriptId: String(item.scriptId || item.script_id || ""),
+      highlights: stringArray(item.highlights),
+      checkInGuide: String(item.checkInGuide || item.check_in_guide || ""),
+      notices: String(item.notices || ""),
+      routingStrategy: String(item.routingStrategy || item.routing_strategy || ""),
+      status: item.status === "inactive" ? "inactive" : "active",
+      updatedAt: String(item.updatedAt || item.updated_at || ""),
+    };
+  }
+
+  private explainFlow(item: JsonRecord, exhibitions: Exhibition[]): ExplainFlow {
+    return {
+      id: String(item.id || ""),
+      exhibitionId: String(item.exhibitionId || ""),
+      exhibitionName: String(item.exhibitionName || exhibitions.find((exhibition) => exhibition.id === item.exhibitionId)?.name || ""),
+      name: String(item.name || "未命名讲解流程"),
+      keywords: stringArray(item.keywords),
+      knowledgeCategories: stringArray(item.knowledgeCategories || item.knowledge_categories),
+      interruptionPolicy: (item.interruptionPolicy || item.interruptPolicy || "allow") as ExplainFlow["interruptionPolicy"],
+      scriptId: String(item.scriptId || item.script_id || ""),
+      status: item.status === "inactive" ? "inactive" : "active",
+      updatedAt: String(item.updatedAt || item.updated_at || ""),
+    };
+  }
+
+  private shoppingStrategy(item: JsonRecord, exhibitions: Exhibition[], exhibitIds: string[] = []): ShoppingStrategy {
+    const weights = item.weights && typeof item.weights === "object" ? item.weights as JsonRecord : {};
+    return {
+      id: String(item.id || ""),
+      exhibitionId: String(item.exhibitionId || ""),
+      exhibitionName: String(item.exhibitionName || exhibitions.find((exhibition) => exhibition.id === item.exhibitionId)?.name || ""),
+      name: String(item.name || "未命名导购策略"),
+      tags: stringArray(item.tags),
+      tagWeight: Number(item.tagWeight ?? weights.tag ?? 0),
+      compareDimensions: stringArray(item.compareDimensions || item.compare_dimensions),
+      intentThreshold: Number(item.intentThreshold ?? item.intent_threshold ?? 0),
+      exhibitCategories: stringArray(item.exhibitCategories || item.exhibit_categories),
+      exhibitIds: exhibitIds.length ? exhibitIds : stringArray(item.exhibitIds || item.exhibit_ids),
+      status: item.status === "inactive" ? "inactive" : "active",
+      updatedAt: String(item.updatedAt || item.updated_at || ""),
+    };
+  }
+
+  async login(username: string, password: string): Promise<{ token: string; user: AdminUser }> {
+    const response = await this.request<JsonRecord>("/auth/login", { method: "POST", body: JSON.stringify({ username, password }) });
+    const token = String(response.token || response.access_token || "");
+    window.localStorage.setItem(`${STORAGE_PREFIX}token`, token);
+    const permissions = await this.request<JsonRecord>("/auth/permissions", {}, token);
+    const roleCode = String(response.user?.roles?.[0] || "sys_admin") as AdminUser["role"];
+    const role = (ROLE_PERMISSIONS[roleCode] ? roleCode : "readonly") as AdminUser["role"];
+    return {
+      token,
+      user: {
+        id: String(response.user?.id || ""),
+        username: String(response.user?.username || username),
+        displayName: String(response.user?.displayName || response.user?.display_name || username),
+        role,
+        permissions: (permissions.codes || ROLE_PERMISSIONS[role]) as AdminUser["permissions"],
+        buttonPermissions: ROLE_BUTTON_PERMISSIONS[role],
+      },
+    };
+  }
+
+  async getDashboard(): Promise<DashboardData> {
+    const report = await this.request<JsonRecord>("/admin/report");
+    const metric = (id: string, label: string, value: unknown, trend: string, tone: DashboardData["metrics"][number]["tone"]) => ({ id, label, value: String(value ?? 0), trend, tone });
+    return {
+      metrics: [
+        metric("interactions", "今日交互量", report.interaction_count, "来自审计快照", "cyan"),
+        metric("terminals", "在线终端", report.online_terminals, "当前快照", "green"),
+        metric("pending", "待审知识", report.pending_knowledge, "需要处理", "amber"),
+        metric("leads", "新增线索", report.new_leads, "当前展会", "violet"),
+        metric("alerts", "未确认告警", report.alerts, "当前快照", report.alerts ? "rose" : "green"),
+      ],
+      todos: Array.isArray(report.todo) ? report.todo : [],
+    };
+  }
+
+  private sceneBinding(item: JsonRecord): SceneBinding {
+    const assets = Array.isArray(item.assets) ? item.assets : [];
+    return {
+      scene: String(item.scene || ""),
+      assets: assets.map((asset) => {
+        const value = asset as JsonRecord;
+        return { assetId: String(value.assetId || value.asset_id || ""), isPrimary: Boolean(value.isPrimary ?? value.is_primary), order: Number(value.order || 0) };
       }),
-    });
-  }
-  override async validateExhibitionRuntimeConfig(item: Exhibition) {
-    return this.request<{ valid?: boolean; [key: string]: unknown }>(`/admin/event/exhibitions/${encodeURIComponent(item.id)}/runtime-config/validate`, {
-      method: "POST",
-      body: JSON.stringify({
-        boundAvatarId: item.boundAvatarId,
-        boundModel: item.boundModel,
-        boundVoiceId: item.boundVoiceId,
-        boundVoiceProvider: item.boundVoiceProvider,
-        boundVoiceModel: item.boundVoiceModel,
-        boundSttProvider: item.boundSttProvider,
-        boundSttModel: item.boundSttModel,
-        boundScene: item.boundScene,
-        knowledgeBaseIds: item.knowledgeBaseIds,
-      }),
-    });
-  }
-  override async deleteExhibition(id: string) { await this.request(`/admin/event/exhibitions/${encodeURIComponent(id)}`, { method: "DELETE" }); }
-  override async transitionExhibition(id: string, status: ExhibitionStatus) { return this.request<Exhibition>(`/admin/event/exhibitions/${encodeURIComponent(id)}/lifecycle`, { method: "POST", body: JSON.stringify({ status }) }); }
-
-  override async listVenues() { return this.requestEventList<EventVenue>("venues"); }
-  override async saveVenue(item: EventVenue) { return this.saveResource(item, "/admin/event/venues", `/admin/event/exhibitions/${encodeURIComponent(item.exhibitionId)}/venues`); }
-  override async deleteVenue(id: string) { await this.request(`/admin/event/venues/${encodeURIComponent(id)}`, { method: "DELETE" }); }
-
-  override async listPoints() { return this.requestEventList<EventPoint>("points"); }
-  override async savePoint(item: EventPoint) { return this.saveResource(item, "/admin/event/points", `/admin/event/venues/${encodeURIComponent(item.venueId)}/points`); }
-  override async deletePoint(id: string) { await this.request(`/admin/event/points/${encodeURIComponent(id)}`, { method: "DELETE" }); }
-
-  override async listRoutes() { return this.requestEventList<ExhibitionRoute>("routes"); }
-  override async saveRoute(item: ExhibitionRoute) { return this.saveResource(item, "/admin/event/routes", `/admin/event/venues/${encodeURIComponent(item.venueId)}/routes`); }
-  override async deleteRoute(id: string) { await this.request(`/admin/event/routes/${encodeURIComponent(id)}`, { method: "DELETE" }); }
-  override async uploadRouteImage(id: string, file: File) { const body = new FormData(); body.append("file", file); return this.request<{ url: string }>(`/admin/event/routes/${encodeURIComponent(id)}/image`, { method: "POST", body }); }
-
-  override async listExhibitors() { return this.requestEventList<Exhibitor>("exhibitors"); }
-  override async saveExhibitor(item: Exhibitor) { return this.saveResource(item, "/admin/event/exhibitors", `/admin/event/exhibitions/${encodeURIComponent(item.exhibitionId)}/exhibitors`); }
-  override async deleteExhibitor(id: string) { await this.request(`/admin/event/exhibitors/${encodeURIComponent(id)}`, { method: "DELETE" }); }
-
-  override async listExhibits() { return this.requestEventList<Exhibit>("exhibits"); }
-  override async saveExhibit(item: Exhibit) { return this.saveResource(item, "/admin/event/exhibits", `/admin/event/exhibitions/${encodeURIComponent(item.exhibitionId)}/exhibits`); }
-  override async deleteExhibit(id: string) { await this.request(`/admin/event/exhibits/${encodeURIComponent(id)}`, { method: "DELETE" }); }
-  override async uploadExhibitImage(id: string, file: File) { const body = new FormData(); body.append("file", file); return this.request<{ url: string }>(`/admin/event/exhibits/${encodeURIComponent(id)}/images`, { method: "POST", body }); }
-
-  override async listSchedules() { return this.requestEventList<EventSchedule>("schedules"); }
-  override async saveSchedule(item: EventSchedule) { return this.saveResource(item, "/admin/event/schedules", `/admin/event/exhibitions/${encodeURIComponent(item.exhibitionId)}/schedules`); }
-  override async deleteSchedule(id: string) { await this.request(`/admin/event/schedules/${encodeURIComponent(id)}`, { method: "DELETE" }); }
-
-  override async listBroadcasts() { return this.requestEventList<EmergencyBroadcast>("broadcasts"); }
-  override async saveBroadcast(item: EmergencyBroadcast) { return this.saveResource(item, "/admin/event/broadcasts"); }
-  override async transitionBroadcast(id: string, status: EmergencyBroadcast["status"]) {
-    const action = status === "active" ? "activate" : status === "ended" ? "end" : "transition";
-    return this.request<EmergencyBroadcast>(`/admin/event/broadcasts/${encodeURIComponent(id)}/${action}`, { method: "POST", body: action === "transition" ? JSON.stringify({ status }) : undefined });
-  }
-  override async deleteBroadcast(id: string) { await this.request(`/admin/event/broadcasts/${encodeURIComponent(id)}`, { method: "DELETE" }); }
-
-  override async listAdminUsers(filters?: { keyword?: string; status?: AdminUserRecord["status"] }) {
-    return this.requestList<AdminUserRecord>(withQuery("/admin/rbac/user", filters));
-  }
-  override async saveAdminUser(item: AdminUserRecord) { return this.saveResource(item, "/admin/rbac/user"); }
-  override async deleteAdminUser(id: string) { await this.request(`/admin/rbac/user/${encodeURIComponent(id)}`, { method: "DELETE" }); }
-  override async resetAdminPassword(id: string) { await this.request(`/admin/rbac/user/${encodeURIComponent(id)}/reset-password`, { method: "POST" }); }
-  override async exportAdminUsers(filters?: { keyword?: string; status?: AdminUserRecord["status"] }) {
-    return this.requestText(withQuery("/admin/rbac/user/export", filters));
+    };
   }
 
-  override async listRoles() { return this.requestList<RoleRecord>("/admin/rbac/role"); }
-  override async saveRole(item: RoleRecord) { return this.saveResource(item, "/admin/rbac/role"); }
-  override async deleteRole(id: string) { await this.request(`/admin/rbac/role/${encodeURIComponent(id)}`, { method: "DELETE" }); }
-
-  override async listPermissionTree() { return this.requestList<PermissionNode>("/admin/rbac/permission"); }
-  override async savePermissionNode(item: PermissionNode) { return this.saveResource(item, "/admin/rbac/permission"); }
-  override async deletePermissionNode(id: string) { await this.request(`/admin/rbac/permission/${encodeURIComponent(id)}`, { method: "DELETE" }); }
-
-  override async listAuditLogs(filters?: { username?: string; ip?: string; keyword?: string; from?: string; to?: string }) {
-    return this.requestList<AuditLog>(withQuery("/admin/audit-logs", filters));
-  }
-  override async getTraceRecord(id: string) { return this.request<AuditLog | null>(`/admin/audit/trace/${encodeURIComponent(id)}`); }
-  override async exportAuditLogs(filters?: { username?: string; ip?: string; keyword?: string; from?: string; to?: string }) {
-    if (filters && Object.keys(filters).every((key) => key === "keyword")) return this.exportAdminUsers({ keyword: filters.keyword });
-    return this.requestText(withQuery("/admin/audit-logs/export", filters));
-  }
-  override async clearAuditLogs() { await this.request("/admin/audit-logs", { method: "DELETE" }); }
-
-  override async getSystemMonitor() { return this.request<SystemMonitor>("/admin/ops/monitor"); }
-  override async listAlerts() { return this.requestList<AlertEvent>("/admin/alerts"); }
-  override async acknowledgeAlert(id: string, operator = "当前用户") {
-    return this.request<AlertEvent>(`/admin/alerts/${encodeURIComponent(id)}/acknowledge`, { method: "POST", body: JSON.stringify({ operator }) });
-  }
-  override async listTerminals(filters?: { exhibitionId?: string; status?: TerminalStatus["status"] }) {
-    return this.requestList<TerminalStatus>(withQuery("/admin/terminals", { exhibition_id: filters?.exhibitionId, status: filters?.status }));
-  }
-  override async listInteractionRecords(filters?: { exhibitionId?: string; terminalId?: string; from?: string; to?: string }) {
-    return this.requestList<InteractionRecord>(withQuery("/admin/data/interactions", { exhibition_id: filters?.exhibitionId, terminal_id: filters?.terminalId, from: filters?.from, to: filters?.to }));
-  }
-  override async exportInteractionRecords(filters?: { exhibitionId?: string; terminalId?: string; from?: string; to?: string }) {
-    return this.requestText(withQuery("/admin/data/interactions/export", { exhibition_id: filters?.exhibitionId, terminal_id: filters?.terminalId, from: filters?.from, to: filters?.to }));
-  }
-  override async getGatewayPolicy() { return this.request<GatewayPolicy>("/admin/ops/gateway-policy"); }
-  override async saveGatewayPolicy(policy: GatewayPolicy) { return this.request<GatewayPolicy>("/admin/ops/gateway-policy", { method: "PUT", body: JSON.stringify(policy) }); }
-
-  override async listLeads(filters?: { exhibitionId?: string; keyword?: string; status?: LeadStatus | ""; from?: string; to?: string }) {
-    return this.requestList<Lead>(withQuery("/admin/leads", { exhibition_id: filters?.exhibitionId, keyword: filters?.keyword, status: filters?.status, from: filters?.from, to: filters?.to }));
-  }
-  override async getLead(id: string) { return this.request<Lead | null>(`/admin/leads/${encodeURIComponent(id)}`); }
-  override async saveLead(item: Lead) { return this.saveResource(item, "/admin/leads"); }
-  override async updateLeadStatus(id: string, status: LeadStatus, note?: string) { return this.request<Lead>(`/admin/leads/${encodeURIComponent(id)}/status`, { method: "POST", body: JSON.stringify({ status, note }) }); }
-  override async exportLeads(filters?: { exhibitionId?: string; keyword?: string; status?: string; from?: string; to?: string }) { return this.requestText(withQuery("/admin/leads/export", { exhibition_id: filters?.exhibitionId, keyword: filters?.keyword, status: filters?.status, from: filters?.from, to: filters?.to })); }
-  override async listFeedback(filters?: { exhibitionId?: string; keyword?: string; status?: Feedback["status"] }) { return this.requestList<Feedback>(withQuery("/admin/feedback", { exhibition_id: filters?.exhibitionId, keyword: filters?.keyword, status: filters?.status })); }
-  override async resolveFeedback(id: string, note: string, operator = "当前用户") { return this.request<Feedback>(`/admin/feedback/${encodeURIComponent(id)}/resolve`, { method: "POST", body: JSON.stringify({ note, operator }) }); }
-
-  override async listWelcomeConfigs(exhibitionId?: string) {
-    return this.requestList<WelcomeConfig>(withQuery("/admin/interactions/welcome-configs", { exhibition_id: exhibitionId }));
-  }
-  override async saveWelcomeConfig(item: WelcomeConfig) {
-    return this.saveResource(item, "/admin/interactions/welcome-configs");
-  }
-  override async listExplainFlows(exhibitionId?: string) {
-    return this.requestList<ExplainFlow>(withQuery("/admin/interactions/explain-flows", { exhibition_id: exhibitionId }));
-  }
-  override async saveExplainFlow(item: ExplainFlow) {
-    return this.saveResource(item, "/admin/interactions/explain-flows");
-  }
-  override async deleteExplainFlow(id: string) {
-    await this.request(`/admin/interactions/explain-flows/${encodeURIComponent(id)}`, { method: "DELETE" });
-  }
-  override async listShoppingStrategies(exhibitionId?: string) {
-    return (await this.requestList<ShoppingStrategy>(withQuery("/admin/interactions/shopping-strategies", { exhibition_id: exhibitionId })))
-      .map((item) => ({ ...item, exhibitIds: item.exhibitIds ?? [] }));
-  }
-  override async saveShoppingStrategy(item: ShoppingStrategy) {
-    const saved = await this.saveResource(item, "/admin/interactions/shopping-strategies");
-    return { ...saved, exhibitIds: saved.exhibitIds ?? [] };
-  }
-  override async deleteShoppingStrategy(id: string) {
-    await this.request(`/admin/interactions/shopping-strategies/${encodeURIComponent(id)}`, { method: "DELETE" });
+  async getOperationsReport(filters: { exhibitionId?: string; from?: string; to?: string; groupBy?: "day" | "terminal" | "scene" | "intent" } = {}): Promise<OperationsReport> {
+    return this.request<OperationsReport>(`/admin/report/operations${queryString({ exhibition_id: filters.exhibitionId, from: filters.from, to: filters.to, group_by: filters.groupBy })}`);
   }
 
-  override async listDocuments() { return this.requestList<KnowledgeDocument>("/admin/knowledge/documents"); }
-  override async uploadDocument(input: Pick<KnowledgeDocument, "title" | "fileName" | "type" | "exhibition">) { return this.request<KnowledgeDocument>("/admin/knowledge/documents", { method: "POST", body: JSON.stringify(input) }); }
-  override async updateDocument(id: string, patch: Partial<KnowledgeDocument>) { return this.request<KnowledgeDocument>(`/admin/knowledge/documents/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(patch) }); }
-  override async deleteDocument(id: string) { await this.request(`/admin/knowledge/documents/${encodeURIComponent(id)}`, { method: "DELETE" }); }
-  override async listQa() { return this.requestList<KnowledgeQa>("/admin/knowledge/qa"); }
-  override async saveQa(item: KnowledgeQa) { return this.saveResource(item, "/admin/knowledge/qa"); }
-  override async transitionQa(id: string, status: KnowledgeQa["status"]) { return this.request<KnowledgeQa>(`/admin/knowledge/qa/${encodeURIComponent(id)}/status`, { method: "POST", body: JSON.stringify({ status }) }); }
-  override async deleteQa(id: string) { await this.request(`/admin/knowledge/qa/${encodeURIComponent(id)}`, { method: "DELETE" }); }
-  override async listScripts() { return this.requestList<ScriptTemplate>("/admin/knowledge/scripts"); }
-  override async saveScript(item: ScriptTemplate) { return this.saveResource(item, "/admin/knowledge/scripts"); }
-  override async deleteScript(id: string) { await this.request(`/admin/knowledge/scripts/${encodeURIComponent(id)}`, { method: "DELETE" }); }
-  override async listPackages() { return this.requestList<PublishPackage>("/admin/knowledge/packages"); }
-  override async createPackage(input: Pick<PublishPackage, "name" | "exhibition" | "qaCount" | "documentCount">) { return this.request<PublishPackage>("/admin/knowledge/packages", { method: "POST", body: JSON.stringify(input) }); }
-  override async transitionPackage(id: string, status: PublishPackage["status"]) { return this.request<PublishPackage>(`/admin/knowledge/packages/${encodeURIComponent(id)}/status`, { method: "POST", body: JSON.stringify({ status }) }); }
-  override async listMissPool() { return this.requestList<MissPoolItem>("/admin/knowledge/miss-pool"); }
-  override async resolveMiss(id: string, status: MissPoolItem["status"]) { return this.request<MissPoolItem>(`/admin/knowledge/miss-pool/${encodeURIComponent(id)}/status`, { method: "POST", body: JSON.stringify({ status }) }); }
+  async getReport(filters: ReportFilters = {}) { return this.request<ReportOperations>(`/admin/report/operations${queryString(filters as Record<string, string | undefined>)}`); }
 
-  override async listGifs() { return this.requestList<GifAssetMeta>("/admin/assets?kind=gif"); }
-  override async createGif(input: Omit<GifAssetMeta, "id" | "createdAt">) { return this.request<GifAssetMeta>("/admin/assets", { method: "POST", body: JSON.stringify(input) }); }
-  override async updateGif(id: string, patch: Partial<GifAssetMeta>) { return this.request<GifAssetMeta>(`/admin/assets/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(patch) }); }
-  override async deleteGif(id: string) { await this.request(`/admin/assets/${encodeURIComponent(id)}`, { method: "DELETE" }); }
-  override async listVoiceConfigs() { return this.requestList<VoiceAsset>("/admin/voice-configs"); }
-  override async saveVoiceConfig(item: VoiceAsset) { return this.saveResource(item, "/admin/voice-configs"); }
-  override async deleteVoiceConfig(id: string) { await this.request(`/admin/voice-configs/${encodeURIComponent(id)}`, { method: "DELETE" }); }
-  override async listSceneBindings() { return this.requestList<SceneBinding>("/admin/scene-bindings"); }
-  override async saveSceneBindings(bindings: SceneBinding[]) { return this.request<SceneBinding[]>("/admin/scene-bindings", { method: "PUT", body: JSON.stringify({ bindings }) }); }
-  override async listIdle() { return this.requestList<IdleContent>("/admin/idle-content"); }
-  override async saveIdle(item: IdleContent) { return this.saveResource(item, "/admin/idle-content"); }
+  async exportReport(exhibitionId?: string, format: "xlsx" | "csv" = "xlsx", filters: { from?: string; to?: string; groupBy?: "day" | "terminal" | "scene" | "intent" } = {}): Promise<DownloadData> {
+    const path = `/admin/report/export${queryString({ exhibition_id: exhibitionId, format, from: filters.from, to: filters.to, group_by: filters.groupBy })}`;
+    return format === "csv" ? this.download(path) : this.downloadFile(path);
+  }
+
+  async listGifs() {
+    const items = await this.collection<JsonRecord>("assets", "gifs");
+    return items.map((item) => ({
+      id: String(item.id || ""),
+      name: String(item.name || "未命名动图"),
+      kind: "gif" as const,
+      previewUrl: String(item.previewUrl || item.url || ""),
+      scene: String(item.scene || "idle"),
+      tags: stringArray(item.tags),
+      status: item.status === "inactive" ? "inactive" as const : "active" as const,
+      width: Number(item.width || 0),
+      height: Number(item.height || 0),
+      frames: Number(item.frames || 0),
+      durationMs: Number(item.durationMs || item.duration_ms || 0),
+      fileName: String(item.fileName || item.filename || ""),
+      sizeBytes: Number(item.sizeBytes || item.size_bytes || 0),
+      createdAt: String(item.createdAt || item.created_at || ""),
+    }));
+  }
+  async createGif(input: GifCreateInput) {
+    if (input.file) {
+      const { file, ...metadata } = input;
+      return this.uploadGif(file, { name: metadata.name, scene: metadata.scene, tags: metadata.tags, status: metadata.status });
+    }
+    return this.saveCollection<GifAssetMeta>("assets", "gifs", input as JsonRecord);
+  }
+  async uploadGif(file: File, input: Pick<GifAssetMeta, "name" | "scene" | "tags" | "status">) {
+    const form = new FormData();
+    form.set("file", file, file.name);
+    form.set("name", input.name);
+    form.set("scene", input.scene);
+    form.set("tags", input.tags.join(","));
+    const saved = await this.request<JsonRecord>("/admin/assets/gifs", { method: "POST", body: form });
+    return {
+      id: String(saved.id || ""),
+      name: String(saved.name || input.name),
+      kind: "gif" as const,
+      previewUrl: String(saved.previewUrl || saved.url || ""),
+      scene: String(saved.scene || input.scene),
+      tags: stringArray(saved.tags || input.tags),
+      status: saved.status === "inactive" ? "inactive" as const : input.status,
+      width: Number(saved.width || 0),
+      height: Number(saved.height || 0),
+      frames: Number(saved.frames || 0),
+      durationMs: Number(saved.durationMs || 0),
+      fileName: String(saved.fileName || saved.filename || file.name),
+      sizeBytes: Number(saved.sizeBytes || file.size),
+      createdAt: String(saved.createdAt || saved.created_at || now()),
+    };
+  }
+  async updateGif(id: string, patch: Partial<GifAssetMeta>) { return this.saveCollection<GifAssetMeta>("assets", "gifs", { ...patch, id }); }
+  async deleteGif(id: string) { await this.request(`/admin/assets/gifs/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+
+  async listVoiceConfigs() { return this.collection<VoiceAsset>("assets", "voice-configs"); }
+  async saveVoiceConfig(item: VoiceAsset) { return this.saveCollection<VoiceAsset>("assets", "voice-configs", item as JsonRecord); }
+  async deleteVoiceConfig(id: string) { await this.request(`/admin/assets/voice-configs/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+  async listSceneBindings() { const items = await this.collection<JsonRecord>("assets", "scene-bindings"); return items.map((item) => this.sceneBinding(item)); }
+  async saveSceneBindings(bindings: SceneBinding[]) { await Promise.all(bindings.map((item) => this.saveSceneBinding(item))); return bindings; }
+  async getSceneBinding(scene: string) { return this.sceneBinding(await this.request<JsonRecord>(`/admin/assets/scene-bindings/${encodeURIComponent(scene)}`)); }
+  async saveSceneBinding(binding: SceneBinding) { return this.sceneBinding(await this.request<JsonRecord>(`/admin/assets/scene-bindings/${encodeURIComponent(binding.scene)}`, { method: "PUT", body: JSON.stringify({ scene: binding.scene, assets: binding.assets.map((item) => ({ asset_id: item.assetId, is_primary: item.isPrimary, order: item.order })) }) })); }
+  async listIdle() { return this.collection<IdleContent>("assets", "idle-contents"); }
+  async saveIdle(item: IdleContent) { return this.saveCollection<IdleContent>("assets", "idle-contents", item as JsonRecord); }
+  async deleteIdle(id: string) { await this.request(`/admin/assets/idle-contents/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+
+  async listDocuments() { return this.collection<KnowledgeDocument>("knowledge", "documents"); }
+  async uploadDocument(input: Pick<KnowledgeDocument, "title" | "fileName" | "type" | "exhibition">) { return this.saveCollection<KnowledgeDocument>("knowledge", "documents", input as JsonRecord); }
+  async updateDocument(id: string, patch: Partial<KnowledgeDocument>) { return this.saveCollection<KnowledgeDocument>("knowledge", "documents", { ...patch, id }); }
+  async deleteDocument(id: string) { await this.request(`/admin/knowledge/documents/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+  async listQa() { return this.collection<KnowledgeQa>("knowledge", "qa"); }
+  async saveQa(item: KnowledgeQa) { return this.saveCollection<KnowledgeQa>("knowledge", "qa", item as JsonRecord); }
+  async transitionQa(id: string, status: KnowledgeQa["status"]) { return this.request<KnowledgeQa>(`/admin/knowledge/qa/${encodeURIComponent(id)}/transition`, { method: "POST", body: JSON.stringify({ status }) }); }
+  async listQaVersions(id: string) { const response = await this.request<{ items?: Array<Record<string, unknown>> }>(`/admin/knowledge/qa/${encodeURIComponent(id)}/versions`); return response.items ?? []; }
+  async rollbackQa(id: string, version: number, reason: string) { return this.request<KnowledgeQa>(`/admin/knowledge/qa/${encodeURIComponent(id)}/rollback`, { method: "POST", body: JSON.stringify({ version, reason }) }); }
+  async deleteQa(id: string) { await this.request(`/admin/knowledge/qa/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+  async listScripts() { return this.collection<ScriptTemplate>("knowledge", "scripts"); }
+  async saveScript(item: ScriptTemplate) { return this.saveCollection<ScriptTemplate>("knowledge", "scripts", item as JsonRecord); }
+  async deleteScript(id: string) { await this.request(`/admin/knowledge/scripts/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+  async listPackages() { return this.collection<PublishPackage>("knowledge", "packages"); }
+  async createPackage(input: Pick<PublishPackage, "name" | "exhibition" | "qaCount" | "documentCount">) { return this.saveCollection<PublishPackage>("knowledge", "packages", input as JsonRecord); }
+  async transitionPackage(id: string, status: PublishPackage["status"]) {
+    if (status === "pending_review") return this.submitPackage(id);
+    if (status === "published") return this.publishPackage(id);
+    if (status === "rolled_back") return this.rollbackPackage(id);
+    return this.saveCollection<PublishPackage>("knowledge", "packages", { id, status });
+  }
+  async submitPackage(id: string, reason?: string) { return this.request<PublishPackage>(`/admin/knowledge/packages/${encodeURIComponent(id)}/submit`, { method: "POST", body: JSON.stringify({ reason }) }); }
+  async publishPackage(id: string, reason?: string) { return this.request<PublishPackage>(`/admin/knowledge/packages/${encodeURIComponent(id)}/publish`, { method: "POST", body: JSON.stringify({ reason }) }); }
+  async rollbackPackage(id: string, targetPackageId?: string, reason?: string) { return this.request<PublishPackage>(`/admin/knowledge/packages/${encodeURIComponent(id)}/rollback`, { method: "POST", body: JSON.stringify({ target_package_id: targetPackageId, reason }) }); }
+  async listMissPool() { return this.collection<MissPoolItem>("knowledge", "miss-pool"); }
+  async resolveMiss(id: string, status: MissPoolItem["status"]) { return this.resolveMissAction(id, status === "ignored" ? "ignore" : status === "converted_qa" ? "create_qa" : "handled"); }
+  async resolveMissAction(id: string, action: "ignore" | "handled" | "create_qa", reason?: string, qa?: Record<string, unknown>) { return this.request<MissPoolItem>(`/admin/knowledge/miss-pool/${encodeURIComponent(id)}/resolve`, { method: "POST", body: JSON.stringify({ action, reason, qa }) }); }
+
+  async listWelcomeConfigs(exhibitionId?: string) {
+    const [items, exhibitions] = await Promise.all([this.collection<JsonRecord>("interaction", "welcome-configs", { exhibition_id: exhibitionId }), this.listExhibitions()]);
+    return items.map((item) => this.welcomeConfig(item, exhibitions));
+  }
+  async saveWelcomeConfig(item: WelcomeConfig) { const exhibitions = await this.listExhibitions(); return this.welcomeConfig(await this.saveCollection<JsonRecord>("interaction", "welcome-configs", item as JsonRecord), exhibitions); }
+  async listExplainFlows(exhibitionId?: string) {
+    const [items, exhibitions] = await Promise.all([this.collection<JsonRecord>("interaction", "explain-flows", { exhibition_id: exhibitionId }), this.listExhibitions()]);
+    return items.map((item) => this.explainFlow(item, exhibitions));
+  }
+  async saveExplainFlow(item: ExplainFlow) { const exhibitions = await this.listExhibitions(); return this.explainFlow(await this.saveCollection<JsonRecord>("interaction", "explain-flows", item as JsonRecord), exhibitions); }
+  async deleteExplainFlow(id: string) { await this.request(`/admin/interaction/explain-flows/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+  async listShoppingStrategies(exhibitionId?: string) {
+    const [items, exhibitions] = await Promise.all([this.collection<JsonRecord>("interaction", "shopping-strategies", { exhibition_id: exhibitionId }), this.listExhibitions()]);
+    return Promise.all(items.map(async (item) => {
+      const links = await this.request<JsonRecord>(`/admin/interaction/shopping-strategies/${encodeURIComponent(String(item.id))}/exhibits?page=1&page_size=100`);
+      return this.shoppingStrategy(item, exhibitions, links.selected_ids || []);
+    }));
+  }
+  async saveShoppingStrategy(item: ShoppingStrategy) {
+    const exhibitions = await this.listExhibitions();
+    const saved = await this.saveCollection<JsonRecord>("interaction", "shopping-strategies", item as JsonRecord);
+    const exhibitIds = item.exhibitIds || [];
+    await this.request(`/admin/interaction/shopping-strategies/${encodeURIComponent(String(saved.id))}/exhibits`, { method: "PUT", body: JSON.stringify({ ids: exhibitIds }) });
+    return this.shoppingStrategy(saved, exhibitions, exhibitIds);
+  }
+  async deleteShoppingStrategy(id: string) { await this.request(`/admin/interaction/shopping-strategies/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+
+  async listExhibitions() { return (await this.collection<JsonRecord>("event", "exhibitions")).map((item) => this.exhibition(item)); }
+  async saveExhibition(item: Exhibition) { return this.exhibition(await this.saveCollection<JsonRecord>("event", "exhibitions", item as JsonRecord)); }
+  async saveExhibitionRuntimeConfig(item: Exhibition) { return this.exhibition(await this.request<JsonRecord>(`/admin/event/exhibitions/${encodeURIComponent(item.id)}/runtime-config`, { method: "PUT", body: JSON.stringify(item) })); }
+  async deleteExhibition(id: string) { await this.request(`/admin/event/exhibitions/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+  async transitionExhibition(id: string, status: ExhibitionStatus) { return this.exhibition(await this.request<JsonRecord>(`/admin/event/exhibitions/${encodeURIComponent(id)}/lifecycle`, { method: "POST", body: JSON.stringify({ status }) })); }
+  async listVenues() { return this.collection<EventVenue>("event", "venues"); }
+  async saveVenue(item: EventVenue) { return this.saveCollection<EventVenue>("event", "venues", item as JsonRecord); }
+  async deleteVenue(id: string) { await this.request(`/admin/event/venues/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+  async listPoints() { return this.collection<EventPoint>("event", "points"); }
+  async savePoint(item: EventPoint) { return this.saveCollection<EventPoint>("event", "points", item as JsonRecord); }
+  async deletePoint(id: string) { await this.request(`/admin/event/points/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+  async listExhibitors() { return this.collection<Exhibitor>("event", "exhibitors"); }
+  async saveExhibitor(item: Exhibitor) { return this.saveCollection<Exhibitor>("event", "exhibitors", item as JsonRecord); }
+  async deleteExhibitor(id: string) { await this.request(`/admin/event/exhibitors/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+  async listExhibits() { return this.collection<Exhibit>("event", "exhibits"); }
+  async saveExhibit(item: Exhibit) { return this.saveCollection<Exhibit>("event", "exhibits", item as JsonRecord); }
+  async deleteExhibit(id: string) { await this.request(`/admin/event/exhibits/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+  async listRoutes() { return this.collection<ExhibitionRoute>("event", "routes"); }
+  async saveRoute(item: ExhibitionRoute) { return this.saveCollection<ExhibitionRoute>("event", "routes", item as JsonRecord); }
+  async deleteRoute(id: string) { await this.request(`/admin/event/routes/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+  async listBroadcasts() { return this.collection<EmergencyBroadcast>("event", "broadcasts"); }
+  async saveBroadcast(item: EmergencyBroadcast) { return this.saveCollection<EmergencyBroadcast>("event", "broadcasts", item as JsonRecord); }
+  async transitionBroadcast(id: string, status: EmergencyBroadcast["status"]) { return this.saveCollection<EmergencyBroadcast>("event", "broadcasts", { id, status }); }
+  async deleteBroadcast(id: string) { await this.request(`/admin/event/broadcasts/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+  async listSchedules() { return this.collection<EventSchedule>("event", "schedules"); }
+  async saveSchedule(item: EventSchedule) { return this.saveCollection<EventSchedule>("event", "schedules", item as JsonRecord); }
+  async deleteSchedule(id: string) { await this.request(`/admin/event/schedules/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+
+  async listLeads(filters: { exhibitionId?: string; keyword?: string; status?: LeadStatus | ""; from?: string; to?: string } = {}) {
+    return this.list<Lead>("/admin/lead", { page: 1, page_size: 100, exhibition_id: filters.exhibitionId && filters.exhibitionId !== "all" ? filters.exhibitionId : undefined, keyword: filters.keyword, status: filters.status, from: filters.from, to: filters.to });
+  }
+  async getLead(id: string) { try { return await this.request<Lead>(`/admin/lead/${encodeURIComponent(id)}`); } catch (error) { if (error instanceof Error && error.message.includes("404")) return null; throw error; } }
+  async saveLead(item: Lead) {
+    const existing = Boolean(item.id) && !isClientDraftId(item.id);
+    return this.request<Lead>(existing ? `/admin/lead/${encodeURIComponent(item.id)}` : "/admin/lead", { method: existing ? "PATCH" : "POST", body: this.data(item) });
+  }
+  async updateLeadStatus(id: string, status: LeadStatus, note?: string) { return this.request<Lead>(`/admin/lead/${encodeURIComponent(id)}/status`, { method: "POST", body: JSON.stringify({ status, note }) }); }
+  async exportLeads(filters: { exhibitionId?: string; keyword?: string; status?: string; from?: string; to?: string } = {}, format: "xlsx" | "csv" = "xlsx"): Promise<DownloadData> {
+    const path = `/admin/lead/export${queryString({ exhibition_id: filters.exhibitionId && filters.exhibitionId !== "all" ? filters.exhibitionId : undefined, keyword: filters.keyword, status: filters.status, from: filters.from, to: filters.to, format })}`;
+    return format === "csv" ? this.download(path) : this.downloadFile(path);
+  }
+  async listFeedback(filters: { exhibitionId?: string; keyword?: string; status?: Feedback["status"] } = {}) { return this.list<Feedback>("/admin/feedback", { page: 1, page_size: 100, exhibition_id: filters.exhibitionId, keyword: filters.keyword, status: filters.status }); }
+  async resolveFeedback(id: string, note: string) { return this.request<Feedback>(`/admin/feedback/${encodeURIComponent(id)}/resolve`, { method: "POST", body: this.data({ note }) }); }
+
+  private userRecord(raw: JsonRecord, roles: RoleRecord[]): AdminUserRecord {
+    const roleCodes = Array.isArray(raw.roles) ? raw.roles : [];
+    const roleIds = roleCodes.map((code: string) => roles.find((role) => role.code === code)?.id || code);
+    return { id: String(raw.id), username: String(raw.username || ""), displayName: String(raw.displayName || raw.display_name || raw.username || ""), gender: raw.gender === "男" || raw.gender === "女" ? raw.gender : "未设置", phone: String(raw.phone || ""), email: String(raw.email || ""), department: String(raw.department || ""), status: raw.status === "inactive" ? "inactive" : "active", roleIds, createdAt: String(raw.createdAt || raw.created_at || ""), lastLoginAt: String(raw.lastLoginAt || raw.last_login_at || "-"), lastLoginIp: String(raw.lastLoginIp || raw.last_login_ip || "-") };
+  }
+  async listAdminUsers(filters: { keyword?: string; status?: AdminUserRecord["status"] } = {}) { const [items, roles] = await Promise.all([this.list<JsonRecord>("/admin/users", { page: 1, page_size: 100, keyword: filters.keyword, status: filters.status }), this.listRoles()]); return items.map((item) => this.userRecord(item, roles)); }
+  async saveAdminUser(item: AdminUserRecord) {
+    const roles = await this.listRoles();
+    const roleCodes = item.roleIds.map((id) => roles.find((role) => role.id === id)?.code || id);
+    const existing = (await this.listAdminUsers()).some((user) => user.id === item.id);
+    const payload = { ...item, displayName: item.displayName, roleCodes, password: existing ? undefined : "Admin@123456" };
+    const saved = await this.request<JsonRecord>(existing ? `/admin/users/${encodeURIComponent(item.id)}` : "/admin/users", { method: existing ? "PATCH" : "POST", body: this.data(payload) });
+    return this.userRecord(saved, roles);
+  }
+  async deleteAdminUser(id: string) { await this.request(`/admin/users/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+  async resetAdminPassword(id: string) { await this.request(`/admin/users/${encodeURIComponent(id)}/reset-password`, { method: "POST", body: this.data({ password: "Admin@123456" }) }); }
+  async exportAdminUsers(filters: { keyword?: string; status?: AdminUserRecord["status"] } = {}) { return this.download(`/admin/users/export${queryString(filters)}`); }
+  async listRoles() {
+    const items = await this.list<JsonRecord>("/admin/roles", { page: 1, page_size: 100 });
+    return items.map((item) => ({ ...item, id: String(item.id), code: String(item.code || ""), name: String(item.name || ""), dataScope: item.dataScope || item.data_scope || "自定义", level: Number(item.level || 1), description: String(item.description || ""), permissionIds: Array.isArray(item.permissionIds) ? item.permissionIds : [], createdAt: String(item.createdAt || item.created_at || "") })) as RoleRecord[];
+  }
+  async saveRole(item: RoleRecord) {
+    const existing = (await this.listRoles()).some((role) => role.id === item.id);
+    const saved = await this.request<JsonRecord>(existing ? `/admin/roles/${encodeURIComponent(item.id)}` : "/admin/roles", { method: existing ? "PATCH" : "POST", body: this.data(item) });
+    const roleId = String(saved.id || item.id);
+    if (item.permissionIds) await this.request(`/admin/roles/${encodeURIComponent(roleId)}/permissions`, { method: "PUT", body: JSON.stringify({ ids: item.permissionIds }) });
+    const roles = await this.listRoles();
+    return roles.find((role) => role.id === roleId) || ({ ...item, id: roleId } as RoleRecord);
+  }
+  async deleteRole(id: string) { await this.request(`/admin/roles/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+  async listPermissionTree() {
+    const payload = await this.request<{ items: JsonRecord[] }>("/admin/permission-tree");
+    const flat = (payload.items || []).map((item) => ({ id: String(item.id), parentId: item.parentId ?? item.parent_id ?? null, name: String(item.name || ""), code: String(item.code || ""), type: (item.type ?? item.kind ?? "menu") as PermissionNode["type"], path: String(item.path || ""), apiPattern: String(item.apiPattern ?? item.api_pattern ?? ""), children: [] as PermissionNode[] }));
+    const byParent = new Map<string | null, PermissionNode[]>();
+    flat.forEach((item) => byParent.set(item.parentId, [...(byParent.get(item.parentId) || []), item]));
+    const build = (parent: string | null): PermissionNode[] => (byParent.get(parent) || []).map((item) => ({ ...item, children: build(item.id) }));
+    return build(null);
+  }
+  async savePermissionNode(item: PermissionNode): Promise<PermissionNode> { void item; throw new Error("权限节点由角色权限树统一维护，当前版本不支持独立修改。"); }
+  async deletePermissionNode(_id: string) { throw new Error("权限节点由角色权限树统一维护，当前版本不支持独立删除。"); }
+  async listAuditLogs(filters: { username?: string; ip?: string; keyword?: string; from?: string; to?: string } = {}) {
+    const items = await this.list<JsonRecord>("/admin/audit-logs", { page: 1, page_size: 100, username: filters.username, ip: filters.ip, keyword: filters.keyword, from: filters.from, to: filters.to });
+    return items.map((item) => ({ id: String(item.id), traceId: String(item.trace_id || item.traceId || ""), username: String(item.username || ""), ip: String(item.ip || ""), ipLocation: String(item.ipLocation || "-"), description: String(item.description || item.action || ""), browser: String(item.browser || item.user_agent || "-"), durationMs: Number(item.duration_ms || item.durationMs || 0), createdAt: String(item.created_at || item.createdAt || ""), resource: String(item.resource_type || item.resource || ""), action: String(item.action || ""), before: item.before_json ? JSON.parse(item.before_json) : item.before, after: item.after_json ? JSON.parse(item.after_json) : item.after, spans: Array.isArray(item.spans) ? item.spans : [] })) as AuditLog[];
+  }
+  async getTraceRecord(id: string) {
+    const payload = await this.request<JsonRecord>(`/admin/audit/trace/${encodeURIComponent(id)}`);
+    const rows = Array.isArray(payload.logs) ? payload.logs : [];
+    const first = rows[0] || {};
+    const item = (await this.listAuditLogs()).find((candidate) => candidate.traceId === id) || ({ id: String(first.id || id), traceId: id, username: String(first.username || ""), ip: String(first.ip || ""), ipLocation: "-", description: String(first.action || "Trace"), browser: String(first.user_agent || "-"), durationMs: Number(first.duration_ms || 0), createdAt: String(first.created_at || ""), resource: String(first.resource_type || ""), action: String(first.action || ""), spans: [] } as AuditLog);
+    return { ...item, spans: (payload.spans || []).map((span: JsonRecord) => ({ id: String(span.id), parentId: span.parent_id || null, service: String(span.service || "api"), operation: String(span.operation || ""), startAt: String(span.start_at || span.startAt || item.createdAt), durationMs: Number(span.duration_ms || span.durationMs || 0), status: span.status === "error" ? "error" : "ok", attributes: span.attributes || {} })) } as AuditLog;
+  }
+  async exportAuditLogs(filters: { username?: string; ip?: string; keyword?: string; from?: string; to?: string } = {}) { return this.download(`/admin/audit-logs/export${queryString(filters)}`); }
+  async clearAuditLogs() { await this.request("/admin/audit-logs", { method: "DELETE" }); }
+  async getSystemMonitor() {
+    const raw = await this.request<JsonRecord>("/admin/ops/system");
+    const mapService = (item: JsonRecord) => ({ id: String(item.id), name: String(item.name || item.service || item.id), status: item.status || "unknown", latencyMs: Number(item.latencyMs ?? item.latency_ms ?? 0), checkedAt: String(item.checkedAt || item.checked_at || ""), description: String(item.description || "") });
+    const mapTerminal = (item: JsonRecord) => ({ id: String(item.id), name: String(item.name || item.id), exhibitionId: String(item.exhibitionId || item.exhibition_id || ""), location: String(item.location || ""), status: item.status || "offline", lastHeartbeatAt: String(item.lastHeartbeatAt || item.last_heartbeat_at || ""), version: String(item.version || ""), cpuPercent: Number(item.cpuPercent ?? item.cpu ?? 0), memoryPercent: Number(item.memoryPercent ?? item.memory ?? 0) });
+    return { ...raw, cpuPercent: Number(raw.cpuPercent ?? raw.cpu ?? 0), memoryPercent: Number(raw.memoryPercent ?? raw.memory ?? 0), swapPercent: Number(raw.swapPercent ?? raw.swap ?? 0), diskPercent: Number(raw.diskPercent ?? raw.disk ?? 0), cpuHistory: Array.isArray(raw.cpuHistory) ? raw.cpuHistory : [], memoryHistory: Array.isArray(raw.memoryHistory) ? raw.memoryHistory : [], services: (raw.services || []).map(mapService), terminals: (raw.terminals || []).map(mapTerminal), alerts: (raw.alerts || []).map((item: JsonRecord) => ({ ...item, target: item.target || item.object || "", occurredAt: item.occurredAt || item.createdAt || "" })) } as unknown as SystemMonitor;
+  }
+  async listAlerts() {
+    const items = await this.list<JsonRecord>("/admin/alerts", { page: 1, page_size: 100 });
+    return items.map((item) => ({ ...item, id: String(item.id), type: String(item.type || ""), severity: item.severity === "warning" ? "normal" : item.severity, target: String(item.target || item.object || ""), content: String(item.content || ""), status: item.status === "open" ? "active" : item.status, occurredAt: String(item.occurredAt || item.createdAt || item.created_at || "") })) as AlertEvent[];
+  }
+  async acknowledgeAlert(id: string, _operator?: string) { return this.request<AlertEvent>(`/admin/alerts/${encodeURIComponent(id)}/acknowledge`, { method: "POST" }); }
+  async getGatewayPolicy() { return this.request<GatewayPolicy>("/admin/ops/gateway-policy"); }
+  async saveGatewayPolicy(policy: GatewayPolicy) { return this.request<GatewayPolicy>("/admin/ops/gateway-policy", { method: "PUT", body: JSON.stringify(policy) }); }
 }
 
 const runtimeEnv = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env ?? {};
-export function createAdminApi(mode?: string): AdminApiClient {
-  return mode === "mock" ? new MockAdminApiClient() : new FetchAdminApiClient();
-}
-export const adminApi: AdminApiClient = createAdminApi(runtimeEnv.VITE_ADMIN_API_MODE);
+export const adminApi: AdminApiClient = runtimeEnv.VITE_ADMIN_API_MODE === "real" ? new FetchAdminApiClient() : new MockAdminApiClient();
 
 export const DEFAULT_VOICES: VoiceAsset[] = EDGE_ZH_VOICES.map((voice) => ({
   id: `voice-edge-${voice.id}`,

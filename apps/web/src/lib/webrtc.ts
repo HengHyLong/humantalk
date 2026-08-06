@@ -60,6 +60,8 @@ export type PlaybackHandle = { pc: RTCPeerConnection; remoteStream: MediaStream 
 export type StartPlaybackOptions = {
   onRemoteStream?: (remoteStream: MediaStream) => void;
   onConnectionStateChange?: (state: RTCPeerConnectionState) => void;
+  onIceConnectionStateChange?: (state: RTCIceConnectionState) => void;
+  onFirstFrame?: () => void;
 };
 
 export async function startPlayback(
@@ -75,6 +77,14 @@ export async function startPlayback(
   const mediaStream = new MediaStream();
   videoEl.srcObject = mediaStream;
   const ensurePlayback = requestVideoPlayback(videoEl);
+  let firstFrameReported = false;
+  const reportFirstFrame = () => {
+    if (firstFrameReported) return;
+    firstFrameReported = true;
+    options.onFirstFrame?.();
+  };
+  const onPlaying = () => reportFirstFrame();
+  videoEl.addEventListener("playing", onPlaying);
 
   pc.ontrack = (ev) => {
     const track = ev.track;
@@ -88,6 +98,7 @@ export async function startPlayback(
   };
 
   const cleanup = () => {
+    videoEl.removeEventListener("playing", onPlaying);
     videoEl.pause();
     videoEl.srcObject = null;
   };
@@ -101,6 +112,7 @@ export async function startPlayback(
     }
   });
   pc.addEventListener("iceconnectionstatechange", () => {
+    options.onIceConnectionStateChange?.(pc.iceConnectionState);
     if (
       pc.iceConnectionState === "closed"
       || pc.iceConnectionState === "failed"

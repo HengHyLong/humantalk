@@ -1,6 +1,7 @@
 import { useEffect, type RefObject } from "react";
 import type { TtsProviderExtended } from "../constants/ttsBailian";
 import type { SceneBackgroundAsset, SceneComposition } from "../lib/api";
+import type { InputCaptureEvent } from "../lib/inputCapture";
 import type { ConnectionStatus } from "../types";
 import { ChatInput } from "./ChatInput";
 import { SceneStage } from "./SceneStage";
@@ -28,6 +29,8 @@ type ImmersiveConversationProps = {
   onSpeakAudioStreamError: (message: string) => void;
   onInterrupt: () => void;
   onNotify?: (message: string, tone?: "info" | "success" | "error") => void;
+  onInputEvent?: (event: InputCaptureEvent) => void;
+  terminalId?: string;
 };
 
 export function ImmersiveConversation({
@@ -53,6 +56,8 @@ export function ImmersiveConversation({
   onSpeakAudioStreamError,
   onInterrupt,
   onNotify,
+  onInputEvent,
+  terminalId = "web-terminal",
 }: ImmersiveConversationProps) {
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -98,6 +103,8 @@ export function ImmersiveConversation({
               streamingAsrSessionId={sessionId}
               onSpeakAudioStreamResult={onSpeakAudioStreamResult}
               onSpeakAudioStreamError={onSpeakAudioStreamError}
+              onInputEvent={onInputEvent}
+              terminalId={terminalId}
               onInterrupt={onInterrupt}
               isSpeaking={isSpeaking}
               disabled={!live}

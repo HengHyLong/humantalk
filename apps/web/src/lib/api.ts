@@ -280,13 +280,14 @@ export type SceneComposition = {
   updated_at: string;
 };
 
-export type VoiceIntent = "navigation" | "exhibition_content";
+export type VoiceIntent = "navigation" | "exhibition_content" | "shopping";
 
 export type ExhibitionVoiceConfig = {
   exhibition_id: string;
   keywords: {
     navigation: string[];
     exhibition_content: string[];
+    shopping: string[];
   };
   supports_deferred_speak?: boolean;
 };
@@ -295,13 +296,23 @@ export type NavigationResult = {
   title?: string;
   spoken_text: string;
   subtitle_text?: string;
-  image_url?: string;
+  image_url?: string | null;
   route?: {
     from?: string;
     to?: string;
     directions?: string[];
     estimated_minutes?: number;
   };
+  alternatives?: Array<{
+    title: string;
+    image_url?: string | null;
+    route: {
+      from?: string;
+      to?: string;
+      directions?: string[];
+      estimated_minutes?: number;
+    };
+  }>;
 };
 
 export type ExhibitionVoiceConfigResponse = Partial<ExhibitionVoiceConfig> & {
@@ -310,10 +321,47 @@ export type ExhibitionVoiceConfigResponse = Partial<ExhibitionVoiceConfig> & {
     navigation?: string[];
     exhibition_content?: string[];
     exhibitionContent?: string[];
+    shopping?: string[];
   };
 };
 
 export type NavigationQueryResponse = NavigationResult;
+
+export type GuideRecommendation = {
+  id: string;
+  name: string;
+  category: string;
+  description: string;
+  tags: string[];
+  image_url?: string | null;
+  exhibitor: string;
+  booth_code: string;
+  score: number;
+  compare: Record<string, string>;
+};
+
+export type GuideRecommendationResponse = {
+  exhibition_id: string;
+  query: string;
+  strategy: Record<string, unknown>;
+  items: GuideRecommendation[];
+};
+
+export type MaterialQrResponse = {
+  token: string;
+  url: string;
+  qr_data_url?: string | null;
+  expires_at: string;
+};
+
+export type MaterialTokenResponse = {
+  token: string;
+  exhibition_id: string;
+  exhibit_id?: string | null;
+  exhibit_name?: string | null;
+  expires_at: string;
+  form_url: string;
+};
 
 export async function getExhibitionVoiceConfig(exhibitionId?: string | null): Promise<ExhibitionVoiceConfigResponse> {
   const id = exhibitionId?.trim();
@@ -328,6 +376,43 @@ export async function queryExhibitionNavigation(
   const id = exhibitionId?.trim();
   const path = `/exhibitions/${encodeURIComponent(id || "current")}/navigation/query`;
   return apiPost<NavigationQueryResponse>(path, input);
+}
+
+export async function getExhibitionGuide(
+  exhibitionId: string | null | undefined,
+  query = "",
+): Promise<GuideRecommendationResponse> {
+  const id = exhibitionId?.trim();
+  const path = `/exhibitions/${encodeURIComponent(id || "current")}/guide/recommendations?query=${encodeURIComponent(query)}`;
+  return apiGet<GuideRecommendationResponse>(path);
+}
+
+export async function getMaterialQr(
+  exhibitionId: string | null | undefined,
+  itemId?: string,
+): Promise<MaterialQrResponse> {
+  const id = exhibitionId?.trim();
+  const suffix = itemId ? `?item_id=${encodeURIComponent(itemId)}` : "";
+  return apiGet<MaterialQrResponse>(`/exhibitions/${encodeURIComponent(id || "current")}/materials/qr${suffix}`);
+}
+
+export function getMaterialToken(token: string): Promise<MaterialTokenResponse> {
+  return apiGet<MaterialTokenResponse>(`/runtime/materials/${encodeURIComponent(token)}`);
+}
+
+export async function submitRuntimeLead(input: {
+  exhibitionId: string;
+  companyName: string;
+  contactName: string;
+  phone: string;
+  email?: string;
+  intentSummary?: string;
+  interestedExhibitIds?: string[];
+  materialToken?: string;
+  consent: boolean;
+  source?: string;
+}): Promise<Record<string, unknown>> {
+  return apiPost<Record<string, unknown>>("/runtime/lead", input);
 }
 
 export async function transcribeSessionAudio(
@@ -640,6 +725,8 @@ export type AvatarSummary = {
   matting_status: "unknown" | "opaque" | "transparent_ready";
   duo_dialog: DuoDialogCapability | null;
   client_renderer: ClientRendererDescriptor | null;
+  waiting_gif_url?: string | null;
+  speaking_gif_url?: string | null;
 };
 
 export type CreateSessionResponse = { session_id: string; status: string };
