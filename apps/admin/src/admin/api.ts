@@ -264,7 +264,9 @@ export interface AdminApiClient {
   resolveMiss(id: string, status: MissPoolItem["status"]): Promise<MissPoolItem>;
   listExhibitions(): Promise<Exhibition[]>;
   saveExhibition(item: Exhibition): Promise<Exhibition>;
+  getExhibitionRuntimeConfig(id: string): Promise<Exhibition>;
   saveExhibitionRuntimeConfig(item: Exhibition): Promise<Exhibition>;
+  validateExhibitionRuntimeConfig(item: Exhibition): Promise<{ valid?: boolean; [key: string]: unknown }>;
   deleteExhibition(id: string): Promise<void>;
   transitionExhibition(id: string, status: ExhibitionStatus): Promise<Exhibition>;
   listVenues(): Promise<EventVenue[]>;
@@ -474,7 +476,16 @@ export class MockAdminApiClient implements AdminApiClient {
     writeStore("exhibitions", [saved, ...list.filter((candidate) => candidate.id !== item.id)]);
     return saved;
   }
+  async getExhibitionRuntimeConfig(id: string) {
+    const item = (await this.listExhibitions()).find((candidate) => candidate.id === id);
+    if (!item) throw new Error("展会不存在");
+    return item;
+  }
   async saveExhibitionRuntimeConfig(item: Exhibition) { return this.saveExhibition(item); }
+  async validateExhibitionRuntimeConfig(item: Exhibition) {
+    const exhibition = await this.getExhibitionRuntimeConfig(item.id).catch(() => null);
+    return { valid: Boolean(exhibition), exhibitionId: item.id };
+  }
   async transitionExhibition(id: string, status: Exhibition["status"]): Promise<Exhibition> {
     const list = await this.listExhibitions();
     const current = list.find((item) => item.id === id);
@@ -741,9 +752,28 @@ export class FetchAdminApiClient extends MockAdminApiClient {
 
   override async listExhibitions() { return this.requestEventList<Exhibition>("exhibitions"); }
   override async saveExhibition(item: Exhibition) { return this.saveResource(item, "/admin/event/exhibitions"); }
+  override async getExhibitionRuntimeConfig(id: string) {
+    return this.request<Exhibition>(`/admin/event/exhibitions/${encodeURIComponent(id)}/runtime-config`);
+  }
   override async saveExhibitionRuntimeConfig(item: Exhibition) {
     return this.request<Exhibition>(`/admin/event/exhibitions/${encodeURIComponent(item.id)}/runtime-config`, {
       method: "PUT",
+      body: JSON.stringify({
+        boundAvatarId: item.boundAvatarId,
+        boundModel: item.boundModel,
+        boundVoiceId: item.boundVoiceId,
+        boundVoiceProvider: item.boundVoiceProvider,
+        boundVoiceModel: item.boundVoiceModel,
+        boundSttProvider: item.boundSttProvider,
+        boundSttModel: item.boundSttModel,
+        boundScene: item.boundScene,
+        knowledgeBaseIds: item.knowledgeBaseIds,
+      }),
+    });
+  }
+  override async validateExhibitionRuntimeConfig(item: Exhibition) {
+    return this.request<{ valid?: boolean; [key: string]: unknown }>(`/admin/event/exhibitions/${encodeURIComponent(item.id)}/runtime-config/validate`, {
+      method: "POST",
       body: JSON.stringify({
         boundAvatarId: item.boundAvatarId,
         boundModel: item.boundModel,
