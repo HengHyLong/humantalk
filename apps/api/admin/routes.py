@@ -560,14 +560,6 @@ def resolve_miss_pool(record_id: str, request: Request, body: MissPoolResolveBod
     return {**saved, "qaId": qa_id}
 
 
-@router.get("/admin/assets/scene-bindings/{scene}")
-def get_scene_binding(scene: str, request: Request, auth: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
-    store = get_store(request)
-    _require(store, auth, "asset:scene")
-    item = store.get_record("scene_bindings", f"scene-{scene}")
-    return item or {"id": f"scene-{scene}", "scene": scene, "assets": [], "updatedAt": utc_now()}
-
-
 @router.put("/admin/assets/scene-bindings/{scene}")
 def save_scene_binding(scene: str, request: Request, body: SceneBindingBody, auth: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
     store = get_store(request)
@@ -586,6 +578,23 @@ def save_scene_binding(scene: str, request: Request, body: SceneBindingBody, aut
     )
     _audit(request, auth, action="save", resource_type="scene_binding", resource_id=saved["id"], before=before, after=saved)
     return saved
+
+
+@router.get("/admin/assets/scene-bindings/{scene}", include_in_schema=False)
+def reject_single_scene_binding_read(scene: str) -> None:
+    raise HTTPException(status_code=405, detail="use GET /api/v1/admin/assets/scene-bindings to list scene bindings")
+
+
+@router.delete("/admin/assets/scene-bindings/{scene}")
+def delete_scene_binding(scene: str, request: Request, auth: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    store = get_store(request)
+    _require(store, auth, "asset:scene")
+    before = store.get_record("scene_bindings", f"scene-{scene}")
+    if before is None or not store.delete_record("scene_bindings", f"scene-{scene}"):
+        raise _api_error(request, 404, "SCENE_BINDING_NOT_FOUND", "场景绑定不存在")
+    result = {"id": f"scene-{scene}", "scene": scene, "deleted": True}
+    _audit(request, auth, action="delete", resource_type="scene_binding", resource_id=result["id"], before=before, after=None)
+    return result
 
 
 @router.get("/admin/assets/{resource}")

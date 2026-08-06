@@ -234,6 +234,7 @@ export interface AdminApiClient {
   saveSceneBindings(bindings: SceneBinding[]): Promise<SceneBinding[]>;
   getSceneBinding(scene: string): Promise<SceneBinding>;
   saveSceneBinding(binding: SceneBinding): Promise<SceneBinding>;
+  deleteSceneBinding(scene: string): Promise<void>;
   listIdle(): Promise<IdleContent[]>;
   saveIdle(item: IdleContent): Promise<IdleContent>;
   deleteIdle(id: string): Promise<void>;
@@ -453,6 +454,7 @@ export class MockAdminApiClient implements AdminApiClient {
   async saveSceneBindings(bindings: SceneBinding[]) { writeStore("scene-bindings", bindings); return bindings; }
   async getSceneBinding(scene: string) { return (await this.listSceneBindings()).find((item) => item.scene === scene) ?? { scene, assets: [] }; }
   async saveSceneBinding(binding: SceneBinding) { await this.saveSceneBindings([...(await this.listSceneBindings()).filter((item) => item.scene !== binding.scene), binding]); return binding; }
+  async deleteSceneBinding(scene: string) { writeStore("scene-bindings", (await this.listSceneBindings()).filter((item) => item.scene !== scene)); }
   async listIdle() { return readStore<IdleContent[]>("idle", [{ id: "idle-1", type: "标语轮播", title: "西博会欢迎语", content: "欢迎来到 2026 西部博览会", interval: 8, exhibition: "2026 西部博览会", enabled: true }]); }
   async saveIdle(item: IdleContent) { const items = (await this.listIdle()).filter((candidate) => candidate.id !== item.id); const next = [item, ...items]; writeStore("idle", next); return item; }
   async deleteIdle(id: string) { writeStore("idle", (await this.listIdle()).filter((item) => item.id !== id)); }
@@ -901,8 +903,9 @@ export class FetchAdminApiClient implements AdminApiClient {
   async deleteVoiceConfig(id: string) { await this.request(`/admin/assets/voice-configs/${encodeURIComponent(id)}`, { method: "DELETE" }); }
   async listSceneBindings() { const items = await this.collection<JsonRecord>("assets", "scene-bindings"); return items.map((item) => this.sceneBinding(item)); }
   async saveSceneBindings(bindings: SceneBinding[]) { await Promise.all(bindings.map((item) => this.saveSceneBinding(item))); return bindings; }
-  async getSceneBinding(scene: string) { return this.sceneBinding(await this.request<JsonRecord>(`/admin/assets/scene-bindings/${encodeURIComponent(scene)}`)); }
+  async getSceneBinding(scene: string) { return (await this.listSceneBindings()).find((item) => item.scene === scene) ?? { scene, assets: [] }; }
   async saveSceneBinding(binding: SceneBinding) { return this.sceneBinding(await this.request<JsonRecord>(`/admin/assets/scene-bindings/${encodeURIComponent(binding.scene)}`, { method: "PUT", body: JSON.stringify({ scene: binding.scene, assets: binding.assets.map((item) => ({ asset_id: item.assetId, is_primary: item.isPrimary, order: item.order })) }) })); }
+  async deleteSceneBinding(scene: string) { await this.request(`/admin/assets/scene-bindings/${encodeURIComponent(scene)}`, { method: "DELETE" }); }
   async listIdle() { return this.collection<IdleContent>("assets", "idle-contents"); }
   async saveIdle(item: IdleContent) { return this.saveCollection<IdleContent>("assets", "idle-contents", item as JsonRecord); }
   async deleteIdle(id: string) { await this.request(`/admin/assets/idle-contents/${encodeURIComponent(id)}`, { method: "DELETE" }); }
