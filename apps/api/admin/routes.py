@@ -173,7 +173,8 @@ def _permission_codes(store: AdminStore, user_id: str) -> set[str]:
 
 
 def _require(store: AdminStore, auth: dict[str, Any], permission: str) -> None:
-    if permission not in _permission_codes(store, auth["user"]["id"]):
+    permissions = set(auth["compat_permissions"]) if "compat_permissions" in auth else _permission_codes(store, auth["user"]["id"])
+    if permission not in permissions:
         raise HTTPException(status_code=403, detail={"code": "FORBIDDEN", "detail": "没有执行该操作的权限"})
 
 
@@ -321,7 +322,10 @@ def refresh(request: Request, body: RefreshRequest) -> dict[str, Any]:
 
 @router.post("/auth/logout")
 def logout(request: Request, auth: dict[str, Any] = Depends(current_user)) -> dict[str, bool]:
-    get_store(request).revoke_token(str(auth["payload"]["jti"]))
+    if auth.get("compat_token"):
+        getattr(request.app.state, "admin_tokens", {}).pop(str(auth["compat_token"]), None)
+    else:
+        get_store(request).revoke_token(str(auth["payload"]["jti"]))
     _audit(request, auth, action="logout", resource_type="auth", resource_id=auth["user"]["id"], before=None, after=None)
     return {"success": True}
 

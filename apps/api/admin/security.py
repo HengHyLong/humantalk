@@ -72,6 +72,35 @@ def decode_token(request: Request, token: str, expected_type: str = "access") ->
 def current_user(request: Request, credentials: HTTPAuthorizationCredentials | None = Depends(bearer)) -> dict[str, Any]:
     if not credentials:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail={"code": "UNAUTHORIZED", "detail": "请先登录"})
+    token = credentials.credentials.strip()
+    # Compatibility bridge for /api/v1/admin/auth/login tokens. This keeps
+    # the legacy AdminStore routes and the newer content routes on one Bearer
+    # contract while JWT remains the canonical token for the full Admin API.
+    sessions = getattr(request.app.state, "admin_tokens", {})
+    session = sessions.get(token) if isinstance(sessions, dict) else None
+    if session and int(session.get("expiresAt", 0)) > int(time.time()):
+        session_user = session.get("user")
+        if isinstance(session_user, dict) and session_user.get("role") in {"sys_admin", "content_ops", "data_viewer", "security_audit", "readonly"}:
+            store = get_store(request)
+            user = store.user_by_username(str(session_user.get("username") or ""))
+            if user and user.get("status") == "active":
+                return {
+                    "user": user,
+                    "payload": {"sub": user["id"], "type": "access", "jti": f"compat:{token}"},
+                    "compat_token": token,
+                    "compat_permissions": list(session_user.get("permissions") or []),
+                }
+            return {
+                "user": {
+                    "id": str(session_user.get("id") or f"compat-{session_user.get('username', 'admin')}"),
+                    "username": str(session_user.get("username") or "admin"),
+                    "display_name": str(session_user.get("displayName") or session_user.get("username") or "admin"),
+                    "status": "active",
+                },
+                "payload": {"sub": str(session_user.get("id") or ""), "type": "access", "jti": f"compat:{token}"},
+                "compat_token": token,
+                "compat_permissions": list(session_user.get("permissions") or []),
+            }
     payload = decode_token(request, credentials.credentials)
     user = get_store(request).user(str(payload["sub"]))
     if not user or user.get("status") != "active":
