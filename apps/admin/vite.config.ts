@@ -1,6 +1,7 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath, URL } from "node:url";
+import fs from "fs";
 
 const backendPort = process.env.VITE_BACKEND_PORT ?? "8000";
 const backendUrl = process.env.VITE_BACKEND_URL ?? `http://127.0.0.1:${backendPort}`;
@@ -33,7 +34,15 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 5173,
-    allowedHosts,
+    
+//      https:{
+//        key:fs.readFileSync("./ssl/ai.oaii.cn.key"),
+//        cert:fs.readFileSync("./ssl/ai.oaii.cn_bundle.pem")
+//      },
+      
+      // 允许通过该域名访问 Vite 开发服务器
+      allowedHosts: ["ai.oaii.cn"],
+
     fs: {
       allow: [repoRoot],
     },

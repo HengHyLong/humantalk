@@ -148,12 +148,97 @@ if [[ -n "$web_host" ]]; then
   web_args+=(--host "$web_host")
 fi
 
+start_admin() {
+  local admin_dir="$script_dir/../apps/admin"
+  local admin_host="${web_host:-${OPENTALKING_WEB_HOST:-0.0.0.0}}"
+  local admin_port="${OPENTALKING_ADMIN_PORT:-5174}"
+  local admin_backend_port="${api_port:-${VITE_BACKEND_PORT:-${OPENTALKING_API_PORT:-${OPENTALKING_UNIFIED_PORT:-8000}}}}"
+  local repo_root="$(cd -- "$script_dir/.." && pwd)"
+  local digital_human_home="${DIGITAL_HUMAN_HOME:-$(cd -- "$repo_root/.." && pwd)}"
+  local run_dir="$digital_human_home/run"
+  local log_dir="$digital_human_home/logs"
+  local pid_file="$run_dir/opentalking-admin-$admin_port.pid"
+  local log_file="$log_dir/opentalking-admin-$admin_port.log"
+
+  mkdir -p "$run_dir" "$log_dir"
+
+  if [[ -f "$pid_file" ]]; then
+    local old_pid="$(cat "$pid_file" 2>/dev/null || true)"
+    if [[ -n "$old_pid" ]] && kill -0 "$old_pid" >/dev/null 2>&1; then
+      echo "OpenTalking admin is already running: pid=$old_pid port=$admin_port"
+      echo "Log: $log_file"
+      return 0
+    fi
+    rm -f "$pid_file"
+  fi
+
+  if quickstart_port_in_use "$admin_port"; then
+    echo "OpenTalking admin port $admin_port is already in use." >&2
+    echo "Stop the existing service first, or choose another OPENTALKING_ADMIN_PORT." >&2
+    quickstart_describe_port "$admin_port" >&2 || true
+    return 1
+  fi
+
+  if [[ ! -d "$admin_dir/node_modules" ]]; then
+    echo "Installing admin dependencies with npm ci ..."
+    if ! (cd "$admin_dir" && npm ci >>"$log_file" 2>&1); then
+      echo "Failed to install admin dependencies. Last log lines:" >&2
+      tail -80 "$log_file" >&2 || true
+      return 1
+    fi
+  fi
+
+  echo "Building OpenTalking admin"
+  if ! (cd "$admin_dir" && npm run build >>"$log_file" 2>&1); then
+    echo "OpenTalking admin build failed. Last log lines:" >&2
+    tail -80 "$log_file" >&2 || true
+    return 1
+  fi
+
+  echo "Starting OpenTalking admin"
+  echo "  admin: $admin_dir"
+  echo "  url:   http://127.0.0.1:$admin_port"
+  echo "  log:   $log_file"
+  echo "  api:   http://127.0.0.1:$admin_backend_port"
+  (
+    cd "$admin_dir"
+    export VITE_BACKEND_PORT="$admin_backend_port"
+    quickstart_detach "$log_file" ./node_modules/.bin/vite preview --host "$admin_host" --port "$admin_port" --strictPort >"$pid_file"
+  )
+
+  local pid="$(cat "$pid_file" 2>/dev/null || true)"
+  if [[ -z "$pid" ]]; then
+    echo "Failed to capture OpenTalking admin pid." >&2
+    return 1
+  fi
+
+  for _ in {1..60}; do
+    if ! kill -0 "$pid" >/dev/null 2>&1; then
+      echo "OpenTalking admin exited during startup. Last log lines:" >&2
+      tail -80 "$log_file" >&2 || true
+      rm -f "$pid_file"
+      return 1
+    fi
+    if curl --max-time 2 -fsS "http://127.0.0.1:$admin_port" >/dev/null 2>&1; then
+      echo "OpenTalking admin is up: http://127.0.0.1:$admin_port"
+      return 0
+    fi
+    sleep 1
+  done
+
+  echo "OpenTalking admin did not become ready in 60s. Last log lines:" >&2
+  tail -80 "$log_file" >&2 || true
+  return 1
+}
+
 if [[ "$backend" == "mock" ]]; then
   bash "$quickstart_dir/start_opentalking.sh" --mock "${start_args[@]}"
   bash "$quickstart_dir/start_frontend.sh" "${web_args[@]}"
+  start_admin
   echo ""
   echo "Open the app:"
   echo "  http://127.0.0.1:${web_port:-${OPENTALKING_WEB_PORT:-5173}}"
+  echo "  Admin: http://127.0.0.1:${OPENTALKING_ADMIN_PORT:-5174}"
   echo ""
   echo "Select mock / driverless mode to test without a real driver model."
   exit 0
@@ -216,10 +301,12 @@ fi
 
 bash "$quickstart_dir/start_opentalking.sh" "${start_args[@]}"
 bash "$quickstart_dir/start_frontend.sh" "${web_args[@]}"
+start_admin
 
 echo ""
 echo "Open the app:"
 echo "  http://127.0.0.1:${web_port:-${OPENTALKING_WEB_PORT:-5173}}"
+echo "  Admin: http://127.0.0.1:${OPENTALKING_ADMIN_PORT:-5174}"
 echo ""
 echo "Default model: $model"
 echo "Backend override: $model_env_name=$backend"
