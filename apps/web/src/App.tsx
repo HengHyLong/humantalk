@@ -951,15 +951,15 @@ export default function App() {
   const pendingAssistantMsgIdRef = useRef<string | null>(null);
   /** 首帧已进入 WebRTC 后再叠字幕（与口型对齐）；旧版 Worker 无 speech.media_started 时用定时回退 */
   const subtitleMediaReadyRef = useRef(false);
-  const subtitleFallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const subtitleFallbackTimerRef = useRef<number | null>(null);
   const subtitleBufferRef = useRef(createSubtitleTurnBuffer());
   const subtitleTurnCounterRef = useRef(0);
   const activeSubtitleTurnRef = useRef<{ scopeKey: string; turnKey: string; nextChunkOrder: number } | null>(null);
   const reconnectAttemptRef = useRef(0);
-  const reconnectTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
+  const reconnectTimerRef = useRef<number | null>(null);
   const reconnectSessionIdRef = useRef<string | null>(null);
   const scheduleReconnectRef = useRef<(category?: MediaFailureCategory) => void>(() => {});
-  const welcomeTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
+  const welcomeTimerRef = useRef<number | null>(null);
   const welcomeSpeechSessionRef = useRef<string | null>(null);
   const inputEventLogRef = useRef<InputCaptureEvent[]>([]);
 
