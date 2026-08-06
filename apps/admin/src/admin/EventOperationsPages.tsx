@@ -15,7 +15,7 @@ function StatusBadge({ children, tone = "slate" }: { children: ReactNode; tone?:
 }
 
 function SearchBox({ value, onChange, placeholder }: { value: string; onChange: (value: string) => void; placeholder: string }) {
-  return <input value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-cyan-400 sm:max-w-xs" />;
+  return <input value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} aria-label={placeholder} className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none transition focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100 sm:w-72" />;
 }
 
 function SelectField({ label, value, onChange, options }: { label: string; value: string; onChange: (value: string) => void; options: Array<{ value: string; label: string }> }) {
@@ -43,8 +43,8 @@ function DateTimeField({ label, value, onChange }: { label: string; value: strin
   return <label className="block text-xs font-semibold text-slate-600">{label}<input type="datetime-local" step="60" value={value.replace(" ", "T").slice(0, 16)} onChange={(event) => onChange(event.target.value.replace("T", " "))} className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-normal text-slate-800 outline-none focus:border-cyan-400" /></label>;
 }
 
-function ScopeBar({ exhibitions, value, onChange, count, label = "当前展会" }: { exhibitions: Exhibition[]; value: string; onChange: (value: string) => void; count: ReactNode; label?: string }) {
-  return <div className="flex flex-wrap items-end justify-between gap-3 border-b border-slate-100 p-4"><div className="flex flex-wrap items-end gap-3"><div><p className="mb-2 text-xs font-semibold text-slate-500">{label}</p><select value={value} onChange={(event) => onChange(event.target.value)} className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-cyan-400"><option value="all">全部展会</option>{exhibitions.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></div><p className="pb-2 text-xs text-slate-500">{count}</p></div></div>;
+function ScopeBar({ exhibitions, value, onChange, count, label = "当前展会", keyword, onKeywordChange, searchPlaceholder }: { exhibitions: Exhibition[]; value: string; onChange: (value: string) => void; count: ReactNode; label?: string; keyword?: string; onKeywordChange?: (value: string) => void; searchPlaceholder?: string }) {
+  return <div className="scope-toolbar flex flex-col gap-3 border-b border-slate-100 p-4 md:flex-row md:items-center md:justify-between md:pr-[21rem]"><div className="flex flex-wrap items-center gap-3"><div><p className="mb-2 text-xs font-semibold text-slate-500">{label}</p><select value={value} onChange={(event) => onChange(event.target.value)} className="h-11 min-w-40 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none transition focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100"><option value="all">全部展会</option>{exhibitions.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></div><p className="pt-5 text-xs text-slate-500">{count}</p></div>{keyword !== undefined && onKeywordChange && searchPlaceholder ? <SearchBox value={keyword} onChange={onKeywordChange} placeholder={searchPlaceholder} /> : null}</div>;
 }
 
 function statusTone(status: string): StatusTone {
