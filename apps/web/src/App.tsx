@@ -600,6 +600,8 @@ function validateAudioProviderConfigBeforeStart({
   ttsProvider: TtsProviderExtended;
   runtimeStatus: HealthResponse | null;
 }): string | null {
+  // API deployments configure OPENTALKING_STT_DASHSCOPE_API_KEY and
+  // OPENTALKING_TTS_DASHSCOPE_API_KEY on the backend; health only exposes key_set.
   const missing: string[] = [];
   const sttStatus = runtimeStatus?.stt_providers?.[normalizeAsrProvider(sttProvider, "dashscope")];
   const ttsStatus = runtimeStatus?.tts_providers?.[ttsProvider];
@@ -951,6 +953,7 @@ export default function App() {
   const pendingAssistantMsgIdRef = useRef<string | null>(null);
   /** 首帧已进入 WebRTC 后再叠字幕（与口型对齐）；旧版 Worker 无 speech.media_started 时用定时回退 */
   const subtitleMediaReadyRef = useRef(false);
+  const subtitleAccRef = useRef("");
   const subtitleFallbackTimerRef = useRef<number | null>(null);
   const subtitleBufferRef = useRef(createSubtitleTurnBuffer());
   const subtitleTurnCounterRef = useRef(0);
@@ -1042,6 +1045,7 @@ export default function App() {
   const refreshSubtitlePresentation = useCallback((nowMs = Date.now()) => {
     const active = activeSubtitleTurnRef.current;
     if (!active) {
+      subtitleAccRef.current = "";
       setCurrentSubtitle("");
       return "";
     }
@@ -1052,6 +1056,7 @@ export default function App() {
       nowMs,
     );
     if (presentation.visible) {
+      subtitleAccRef.current = presentation.text;
       setCurrentSubtitle(presentation.text);
       const msgId = streamingAssistantMsgIdRef.current;
       if (msgId) {
@@ -1083,9 +1088,11 @@ export default function App() {
     const turnKey = compatibleSubtitleTurnKey(data, fallbackTurnKey);
     activeSubtitleTurnRef.current = { scopeKey, turnKey, nextChunkOrder: 0 };
     subtitleMediaReadyRef.current = false;
+    subtitleAccRef.current = "";
   }, []);
 
   const clearSubtitleState = useCallback(() => {
+    subtitleAccRef.current = "";
     setCurrentSubtitle("");
     subtitleBufferRef.current = createSubtitleTurnBuffer();
     activeSubtitleTurnRef.current = null;
@@ -2453,7 +2460,7 @@ export default function App() {
         if (!update.accepted) return;
         subtitleBufferRef.current = update.buffer;
         const presentation = getSubtitlePresentation(subtitleBufferRef.current, active.scopeKey, active.turnKey, Date.now());
-        if (presentation.visible || subtitleMediaReadyRef.current) {
+        if (subtitleMediaReadyRef.current) {
           flushSubtitleDisplay();
           flushSubtitleMessage();
         } else {

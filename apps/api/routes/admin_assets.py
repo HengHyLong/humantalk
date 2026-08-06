@@ -10,6 +10,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse
+from pydantic import BaseModel, Field
 
 from apps.api.routes.admin_auth import authorize_admin_request
 
@@ -28,6 +29,11 @@ _COLLECTIONS = {
     "explain-flows": "explain_flows",
     "shopping-strategies": "shopping_strategies",
 }
+
+
+class SceneBindingPayload(BaseModel):
+    scene: str = Field(min_length=1, max_length=100)
+    assets: list[dict[str, Any]] = Field(default_factory=list)
 
 
 def _now() -> str:
@@ -417,8 +423,8 @@ def _save_scene_bindings(request: Request, bindings: list[dict[str, Any]]) -> li
             raise HTTPException(status_code=400, detail="scene bindings require scene and assets")
         normalized_assets = [
             {
-                "assetId": str(asset.get("assetId") or "").strip(),
-                "isPrimary": bool(asset.get("isPrimary", False)),
+                "assetId": str(asset.get("assetId") or asset.get("asset_id") or "").strip(),
+                "isPrimary": bool(asset.get("isPrimary", asset.get("is_primary", False))),
                 "order": int(asset.get("order", index)),
             }
             for index, asset in enumerate(assets)
@@ -429,16 +435,27 @@ def _save_scene_bindings(request: Request, bindings: list[dict[str, Any]]) -> li
     return normalized
 
 
-@router.put("/assets/scene-bindings", response_model=None)
-async def save_scene_bindings(bindings: list[dict[str, Any]], request: Request) -> list[dict[str, Any]]:
-    return _save_scene_bindings(request, bindings)
-
-
-@router.put("/assets/scene-bindings/{scene}", response_model=None)
-async def save_scene_binding(scene: str, payload: dict[str, Any], request: Request) -> dict[str, Any]:
+@router.put("/assets/scene-bindings/{scene}", response_model=None, operation_id="save_scene_binding_content")
+async def save_scene_binding(scene: str, payload: SceneBindingPayload, request: Request) -> dict[str, Any]:
+    if payload.scene != scene:
+        raise HTTPException(status_code=400, detail="path scene must match body scene")
     current = _store(request).list_collection("scene_bindings")
-    saved = {"scene": scene, "assets": payload.get("assets", [])}
+    saved = {"scene": scene, "assets": payload.assets}
     return _save_scene_bindings(request, [saved, *[item for item in current if item.get("scene") != scene]])[0]
+
+
+@router.get("/assets/scene-bindings/{scene}", include_in_schema=False)
+async def reject_single_scene_binding_read(scene: str) -> None:
+    raise HTTPException(status_code=405, detail="use GET /api/v1/admin/assets/scene-bindings to list scene bindings")
+
+
+@router.delete("/assets/scene-bindings/{scene}", response_model=None, operation_id="delete_scene_binding_content")
+async def delete_scene_binding(scene: str, request: Request) -> dict[str, Any]:
+    current = _store(request).list_collection("scene_bindings")
+    if not any(item.get("scene") == scene for item in current):
+        raise HTTPException(status_code=404, detail="scene binding not found")
+    _store(request).write_collection("scene_bindings", [item for item in current if item.get("scene") != scene])
+    return {"id": f"scene-{scene}", "scene": scene, "deleted": True}
 
 
 @router.get("/assets/idle-contents", response_model=None)

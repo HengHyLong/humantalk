@@ -176,7 +176,13 @@ def test_guide_material_lead_report_and_gif_upload(tmp_path) -> None:
 
         scene = client.put("/api/v1/admin/assets/scene-bindings/guide", headers=headers, json={"scene": "guide", "assets": [{"asset_id": uploaded["id"], "is_primary": True, "order": 0}]})
         assert scene.status_code == 200
-        assert client.get("/api/v1/admin/assets/scene-bindings/guide", headers=headers).json()["assets"][0]["asset_id"] == uploaded["id"]
+        assert client.get("/api/v1/admin/assets/scene-bindings/guide", headers=headers).status_code == 405
+        bindings = client.get("/api/v1/admin/assets/scene-bindings", headers=headers)
+        assert bindings.status_code == 200
+        assert any(item["scene"] == "guide" and item["assets"][0]["asset_id"] == uploaded["id"] for item in bindings.json()["items"])
+        deleted = client.delete("/api/v1/admin/assets/scene-bindings/guide", headers=headers)
+        assert deleted.status_code == 200
+        assert deleted.json()["deleted"] is True
 
 
 def test_knowledge_workflow_contracts(tmp_path) -> None:
