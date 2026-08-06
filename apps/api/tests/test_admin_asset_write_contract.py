@@ -63,6 +63,9 @@ def test_asset_write_contract_supports_bearer_tokens_dual_gifs_and_scene_binding
         assert "get" in schema["paths"]["/api/v1/admin/assets/scene-bindings/{scene}"]
         upload_schema = schema["paths"]["/api/v1/admin/assets/gifs"]["post"]
         assert "GifAssetResponse" in str(upload_schema["responses"]["200"])
+        gif_properties = schema["components"]["schemas"]["GifAssetResponse"]["properties"]
+        assert "fileName" in gif_properties
+        assert "filename" not in gif_properties
         headers = _login(client)
         waiting = client.post(
             "/api/v1/admin/assets/gifs",
@@ -178,3 +181,23 @@ def test_compatibility_asset_router_exposes_single_scene_get(tmp_path) -> None:
         assert fetched.status_code == 200
         assert fetched.json()["scene"] == "welcome"
         assert fetched.json()["status"] == "active"
+
+
+def test_gif_storage_migrates_legacy_filename_to_file_name(tmp_path) -> None:
+    database = tmp_path / "admin.sqlite3"
+    store = AdminStore(database, True)
+    store.save_record("gifs", {"id": "gif-legacy", "name": "历史 GIF", "filename": "legacy.gif"})
+
+    migrated_store = AdminStore(database, True)
+    migrated = migrated_store.get_record("gifs", "gif-legacy")
+    assert migrated is not None
+    assert migrated["fileName"] == "legacy.gif"
+    assert "filename" not in migrated
+
+
+def test_compatibility_gif_storage_migrates_legacy_filename(tmp_path) -> None:
+    content_store = admin_assets.AdminContentStore(tmp_path / "admin")
+    content_store.write_gifs([{"id": "gif-legacy", "filename": "legacy.gif", "status": "active"}])
+
+    migrated = admin_assets.AdminContentStore(tmp_path / "admin").list_gifs()
+    assert migrated == [{"id": "gif-legacy", "fileName": "legacy.gif", "status": "active"}]

@@ -123,7 +123,22 @@ class AdminContentStore:
 
     def list_gifs(self) -> list[dict[str, Any]]:
         value = _read_json(self.gif_index, [])
-        return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
+        if not isinstance(value, list):
+            return []
+        items: list[dict[str, Any]] = []
+        migrated = False
+        for raw_item in value:
+            if not isinstance(raw_item, dict):
+                continue
+            item = dict(raw_item)
+            legacy_name = item.pop("filename", None)
+            if legacy_name is not None:
+                item.setdefault("fileName", legacy_name)
+                migrated = True
+            items.append(item)
+        if migrated:
+            self.write_gifs(items)
+        return items
 
     def write_gifs(self, items: list[dict[str, Any]]) -> None:
         _write_json(self.gif_index, items)
