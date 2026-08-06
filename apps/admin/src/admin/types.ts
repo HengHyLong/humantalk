@@ -490,6 +490,11 @@ export type AlertEvent = {
   acknowledgedAt?: string;
 };
 
+export type MonitorHistoryPoint = {
+  at: string;
+  value: number;
+};
+
 export type SystemMonitor = {
   os: string;
   ip: string;
@@ -499,8 +504,8 @@ export type SystemMonitor = {
   memoryPercent: number;
   swapPercent: number;
   diskPercent: number;
-  cpuHistory: number[];
-  memoryHistory: number[];
+  cpuHistory: MonitorHistoryPoint[];
+  memoryHistory: MonitorHistoryPoint[];
   services: ServiceHealth[];
   terminals: TerminalStatus[];
 };

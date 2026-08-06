@@ -13,6 +13,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, model_validator
 
 from .security import current_user, decode_token, get_store, issue_tokens, password_hasher, verify_password
+from .monitoring import collect_runtime_monitor
 from .store import AdminStore, utc_now
 
 router = APIRouter(prefix="/api/v1", tags=["admin"])
@@ -96,6 +97,8 @@ def _record(store: AdminStore, kind: str, record_id: str, *, required: bool = Tr
 
 def _audit(request: Request, auth: dict[str, Any] | None, *, action: str, resource_type: str, resource_id: str, before: Any, after: Any, status_code: int = 200) -> None:
     store = get_store(request)
+    request.state.audit_written = True
+    started = getattr(request.state, "audit_started", None)
     store.audit({
         "id": uuid.uuid4().hex,
         "trace_id": getattr(request.state, "trace_id", uuid.uuid4().hex),
@@ -109,7 +112,7 @@ def _audit(request: Request, auth: dict[str, Any] | None, *, action: str, resour
         "ip": request.client.host if request.client else "",
         "user_agent": request.headers.get("user-agent", ""),
         "status_code": status_code,
-        "duration_ms": 0,
+        "duration_ms": round((time.perf_counter() - started) * 1000) if started else 0,
         "before_json": json.dumps(before, ensure_ascii=False) if before is not None else None,
         "after_json": json.dumps(after, ensure_ascii=False) if after is not None else None,
         "created_at": utc_now(),
@@ -125,6 +128,7 @@ def login(request: Request, body: LoginRequest) -> dict[str, Any]:
     with store.connect() as conn:
         conn.execute("UPDATE admin_users SET last_login_at=?,last_login_ip=?,updated_at=? WHERE id=?", (utc_now(), request.client.host if request.client else "", utc_now(), user["id"]))
     tokens = issue_tokens(request, user["id"])
+    _audit(request, {"user": user}, action="login", resource_type="auth", resource_id=user["id"], before=None, after={"success": True})
     return {**tokens, "user": _public_user(store, user)}
 
 
@@ -543,6 +547,21 @@ def create_lead(request: Request, body: RecordBody, auth: dict[str, Any] = Depen
     return saved
 
 
+@router.get("/admin/lead/export")
+def export_leads(request: Request, exhibition_id: str | None = None, keyword: str | None = None, status_filter: str | None = Query(None, alias="status"), from_date: str = Query("", alias="from"), to_date: str = Query("", alias="to"), auth: dict[str, Any] = Depends(current_user)) -> StreamingResponse:
+    store = get_store(request)
+    _require(store, auth, "lead:export")
+    items = store.list_records("leads", exhibition_id=exhibition_id, keyword=keyword, status=status_filter)
+    items = [item for item in items if (not from_date or str(item.get("createdAt", ""))[:10] >= from_date) and (not to_date or str(item.get("createdAt", ""))[:10] <= to_date)]
+    sensitive = "lead:view_sensitive" in _permission_codes(store, auth["user"]["id"])
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["线索ID", "展会", "单位名称", "联系人", "手机号", "邮箱", "状态", "创建时间"])
+    for item in items:
+        writer.writerow([item.get("id", ""), item.get("exhibitionName", item.get("exhibitionId", "")), item.get("companyName", ""), item.get("contactName", ""), item.get("phone", "") if sensitive else _mask_phone(str(item.get("phone", ""))), item.get("email", "") if sensitive else _mask_email(str(item.get("email", ""))), item.get("status", ""), item.get("createdAt", "")])
+    return StreamingResponse(iter([output.getvalue().encode("utf-8-sig")]), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=leads.csv"})
+
+
 @router.get("/admin/lead/{record_id}")
 def get_lead(record_id: str, request: Request, auth: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
     store = get_store(request)
@@ -583,21 +602,6 @@ def update_lead_status(record_id: str, request: Request, body: StatusBody, auth:
     return saved
 
 
-@router.get("/admin/lead/export")
-def export_leads(request: Request, exhibition_id: str | None = None, keyword: str | None = None, status_filter: str | None = Query(None, alias="status"), from_date: str = Query("", alias="from"), to_date: str = Query("", alias="to"), auth: dict[str, Any] = Depends(current_user)) -> StreamingResponse:
-    store = get_store(request)
-    _require(store, auth, "lead:export")
-    items = store.list_records("leads", exhibition_id=exhibition_id, keyword=keyword, status=status_filter)
-    items = [item for item in items if (not from_date or str(item.get("createdAt", ""))[:10] >= from_date) and (not to_date or str(item.get("createdAt", ""))[:10] <= to_date)]
-    sensitive = "lead:view_sensitive" in _permission_codes(store, auth["user"]["id"])
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(["线索ID", "展会", "单位名称", "联系人", "手机号", "邮箱", "状态", "创建时间"])
-    for item in items:
-        writer.writerow([item.get("id", ""), item.get("exhibitionName", item.get("exhibitionId", "")), item.get("companyName", ""), item.get("contactName", ""), item.get("phone", "") if sensitive else _mask_phone(str(item.get("phone", ""))), item.get("email", "") if sensitive else _mask_email(str(item.get("email", ""))), item.get("status", ""), item.get("createdAt", "")])
-    return StreamingResponse(iter([output.getvalue().encode("utf-8-sig")]), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=leads.csv"})
-
-
 @router.get("/admin/feedback")
 def list_feedback(request: Request, page: int = 1, page_size: int = 9, exhibition_id: str | None = None, keyword: str | None = None, status_filter: str | None = Query(None, alias="status"), auth: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
     store = get_store(request)
@@ -626,7 +630,16 @@ def resolve_feedback(record_id: str, request: Request, body: RecordBody, auth: d
 def report(request: Request, exhibition_id: str | None = None, auth: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
     store = get_store(request)
     _require(store, auth, "dashboard:view")
-    return {"exhibition_id": exhibition_id or "current", "interaction_count": len(store.list_records("audit")), "online_terminals": len([x for x in store.list_records("terminals") if x.get("status") == "online"]), "pending_knowledge": len([x for x in store.list_records("qa") if x.get("status") == "pending_review"]), "new_leads": len(store.list_records("leads", exhibition_id=exhibition_id, status="new")), "alerts": len([x for x in store.list_records("alerts") if x.get("status") == "open"]), "todo": []}
+    alerts = store.list_records("alerts")
+    return {
+        "exhibition_id": exhibition_id or "current",
+        "interaction_count": len(store.audit_list()),
+        "online_terminals": len([x for x in store.list_records("terminals") if x.get("status") == "online"]),
+        "pending_knowledge": len([x for x in store.list_records("qa") if x.get("status") == "pending_review"]),
+        "new_leads": len(store.list_records("leads", exhibition_id=exhibition_id, status="new")),
+        "alerts": len([x for x in alerts if x.get("status") in {"open", "active"}]),
+        "todo": [],
+    }
 
 
 @router.get("/admin/report/operations")
@@ -690,6 +703,7 @@ def clear_audit_logs(request: Request, auth: dict[str, Any] = Depends(current_us
     _require(store, auth, "system:audit")
     with store.connect() as conn:
         deleted = conn.execute("DELETE FROM admin_audit_logs").rowcount
+    _audit(request, auth, action="clear", resource_type="audit_logs", resource_id="", before={"count": deleted}, after={"deleted": deleted})
     return {"deleted": deleted}
 
 
@@ -697,7 +711,7 @@ def clear_audit_logs(request: Request, auth: dict[str, Any] = Depends(current_us
 def alerts(request: Request, page: int = 1, page_size: int = 9, auth: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
     store = get_store(request)
     _require(store, auth, "system:ops")
-    return _paginate(store.list_records("alerts"), page, page_size)
+    return _paginate(collect_runtime_monitor(request, store)["alerts"], page, page_size)
 
 
 @router.get("/admin/users")
@@ -825,7 +839,7 @@ def create_role(request: Request, body: RecordBody, auth: dict[str, Any] = Depen
     now = utc_now()
     with store.connect() as conn:
         conn.execute("INSERT INTO admin_roles(id,code,name,description,data_scope,level,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)", (role_id, str(data.get("code", role_id)), str(data.get("name", "新角色")), str(data.get("description", "")), str(data.get("dataScope", "custom")), int(data.get("level", 1)), now, now))
-    return list_roles(request, 1, 100, auth)["items"][-1]
+    return next(item for item in list_roles(request, 1, 100, auth)["items"] if item["id"] == role_id)
 
 
 @router.patch("/admin/roles/{role_id}")
@@ -886,7 +900,7 @@ def permission_tree(request: Request, auth: dict[str, Any] = Depends(current_use
 
 @router.get("/admin/trace-records")
 def trace_records(request: Request, page: int = 1, page_size: int = 9, auth: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
-    return audit_logs(request, page, page_size, auth=auth)
+    return audit_logs(request, page, page_size, username="", ip="", keyword="", from_date="", to_date="", auth=auth)
 
 
 @router.post("/admin/alerts/{record_id}/acknowledge")
@@ -903,14 +917,14 @@ def acknowledge_alert(record_id: str, request: Request, auth: dict[str, Any] = D
 def monitor(request: Request, auth: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
     store = get_store(request)
     _require(store, auth, "system:ops")
-    item = store.get_record("monitor", "system") or {}
-    return {**item, "refreshedAt": utc_now(), "services": store.list_records("services"), "terminals": store.list_records("terminals"), "alerts": store.list_records("alerts")}
+    return collect_runtime_monitor(request, store)
 
 
 @router.get("/admin/ops/services")
 def services(request: Request, auth: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
-    _require(get_store(request), auth, "system:ops")
-    return {"items": get_store(request).list_records("services")}
+    store = get_store(request)
+    _require(store, auth, "system:ops")
+    return {"items": collect_runtime_monitor(request, store)["services"]}
 
 
 @router.get("/admin/ops/terminals")
@@ -922,7 +936,7 @@ def terminals(request: Request, auth: dict[str, Any] = Depends(current_user)) ->
 @router.post("/ops/failover")
 def failover(request: Request, body: RecordBody, auth: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
     _require(get_store(request), auth, "ops:failover")
-    result = {"accepted": True, "mode": "mock", "service": body.data.get("service", ""), "from": body.data.get("from", ""), "to": body.data.get("to", ""), "trace_id": getattr(request.state, "trace_id", "")}
+    result = {"accepted": True, "service": body.data.get("service", ""), "from": body.data.get("from", ""), "to": body.data.get("to", ""), "trace_id": getattr(request.state, "trace_id", "")}
     _audit(request, auth, action="failover", resource_type="service", resource_id=str(body.data.get("service", "")), before=None, after=result)
     return result
 

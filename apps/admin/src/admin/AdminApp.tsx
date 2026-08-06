@@ -126,6 +126,7 @@ const PAGE_LABELS: Record<string, string> = {
 };
 
 const GROUP_LABELS: Record<string, string> = { event: "展会运营", lead: "展会运营", asset: "数字人中心", knowledge: "知识中心", interact: "交互管理", system: "系统管理" };
+const ADMIN_API_MODE = import.meta.env.VITE_ADMIN_API_MODE ?? "real";
 
 function useAdminPath(): [AdminPath, (next: string) => void] {
   const [path, setPath] = useState(() => window.location.pathname || "/dashboard");
@@ -450,7 +451,16 @@ function MobileNav({ user, path, navigate }: { user: AdminUser; path: string; na
 
 export function AdminApp() {
   const [path, navigate] = useAdminPath();
-  const [user, setUser] = useState<AdminUser | null>(() => { try { const raw = window.localStorage.getItem("opentalking-admin-session"); return raw ? (JSON.parse(raw) as { user: AdminUser }).user : null; } catch { return null; } });
+  const [user, setUser] = useState<AdminUser | null>(() => {
+    try {
+      const raw = window.localStorage.getItem("opentalking-admin-session");
+      const session = raw ? JSON.parse(raw) as { token?: string; user?: AdminUser } : null;
+      if (ADMIN_API_MODE !== "mock" && (!session?.token || session.token.startsWith("mock-jwt-"))) return null;
+      return session?.user ?? null;
+    } catch {
+      return null;
+    }
+  });
   const [collapsed, setCollapsed] = useState(() => { try { return window.localStorage.getItem("opentalking-admin-sidebar-collapsed") === "true"; } catch { return false; } });
   const [mobileOpen, setMobileOpen] = useState(false);
   useEffect(() => { window.localStorage.setItem("opentalking-admin-sidebar-collapsed", String(collapsed)); }, [collapsed]);

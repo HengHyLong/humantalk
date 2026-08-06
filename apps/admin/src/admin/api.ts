@@ -29,6 +29,7 @@ import type {
   PermissionNode,
   AuditLog,
   SystemMonitor,
+  MonitorHistoryPoint,
   AlertEvent,
   WelcomeConfig,
   ExplainFlow,
@@ -203,7 +204,9 @@ const DEFAULT_AUDIT_LOGS: AuditLog[] = [
   { id: "audit-3", traceId: "trace-20260802-017", username: "admin", ip: "34.150.63.218", ipLocation: "美国德克萨斯州奥斯汀", description: "更新菜单权限", browser: "Chrome 150", durationMs: 75, createdAt: "2026-08-04 09:42:12", resource: "角色管理", action: "update", before: { permissionCount: 4 }, after: { permissionCount: 8 }, spans: [{ id: "span-4", parentId: null, service: "admin-service", operation: "PUT /roles/role-admin", startAt: "2026-08-04 09:42:12.210", durationMs: 75, status: "ok", attributes: { role: "sys_admin" } }] },
 ];
 
-const DEFAULT_MONITOR: SystemMonitor = { os: "GNU/Linux Debian GNU/Linux 11 (bullseye) build 5.10.0-44-cloud-amd64", ip: "172.17.0.1", uptime: "56天18小时", refreshedAt: "2026-08-04 09:46:31", cpuPercent: 8, memoryPercent: 82.18, swapPercent: 6.65, diskPercent: 43.96, cpuHistory: [4, 2, 7, 1, 1], memoryHistory: [82, 82, 82, 82, 82], services: [{ id: "svc-admin", name: "管理后台", status: "ok", latencyMs: 32, checkedAt: "2026-08-04 09:46:31", description: "管理 API 与权限服务" }, { id: "svc-lead", name: "线索服务", status: "ok", latencyMs: 48, checkedAt: "2026-08-04 09:46:30", description: "线索采集与反馈服务" }, { id: "svc-knowledge", name: "知识服务", status: "warn", latencyMs: 126, checkedAt: "2026-08-04 09:46:29", description: "知识检索服务" }], terminals: [{ id: "terminal-a01", name: "A馆迎宾终端", exhibitionId: "exhibition-1", location: "A馆 1号入口", status: "online", lastHeartbeatAt: "2026-08-04 09:46:28", version: "1.4.2", cpuPercent: 18, memoryPercent: 46 }, { id: "terminal-b02", name: "B馆服务终端", exhibitionId: "exhibition-1", location: "B馆 服务台", status: "online", lastHeartbeatAt: "2026-08-04 09:46:27", version: "1.4.2", cpuPercent: 24, memoryPercent: 52 }, { id: "terminal-preview", name: "专题展预览终端", exhibitionId: "exhibition-2", location: "运营中心", status: "offline", lastHeartbeatAt: "2026-08-04 09:38:10", version: "1.3.8", cpuPercent: 0, memoryPercent: 0 }] };
+const defaultHistory = (values: number[]): MonitorHistoryPoint[] => values.map((value, index) => ({ at: new Date(Date.now() - (values.length - index - 1) * 60 * 60 * 1000).toISOString(), value }));
+
+const DEFAULT_MONITOR: SystemMonitor = { os: "GNU/Linux Debian GNU/Linux 11 (bullseye) build 5.10.0-44-cloud-amd64", ip: "172.17.0.1", uptime: "56天18小时", refreshedAt: "2026-08-04 09:46:31", cpuPercent: 8, memoryPercent: 82.18, swapPercent: 6.65, diskPercent: 43.96, cpuHistory: defaultHistory([4, 2, 7, 1, 1]), memoryHistory: defaultHistory([82, 82, 82, 82, 82]), services: [{ id: "svc-admin", name: "管理后台", status: "ok", latencyMs: 32, checkedAt: "2026-08-04 09:46:31", description: "管理 API 与权限服务" }, { id: "svc-lead", name: "线索服务", status: "ok", latencyMs: 48, checkedAt: "2026-08-04 09:46:30", description: "线索采集与反馈服务" }, { id: "svc-knowledge", name: "知识服务", status: "warn", latencyMs: 126, checkedAt: "2026-08-04 09:46:29", description: "知识检索服务" }], terminals: [{ id: "terminal-a01", name: "A馆迎宾终端", exhibitionId: "exhibition-1", location: "A馆 1号入口", status: "online", lastHeartbeatAt: "2026-08-04 09:46:28", version: "1.4.2", cpuPercent: 18, memoryPercent: 46 }, { id: "terminal-b02", name: "B馆服务终端", exhibitionId: "exhibition-1", location: "B馆 服务台", status: "online", lastHeartbeatAt: "2026-08-04 09:46:27", version: "1.4.2", cpuPercent: 24, memoryPercent: 52 }, { id: "terminal-preview", name: "专题展预览终端", exhibitionId: "exhibition-2", location: "运营中心", status: "offline", lastHeartbeatAt: "2026-08-04 09:38:10", version: "1.3.8", cpuPercent: 0, memoryPercent: 0 }] };
 
 const DEFAULT_ALERTS: AlertEvent[] = [
   { id: "alert-1", type: "服务延迟", severity: "normal", target: "知识服务", content: "近 5 分钟平均响应时间超过 100ms", status: "active", occurredAt: "2026-08-04 09:40:12" },
@@ -648,6 +651,46 @@ export class FetchAdminApiClient implements AdminApiClient {
     return { mainVenueId: null, hostUnit: "", organizerUnit: "", coOrganizerUnits: "", boundAvatarId: null, boundModel: "mock", boundVoiceId: null, boundVoiceProvider: null, boundVoiceModel: null, boundSttProvider: null, boundSttModel: null, boundScene: null, knowledgeBaseIds: [], lifecycleHistory: [], status: "preparing", description: "", ...item, id: String(item.id), name: String(item.name || item.code || item.id), code: String(item.code || item.id), startDate: String(item.startDate || ""), endDate: String(item.endDate || ""), createdAt: String(item.createdAt || item.created_at || ""), updatedAt: String(item.updatedAt || item.updated_at || "") } as Exhibition;
   }
 
+  private venue(item: JsonRecord): EventVenue {
+    return { ...item, id: String(item.id || ""), exhibitionId: String(item.exhibitionId || item.exhibition_id || ""), name: String(item.name || item.code || item.id || "未命名场地"), address: String(item.address || ""), description: String(item.description || ""), status: item.status === "active" || item.status === "inactive" ? item.status : "draft", createdAt: String(item.createdAt || item.created_at || ""), updatedAt: String(item.updatedAt || item.updated_at || "") } as EventVenue;
+  }
+
+  private point(item: JsonRecord): EventPoint {
+    const pointTypes = ["entrance", "booth", "forum", "facility", "service", "other"];
+    return { ...item, id: String(item.id || ""), venueId: String(item.venueId || item.venue_id || ""), code: String(item.code || item.id || ""), name: String(item.name || item.code || item.id || "未命名点位"), type: pointTypes.includes(String(item.type)) ? String(item.type) as EventPoint["type"] : "other", floor: String(item.floor || ""), x: Number(item.x ?? 0), y: Number(item.y ?? 0), exhibitorId: item.exhibitorId || item.exhibitor_id || null, exhibitId: item.exhibitId || item.exhibit_id || null, description: String(item.description || ""), status: item.status === "active" || item.status === "inactive" ? item.status : "draft", createdAt: String(item.createdAt || item.created_at || ""), updatedAt: String(item.updatedAt || item.updated_at || "") } as EventPoint;
+  }
+
+  private exhibitor(item: JsonRecord): Exhibitor {
+    return { ...item, id: String(item.id || ""), exhibitionId: String(item.exhibitionId || item.exhibition_id || ""), name: String(item.name || item.companyName || item.id || "未命名展商"), boothCode: String(item.boothCode || item.booth_code || ""), category: String(item.category || ""), contact: String(item.contact || ""), phone: String(item.phone || ""), status: item.status === "active" || item.status === "inactive" ? item.status : "pending", description: String(item.description || ""), createdAt: String(item.createdAt || item.created_at || ""), updatedAt: String(item.updatedAt || item.updated_at || "") } as Exhibitor;
+  }
+
+  private exhibit(item: JsonRecord): Exhibit {
+    return { ...item, id: String(item.id || ""), exhibitionId: String(item.exhibitionId || item.exhibition_id || ""), exhibitorId: String(item.exhibitorId || item.exhibitor_id || ""), name: String(item.name || item.modelNo || item.model_no || item.id || "未命名展品"), category: String(item.category || ""), modelNo: String(item.modelNo || item.model_no || ""), description: String(item.description || ""), status: item.status === "published" || item.status === "offline" ? item.status : "draft", createdAt: String(item.createdAt || item.created_at || ""), updatedAt: String(item.updatedAt || item.updated_at || "") } as Exhibit;
+  }
+
+  private route(item: JsonRecord): ExhibitionRoute {
+    return { ...item, id: String(item.id || ""), venueId: String(item.venueId || item.venue_id || ""), name: String(item.name || item.code || item.id || "未命名路线"), type: item.type === "tour" || item.type === "emergency" ? item.type : "navigation", pointIds: stringArray(item.pointIds || item.point_ids), directions: stringArray(item.directions), estimatedMinutes: Number(item.estimatedMinutes ?? item.estimated_minutes ?? 0), description: String(item.description || ""), status: item.status === "published" || item.status === "offline" ? item.status : "draft", createdAt: String(item.createdAt || item.created_at || ""), updatedAt: String(item.updatedAt || item.updated_at || "") } as ExhibitionRoute;
+  }
+
+  private schedule(item: JsonRecord): EventSchedule {
+    return { ...item, id: String(item.id || ""), exhibitionId: String(item.exhibitionId || item.exhibition_id || ""), venueId: item.venueId || item.venue_id || null, pointId: item.pointId || item.point_id || null, title: String(item.title || item.name || item.id || "未命名活动"), type: String(item.type || "论坛"), startAt: String(item.startAt || item.start_at || ""), endAt: String(item.endAt || item.end_at || ""), location: String(item.location || ""), speaker: String(item.speaker || ""), description: String(item.description || ""), status: item.status === "scheduled" || item.status === "finished" || item.status === "cancelled" ? item.status : "draft", createdAt: String(item.createdAt || item.created_at || ""), updatedAt: String(item.updatedAt || item.updated_at || "") } as EventSchedule;
+  }
+
+  private broadcast(item: JsonRecord): EmergencyBroadcast {
+    return { ...item, id: String(item.id || ""), exhibitionId: String(item.exhibitionId || item.exhibition_id || ""), title: String(item.title || item.name || item.id || "未命名播报"), content: String(item.content || ""), priority: item.priority === "low" || item.priority === "high" || item.priority === "urgent" ? item.priority : "normal", targetTerminals: String(item.targetTerminals || item.target_terminals || "全部终端"), effectiveAt: String(item.effectiveAt || item.effective_at || ""), status: item.status === "active" || item.status === "ended" ? item.status : "draft", createdAt: String(item.createdAt || item.created_at || ""), updatedAt: String(item.updatedAt || item.updated_at || "") } as EmergencyBroadcast;
+  }
+
+  private qa(item: JsonRecord): KnowledgeQa {
+    const history = Array.isArray(item.history) ? item.history : [];
+    return { ...item, id: String(item.id || ""), question: String(item.question || item.title || ""), keywords: stringArray(item.keywords), answer: String(item.answer || ""), category: String(item.category || "未分类"), exhibition: String(item.exhibition || item.exhibitionName || ""), status: item.status === "pending_review" || item.status === "published" || item.status === "archived" ? item.status : "draft", version: Number(item.version || 1), creator: String(item.creator || item.createdBy || ""), reviewer: item.reviewer ? String(item.reviewer) : undefined, updatedAt: String(item.updatedAt || item.updated_at || ""), history: history.map((entry) => { const value = entry as JsonRecord; return { version: Number(value.version || 1), answer: String(value.answer || ""), editor: String(value.editor || ""), time: String(value.time || value.createdAt || ""), reason: String(value.reason || "") }; }) } as KnowledgeQa;
+  }
+
+  private lead(item: JsonRecord): Lead {
+    const history = Array.isArray(item.statusHistory || item.status_history) ? (item.statusHistory || item.status_history) as unknown[] : [];
+    const status = item.status === "contacted" || item.status === "converted" || item.status === "invalid" ? item.status : "new";
+    return { ...item, id: String(item.id || ""), exhibitionId: String(item.exhibitionId || item.exhibition_id || ""), exhibitionName: String(item.exhibitionName || item.exhibition_name || ""), terminalId: String(item.terminalId || item.terminal_id || ""), terminalName: String(item.terminalName || item.terminal_name || ""), companyName: String(item.companyName || item.company_name || ""), contactName: String(item.contactName || item.contact_name || ""), phone: String(item.phone || ""), email: String(item.email || ""), intentSummary: String(item.intentSummary || item.intent_summary || ""), status, interestedExhibitorIds: stringArray(item.interestedExhibitorIds || item.interested_exhibitor_ids), interestedExhibitIds: stringArray(item.interestedExhibitIds || item.interested_exhibit_ids), qrToken: String(item.qrToken || item.qr_token || ""), createdAt: String(item.createdAt || item.created_at || ""), statusHistory: history.map((entry) => { const value = entry as JsonRecord; const entryStatus = value.status === "contacted" || value.status === "converted" || value.status === "invalid" ? value.status : "new"; return { status: entryStatus, operator: String(value.operator || ""), time: String(value.time || value.createdAt || ""), note: value.note ? String(value.note) : undefined }; }) };
+  }
+
   private welcomeConfig(item: JsonRecord, exhibitions: Exhibition[]): WelcomeConfig {
     return {
       id: String(item.id || ""),
@@ -767,7 +810,7 @@ export class FetchAdminApiClient implements AdminApiClient {
   async uploadDocument(input: Pick<KnowledgeDocument, "title" | "fileName" | "type" | "exhibition">) { return this.saveCollection<KnowledgeDocument>("knowledge", "documents", input as JsonRecord); }
   async updateDocument(id: string, patch: Partial<KnowledgeDocument>) { return this.saveCollection<KnowledgeDocument>("knowledge", "documents", { ...patch, id }); }
   async deleteDocument(id: string) { await this.request(`/admin/knowledge/documents/${encodeURIComponent(id)}`, { method: "DELETE" }); }
-  async listQa() { return this.collection<KnowledgeQa>("knowledge", "qa"); }
+  async listQa() { return (await this.collection<JsonRecord>("knowledge", "qa")).map((item) => this.qa(item)); }
   async saveQa(item: KnowledgeQa) { return this.saveCollection<KnowledgeQa>("knowledge", "qa", item as JsonRecord); }
   async transitionQa(id: string, status: KnowledgeQa["status"]) { return this.saveCollection<KnowledgeQa>("knowledge", "qa", { id, status }); }
   async deleteQa(id: string) { await this.request(`/admin/knowledge/qa/${encodeURIComponent(id)}`, { method: "DELETE" }); }
@@ -811,38 +854,38 @@ export class FetchAdminApiClient implements AdminApiClient {
   async saveExhibition(item: Exhibition) { return this.exhibition(await this.saveCollection<JsonRecord>("event", "exhibitions", item as JsonRecord)); }
   async deleteExhibition(id: string) { await this.request(`/admin/event/exhibitions/${encodeURIComponent(id)}`, { method: "DELETE" }); }
   async transitionExhibition(id: string, status: ExhibitionStatus) { return this.exhibition(await this.request<JsonRecord>(`/admin/event/exhibitions/${encodeURIComponent(id)}/lifecycle`, { method: "POST", body: JSON.stringify({ status }) })); }
-  async listVenues() { return this.collection<EventVenue>("event", "venues"); }
+  async listVenues() { return (await this.collection<JsonRecord>("event", "venues")).map((item) => this.venue(item)); }
   async saveVenue(item: EventVenue) { return this.saveCollection<EventVenue>("event", "venues", item as JsonRecord); }
   async deleteVenue(id: string) { await this.request(`/admin/event/venues/${encodeURIComponent(id)}`, { method: "DELETE" }); }
-  async listPoints() { return this.collection<EventPoint>("event", "points"); }
+  async listPoints() { return (await this.collection<JsonRecord>("event", "points")).map((item) => this.point(item)); }
   async savePoint(item: EventPoint) { return this.saveCollection<EventPoint>("event", "points", item as JsonRecord); }
   async deletePoint(id: string) { await this.request(`/admin/event/points/${encodeURIComponent(id)}`, { method: "DELETE" }); }
-  async listExhibitors() { return this.collection<Exhibitor>("event", "exhibitors"); }
+  async listExhibitors() { return (await this.collection<JsonRecord>("event", "exhibitors")).map((item) => this.exhibitor(item)); }
   async saveExhibitor(item: Exhibitor) { return this.saveCollection<Exhibitor>("event", "exhibitors", item as JsonRecord); }
   async deleteExhibitor(id: string) { await this.request(`/admin/event/exhibitors/${encodeURIComponent(id)}`, { method: "DELETE" }); }
-  async listExhibits() { return this.collection<Exhibit>("event", "exhibits"); }
+  async listExhibits() { return (await this.collection<JsonRecord>("event", "exhibits")).map((item) => this.exhibit(item)); }
   async saveExhibit(item: Exhibit) { return this.saveCollection<Exhibit>("event", "exhibits", item as JsonRecord); }
   async deleteExhibit(id: string) { await this.request(`/admin/event/exhibits/${encodeURIComponent(id)}`, { method: "DELETE" }); }
-  async listRoutes() { return this.collection<ExhibitionRoute>("event", "routes"); }
+  async listRoutes() { return (await this.collection<JsonRecord>("event", "routes")).map((item) => this.route(item)); }
   async saveRoute(item: ExhibitionRoute) { return this.saveCollection<ExhibitionRoute>("event", "routes", item as JsonRecord); }
   async deleteRoute(id: string) { await this.request(`/admin/event/routes/${encodeURIComponent(id)}`, { method: "DELETE" }); }
-  async listBroadcasts() { return this.collection<EmergencyBroadcast>("event", "broadcasts"); }
+  async listBroadcasts() { return (await this.collection<JsonRecord>("event", "broadcasts")).map((item) => this.broadcast(item)); }
   async saveBroadcast(item: EmergencyBroadcast) { return this.saveCollection<EmergencyBroadcast>("event", "broadcasts", item as JsonRecord); }
   async transitionBroadcast(id: string, status: EmergencyBroadcast["status"]) { return this.saveCollection<EmergencyBroadcast>("event", "broadcasts", { id, status }); }
   async deleteBroadcast(id: string) { await this.request(`/admin/event/broadcasts/${encodeURIComponent(id)}`, { method: "DELETE" }); }
-  async listSchedules() { return this.collection<EventSchedule>("event", "schedules"); }
+  async listSchedules() { return (await this.collection<JsonRecord>("event", "schedules")).map((item) => this.schedule(item)); }
   async saveSchedule(item: EventSchedule) { return this.saveCollection<EventSchedule>("event", "schedules", item as JsonRecord); }
   async deleteSchedule(id: string) { await this.request(`/admin/event/schedules/${encodeURIComponent(id)}`, { method: "DELETE" }); }
 
   async listLeads(filters: { exhibitionId?: string; keyword?: string; status?: LeadStatus | ""; from?: string; to?: string } = {}) {
-    return this.list<Lead>("/admin/lead", { page: 1, page_size: 100, exhibition_id: filters.exhibitionId, keyword: filters.keyword, status: filters.status, from: filters.from, to: filters.to });
+    return (await this.list<JsonRecord>("/admin/lead", { page: 1, page_size: 100, exhibition_id: filters.exhibitionId, keyword: filters.keyword, status: filters.status, from: filters.from, to: filters.to })).map((item) => this.lead(item));
   }
-  async getLead(id: string) { try { return await this.request<Lead>(`/admin/lead/${encodeURIComponent(id)}`); } catch (error) { if (error instanceof Error && error.message.includes("404")) return null; throw error; } }
+  async getLead(id: string) { try { return this.lead(await this.request<JsonRecord>(`/admin/lead/${encodeURIComponent(id)}`)); } catch (error) { if (error instanceof Error && error.message.includes("404")) return null; throw error; } }
   async saveLead(item: Lead) {
     const existing = Boolean(item.id) && !isClientDraftId(item.id);
-    return this.request<Lead>(existing ? `/admin/lead/${encodeURIComponent(item.id)}` : "/admin/lead", { method: existing ? "PATCH" : "POST", body: this.data(item) });
+    return this.lead(await this.request<JsonRecord>(existing ? `/admin/lead/${encodeURIComponent(item.id)}` : "/admin/lead", { method: existing ? "PATCH" : "POST", body: this.data(item) }));
   }
-  async updateLeadStatus(id: string, status: LeadStatus, note?: string) { return this.request<Lead>(`/admin/lead/${encodeURIComponent(id)}/status`, { method: "POST", body: JSON.stringify({ status, note }) }); }
+  async updateLeadStatus(id: string, status: LeadStatus, note?: string) { return this.lead(await this.request<JsonRecord>(`/admin/lead/${encodeURIComponent(id)}/status`, { method: "POST", body: JSON.stringify({ status, note }) })); }
   async exportLeads(filters: { exhibitionId?: string; keyword?: string; status?: string; from?: string; to?: string } = {}) { return this.download(`/admin/lead/export${queryString({ exhibition_id: filters.exhibitionId, keyword: filters.keyword, status: filters.status, from: filters.from, to: filters.to })}`); }
   async listFeedback(filters: { exhibitionId?: string; keyword?: string; status?: Feedback["status"] } = {}) { return this.list<Feedback>("/admin/feedback", { page: 1, page_size: 100, exhibition_id: filters.exhibitionId, keyword: filters.keyword, status: filters.status }); }
   async resolveFeedback(id: string, note: string) { return this.request<Feedback>(`/admin/feedback/${encodeURIComponent(id)}/resolve`, { method: "POST", body: this.data({ note }) }); }
@@ -904,7 +947,12 @@ export class FetchAdminApiClient implements AdminApiClient {
     const raw = await this.request<JsonRecord>("/admin/ops/system");
     const mapService = (item: JsonRecord) => ({ id: String(item.id), name: String(item.name || item.service || item.id), status: item.status || "unknown", latencyMs: Number(item.latencyMs ?? item.latency_ms ?? 0), checkedAt: String(item.checkedAt || item.checked_at || ""), description: String(item.description || "") });
     const mapTerminal = (item: JsonRecord) => ({ id: String(item.id), name: String(item.name || item.id), exhibitionId: String(item.exhibitionId || item.exhibition_id || ""), location: String(item.location || ""), status: item.status || "offline", lastHeartbeatAt: String(item.lastHeartbeatAt || item.last_heartbeat_at || ""), version: String(item.version || ""), cpuPercent: Number(item.cpuPercent ?? item.cpu ?? 0), memoryPercent: Number(item.memoryPercent ?? item.memory ?? 0) });
-    return { ...raw, cpuPercent: Number(raw.cpuPercent ?? raw.cpu ?? 0), memoryPercent: Number(raw.memoryPercent ?? raw.memory ?? 0), swapPercent: Number(raw.swapPercent ?? raw.swap ?? 0), diskPercent: Number(raw.diskPercent ?? raw.disk ?? 0), cpuHistory: Array.isArray(raw.cpuHistory) ? raw.cpuHistory : [], memoryHistory: Array.isArray(raw.memoryHistory) ? raw.memoryHistory : [], services: (raw.services || []).map(mapService), terminals: (raw.terminals || []).map(mapTerminal), alerts: (raw.alerts || []).map((item: JsonRecord) => ({ ...item, target: item.target || item.object || "", occurredAt: item.occurredAt || item.createdAt || "" })) } as unknown as SystemMonitor;
+    const mapHistory = (value: unknown): MonitorHistoryPoint[] => Array.isArray(value) ? value.map((item) => {
+      if (typeof item === "number") return { at: "", value: Number(item) };
+      const point = item as JsonRecord;
+      return { at: String(point.at || point.timestamp || point.time || ""), value: Number(point.value ?? point.percent ?? 0) };
+    }).filter((item) => Number.isFinite(item.value)) : [];
+    return { ...raw, cpuPercent: Number(raw.cpuPercent ?? raw.cpu ?? 0), memoryPercent: Number(raw.memoryPercent ?? raw.memory ?? 0), swapPercent: Number(raw.swapPercent ?? raw.swap ?? 0), diskPercent: Number(raw.diskPercent ?? raw.disk ?? 0), cpuHistory: mapHistory(raw.cpuHistory), memoryHistory: mapHistory(raw.memoryHistory), services: (raw.services || []).map(mapService), terminals: (raw.terminals || []).map(mapTerminal), alerts: (raw.alerts || []).map((item: JsonRecord) => ({ ...item, target: item.target || item.object || "", occurredAt: item.occurredAt || item.createdAt || "" })) } as unknown as SystemMonitor;
   }
   async listAlerts() {
     const items = await this.list<JsonRecord>("/admin/alerts", { page: 1, page_size: 100 });
@@ -913,8 +961,9 @@ export class FetchAdminApiClient implements AdminApiClient {
   async acknowledgeAlert(id: string, _operator?: string) { return this.request<AlertEvent>(`/admin/alerts/${encodeURIComponent(id)}/acknowledge`, { method: "POST" }); }
 }
 
-const runtimeEnv = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env ?? {};
-export const adminApi: AdminApiClient = runtimeEnv.VITE_ADMIN_API_MODE === "real" ? new FetchAdminApiClient() : new MockAdminApiClient();
+// 管理端生产运行统一使用 FastAPI；所有配置和业务数据都通过 API 写入 SQLite。
+// 保留 MockAdminApiClient 仅供旧代码兼容，但不允许运行时切换到 mock 存储。
+export const adminApi: AdminApiClient = new FetchAdminApiClient();
 
 export const DEFAULT_VOICES: VoiceAsset[] = EDGE_ZH_VOICES.map((voice) => ({
   id: `voice-edge-${voice.id}`,
