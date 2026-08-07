@@ -306,7 +306,7 @@ test("real Admin knowledge workflow maps documents, QA, scripts, packages and mi
   const calls: Array<{ url: string; method: string; body?: Record<string, unknown> }> = [];
   globalThis.fetch = async (input, init) => { const url = String(input); const method = init?.method ?? "GET"; const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined; calls.push({ url, method, body }); if (method === "DELETE") return new Response(null, { status: 204 }); if (method === "GET") return Response.json({ items: [] }); return Response.json({ ...body, id: "saved-knowledge" }); };
   const api = new FetchAdminApiClient();
-  await api.listDocuments(); assert.equal(calls.at(-1)?.url.endsWith("/admin/knowledge/documents?page=1&page_size=100"), true);
+   await api.listDocuments(); assert.equal(calls.at(-1)?.url.endsWith("/admin/knowledge/documents"), true);
   await api.uploadDocument({ title: "展会手册", fileName: "manual.pdf", type: "PDF", exhibition: "测试展" }); assert.equal(calls.at(-1)?.method, "POST");
   await api.updateDocument("doc/1", { parseStatus: "failed" }); assert.equal(calls.at(-1)?.url.endsWith("/admin/knowledge/documents/doc%2F1"), true);
   await api.listQa(); assert.equal(calls.at(-1)?.url.endsWith("/admin/knowledge/qa?page=1&page_size=100"), true);
@@ -315,7 +315,37 @@ test("real Admin knowledge workflow maps documents, QA, scripts, packages and mi
   await api.listPackages(); assert.equal(calls.at(-1)?.url.endsWith("/admin/knowledge/packages?page=1&page_size=100"), true);
   await api.transitionPackage("pkg/1", "published"); assert.equal(calls.at(-1)?.url.endsWith("/admin/knowledge/packages/pkg%2F1/publish"), true);
   await api.listMissPool(); assert.equal(calls.at(-1)?.url.endsWith("/admin/knowledge/miss-pool?page=1&page_size=100"), true);
-  await api.resolveMiss("miss/1", "converted_qa"); assert.deepEqual(calls.at(-1)?.body, { action: "create_qa", status: "converted_qa" });
+   await api.resolveMiss("miss/1", "converted_qa"); assert.deepEqual(calls.at(-1)?.body, { action: "create_qa", operator: "admin", note: "" });
+});
+
+test("real Admin uses the Cao Feiyang Dify proxy contract", async () => {
+  values.clear(); values.set("opentalking-admin-token", "knowledge-token");
+  const calls: Array<{ url: string; method: string }> = [];
+  globalThis.fetch = async (input, init) => {
+    const url = String(input); const method = init?.method ?? "GET";
+    calls.push({ url, method });
+    if (url.includes("/admin/knowledge/bases")) return Response.json({ items: [{ knowledge_base_id: "kb-1", name: "QA标准库" }] });
+    if (url.includes("/admin/knowledge/documents/upload")) {
+      assert.equal(method, "POST");
+      const form = init?.body as FormData;
+      assert.equal(form.get("exhibition_id"), "current");
+      assert.equal(form.get("title"), "qa.txt");
+      assert.equal(form.get("type"), "text/plain");
+      return Response.json({ batch_id: "batch-1", status: "processing" });
+    }
+    if (url.includes("/admin/knowledge/documents")) return Response.json({ data: [{ id: "doc-1", name: "qa.txt", indexing_status: "completed", display_status: "available", word_count: 12 }] });
+    return Response.json({});
+  };
+  const api = new FetchAdminApiClient();
+  const bases = await api.listKnowledgeBases();
+  assert.equal(bases[0]?.id, "kb-1");
+  const documents = await api.listKnowledgeBaseDocuments("kb-1");
+  assert.equal(documents[0]?.status, "ready");
+  const uploaded = await api.uploadKnowledgeBaseDocument("kb-1", new File(["demo"], "qa.txt", { type: "text/plain" }));
+  assert.equal(uploaded.id, "batch-1");
+  assert.equal(calls.some(({ url }) => url.endsWith("/api/v1/admin/knowledge/bases?limit=20")), true);
+  assert.equal(calls.some(({ url }) => url.endsWith("/api/v1/admin/knowledge/documents")), true);
+  assert.equal(calls.some(({ url }) => url.endsWith("/api/v1/admin/knowledge/documents/upload")), true);
 });
 
 test("real Admin leads and feedback map filtering, state, export and trace workflow", async () => {

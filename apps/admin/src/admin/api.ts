@@ -50,6 +50,10 @@ const runtimeEnv = (import.meta as ImportMeta & { env?: Record<string, string | 
 type AdminBackend = "business" | "assets";
 
 function buildAdminFetchUrl(path: string, backend: AdminBackend = "business"): string {
+  const knowledgeBackend = String(runtimeEnv.VITE_KNOWLEDGE_BACKEND_URL || "").trim().replace(/\/+$/, "");
+  if (knowledgeBackend && path.startsWith("/v1/admin/knowledge/")) {
+    return new URL(`/api${path}`, `${knowledgeBackend}/`).toString();
+  }
   const base = typeof window === "undefined" ? "http://127.0.0.1:5173/" : window.location.href;
   const proxyPrefix = backend === "assets" && runtimeEnv.VITE_ASSET_BACKEND_URL ? "/api-assets" : "/api";
   return new URL(`${proxyPrefix}${path}`, base).toString();
@@ -710,6 +714,36 @@ function stringArray(value: unknown): string[] {
   return [];
 }
 
+function remoteTimestamp(value: unknown): string {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const milliseconds = value < 10_000_000_000 ? value * 1000 : value;
+    return new Date(milliseconds).toISOString();
+  }
+  const text = String(value ?? "");
+  return text || now();
+}
+
+function mapDifyDocument(item: JsonRecord, fallbackKnowledgeBaseId = ""): ApiKnowledgeDocument {
+  const details = item.data_source_detail_dict && typeof item.data_source_detail_dict === "object"
+    ? item.data_source_detail_dict as JsonRecord
+    : {};
+  const upload = details.upload_file && typeof details.upload_file === "object" ? details.upload_file as JsonRecord : {};
+  const status = String(item.indexing_status ?? item.status ?? "processing");
+  return {
+    id: String(item.id ?? item.document_id ?? item.batch_id ?? ""),
+    kb_id: String(item.dataset_id ?? item.knowledge_base_id ?? fallbackKnowledgeBaseId),
+    filename: String(item.name ?? upload.name ?? item.filename ?? ""),
+    mime_type: String(item.mime_type ?? upload.mime_type ?? ""),
+    bytes: Number(item.bytes ?? item.size ?? upload.size ?? 0),
+    sha256: String(item.sha256 ?? ""),
+    status: status === "completed" || String(item.display_status ?? "") === "available" ? "ready" : status === "error" ? "error" : "processing",
+    error: item.error ? String(item.error) : null,
+    chunk_count: Number(item.word_count ?? item.chunk_count ?? item.tokens ?? 0),
+    created_at: remoteTimestamp(item.created_at ?? upload.created_at),
+    updated_at: remoteTimestamp(item.updated_at ?? item.created_at ?? upload.created_at),
+  };
+}
+
 function normalizeWelcomeTrigger(value: unknown): string[] {
   if (Array.isArray(value)) return stringArray(value);
   const trigger = String(value || "");
@@ -1148,38 +1182,64 @@ export class FetchAdminApiClient implements AdminApiClient {
   async saveIdle(item: IdleContent) { return this.saveCollection<IdleContent>("assets", "idle-contents", item as JsonRecord); }
   async deleteIdle(id: string) { await this.request(`/admin/assets/idle-contents/${encodeURIComponent(id)}`, { method: "DELETE" }); }
 
-  async listDocuments() { return this.collection<KnowledgeDocument>("knowledge", "documents"); }
+  async listDocuments() {
+    const documents = await this.listKnowledgeBaseDocuments("");
+    return documents.map((document) => ({
+      id: document.id,
+      title: document.filename,
+      fileName: document.filename,
+      type: document.mime_type,
+      exhibition: "current",
+      parseStatus: document.status === "ready" ? "parsed" : document.status === "error" ? "failed" : "parsing",
+      vectorStatus: document.status === "ready" ? "indexed" : document.status === "error" ? "failed" : "indexing",
+      chunks: document.chunk_count,
+      uploader: "backend",
+      uploadedAt: document.created_at,
+    } as KnowledgeDocument));
+  }
   async listKnowledgeBases(): Promise<ApiKnowledgeBaseSummary[]> {
-    const payload = await this.request<{ data?: JsonRecord[]; items?: JsonRecord[] }>("/admin/knowledge/dify/datasets?page=1&limit=100");
+    const payload = await this.request<{ data?: JsonRecord[]; items?: JsonRecord[] }>("/admin/knowledge/bases?limit=20");
     const items = payload.data ?? payload.items ?? [];
-    return items.map((item) => ({ id: String(item.id), name: String(item.name ?? ""), document_count: Number(item.document_count ?? item.documentCount ?? 0), ready_document_count: Number(item.ready_document_count ?? item.document_count ?? 0), error_document_count: Number(item.error_document_count ?? 0), created_at: String(item.created_at ?? item.createdAt ?? ""), updated_at: String(item.updated_at ?? item.updatedAt ?? "") }));
+    return items.map((item) => ({ id: String(item.id ?? item.knowledge_base_id ?? ""), name: String(item.name ?? ""), document_count: Number(item.document_count ?? item.documentCount ?? 0), ready_document_count: Number(item.ready_document_count ?? item.document_count ?? 0), error_document_count: Number(item.error_document_count ?? 0), created_at: remoteTimestamp(item.created_at ?? item.createdAt), updated_at: remoteTimestamp(item.updated_at ?? item.updatedAt) }));
   }
   async listKnowledgeBaseDocuments(baseId: string): Promise<ApiKnowledgeDocument[]> {
-    const payload = await this.request<{ data?: JsonRecord[]; items?: JsonRecord[] }>(`/admin/knowledge/dify/datasets/${encodeURIComponent(baseId)}/documents?page=1&limit=100`);
+    const payload = await this.request<{ data?: JsonRecord[]; items?: JsonRecord[] }>("/admin/knowledge/documents");
     const items = payload.data ?? payload.items ?? [];
-    return items.map((item) => ({ id: String(item.id), kb_id: baseId, filename: String(item.name ?? item.filename ?? ""), mime_type: String(item.mime_type ?? ""), bytes: Number(item.bytes ?? item.size ?? 0), sha256: String(item.sha256 ?? ""), status: String(item.indexing_status ?? item.status ?? "processing"), error: item.error ? String(item.error) : null, chunk_count: Number(item.word_count ?? item.chunk_count ?? 0), created_at: String(item.created_at ?? ""), updated_at: String(item.updated_at ?? "") }));
+    return items.map((item) => mapDifyDocument(item, baseId));
   }
   async createKnowledgeBase(name: string): Promise<ApiKnowledgeBaseSummary> {
-    const item = await this.request<JsonRecord>("/admin/knowledge/dify/datasets", { method: "POST", body: JSON.stringify({ name }) });
-    return { id: String(item.id), name: String(item.name ?? name), document_count: 0, ready_document_count: 0, error_document_count: 0, created_at: String(item.created_at ?? ""), updated_at: String(item.updated_at ?? "") };
+    void name;
+    throw new Error("当前后端仅提供知识库查询和文档上传，知识库创建接口尚未提供");
   }
   async renameKnowledgeBase(id: string, name: string): Promise<ApiKnowledgeBaseSummary> {
-    const item = await this.request<JsonRecord>(`/admin/knowledge/dify/datasets/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ name }) });
-    return { id: String(item.id ?? id), name: String(item.name ?? name), document_count: Number(item.document_count ?? 0), ready_document_count: Number(item.ready_document_count ?? item.document_count ?? 0), error_document_count: Number(item.error_document_count ?? 0), created_at: String(item.created_at ?? ""), updated_at: String(item.updated_at ?? "") };
+    void id;
+    void name;
+    throw new Error("当前后端未提供知识库重命名接口");
   }
-  async deleteKnowledgeBase(id: string) { await this.request(`/admin/knowledge/dify/datasets/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+  async deleteKnowledgeBase(id: string) { void id; throw new Error("当前后端未提供知识库删除接口"); }
   async uploadKnowledgeBaseDocument(baseId: string, file: File): Promise<ApiKnowledgeDocument> {
     const form = new FormData();
     form.set("file", file);
-    form.set("data", JSON.stringify({ name: file.name, indexing_technique: "high_quality", process_rule: { mode: "automatic" } }));
-    const item = await this.request<JsonRecord>(`/admin/knowledge/dify/datasets/${encodeURIComponent(baseId)}/documents/file`, { method: "POST", body: form });
-    return { id: String(item.document?.id ?? item.id ?? ""), kb_id: baseId, filename: String(item.document?.name ?? item.name ?? file.name), mime_type: file.type || "application/octet-stream", bytes: file.size, sha256: "", status: String(item.document?.indexing_status ?? item.indexing_status ?? "processing"), error: null, chunk_count: 0, created_at: now(), updated_at: now() };
+    form.set("exhibition_id", "current");
+    form.set("title", file.name);
+    form.set("type", file.type || "application/octet-stream");
+    const item = await this.request<JsonRecord>("/admin/knowledge/documents/upload", { method: "POST", body: form });
+    return mapDifyDocument({ ...item, name: item.name ?? file.name, mime_type: item.mime_type ?? file.type, bytes: item.bytes ?? file.size }, baseId);
   }
   async uploadKnowledgeDocument(file: File): Promise<KnowledgeDocument> {
-    const form = new FormData();
-    form.set("file", file);
-    const item = await this.request<JsonRecord>("/admin/knowledge/documents", { method: "POST", body: form });
-    return item as unknown as KnowledgeDocument;
+    const document = await this.uploadKnowledgeBaseDocument("", file);
+    return {
+      id: document.id,
+      title: document.filename,
+      fileName: document.filename,
+      type: document.mime_type,
+      exhibition: "current",
+      parseStatus: document.status === "ready" ? "parsed" : document.status === "error" ? "failed" : "parsing",
+      vectorStatus: document.status === "ready" ? "indexed" : document.status === "error" ? "failed" : "indexing",
+      chunks: document.chunk_count,
+      uploader: "backend",
+      uploadedAt: document.created_at,
+    };
   }
   async uploadDocument(input: Pick<KnowledgeDocument, "title" | "fileName" | "type" | "exhibition">) { return this.saveCollection<KnowledgeDocument>("knowledge", "documents", input as JsonRecord); }
   async updateDocument(id: string, patch: Partial<KnowledgeDocument>) { return this.saveCollection<KnowledgeDocument>("knowledge", "documents", { ...patch, id }); }
@@ -1188,7 +1248,7 @@ export class FetchAdminApiClient implements AdminApiClient {
   async saveQa(item: KnowledgeQa) { return this.saveCollection<KnowledgeQa>("knowledge", "qa", item as JsonRecord); }
   async transitionQa(id: string, status: KnowledgeQa["status"]) { return this.request<KnowledgeQa>(`/admin/knowledge/qa/${encodeURIComponent(id)}/transition`, { method: "POST", body: JSON.stringify({ status, operator: "admin" }) }); }
   async listQaVersions(id: string) { const response = await this.request<{ items?: Array<Record<string, unknown>> }>(`/admin/knowledge/qa/${encodeURIComponent(id)}/versions`); return response.items ?? []; }
-  async rollbackQa(id: string, version: number, reason: string) { return this.request<KnowledgeQa>(`/admin/knowledge/qa/${encodeURIComponent(id)}/rollback`, { method: "POST", body: JSON.stringify({ version, reason }) }); }
+  async rollbackQa(id: string, version: number, reason: string) { return this.request<KnowledgeQa>(`/admin/knowledge/qa/${encodeURIComponent(id)}/rollback`, { method: "POST", body: JSON.stringify({ version, operator: "admin", reason }) }); }
   async deleteQa(id: string) { await this.request(`/admin/knowledge/qa/${encodeURIComponent(id)}`, { method: "DELETE" }); }
   async listScripts() { return this.collection<ScriptTemplate>("knowledge", "scripts"); }
   async saveScript(item: ScriptTemplate) { return this.saveCollection<ScriptTemplate>("knowledge", "scripts", item as JsonRecord); }
@@ -1206,7 +1266,7 @@ export class FetchAdminApiClient implements AdminApiClient {
   async rollbackPackage(id: string, targetPackageId?: string, reason?: string) { return this.request<PublishPackage>(`/admin/knowledge/packages/${encodeURIComponent(id)}/rollback`, { method: "POST", body: JSON.stringify({ target_package_id: targetPackageId, reason }) }); }
   async listMissPool() { return this.collection<MissPoolItem>("knowledge", "miss-pool"); }
   async resolveMiss(id: string, status: MissPoolItem["status"]) { return this.resolveMissAction(id, status === "ignored" ? "ignore" : status === "converted_qa" ? "create_qa" : "handled"); }
-  async resolveMissAction(id: string, action: "ignore" | "handled" | "create_qa", reason?: string, qa?: Record<string, unknown>) { const status = action === "ignore" ? "ignored" : action === "create_qa" ? "converted_qa" : "supplemented"; return this.request<MissPoolItem>(`/admin/knowledge/miss-pool/${encodeURIComponent(id)}/resolve`, { method: "POST", body: JSON.stringify({ action, status, reason, qa }) }); }
+  async resolveMissAction(id: string, action: "ignore" | "handled" | "create_qa", reason?: string, qa?: Record<string, unknown>) { void qa; return this.request<MissPoolItem>(`/admin/knowledge/miss-pool/${encodeURIComponent(id)}/resolve`, { method: "POST", body: JSON.stringify({ action, operator: "admin", note: reason || "" }) }); }
 
   async listWelcomeConfigs(exhibitionId?: string) {
     const [items, exhibitions] = await Promise.all([this.collection<JsonRecord>("interaction", "welcome-configs", { exhibition_id: exhibitionId }), this.listExhibitions()]);
