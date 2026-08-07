@@ -258,8 +258,25 @@ restart_api_if_code_changed() {
     return 0
   fi
   local changed_file="$(find "$script_dir/../apps/api" "$script_dir/../opentalking" -type f -name '*.py' -newer "$pid_file" -print -quit 2>/dev/null || true)"
-  [[ -n "$changed_file" ]] || return 0
-  echo "API source changed; restarting API to load: $changed_file"
+  local restart_reason=""
+  if [[ -n "$changed_file" ]]; then
+    restart_reason="source changed: $changed_file"
+  else
+    local openapi_document="$(curl --max-time 3 -fsS "http://127.0.0.1:$effective_api_port/openapi.json" 2>/dev/null || true)"
+    local required_route
+    for required_route in \
+      '"/exhibitions/{exhibition_id}/entities"' \
+      '"/api/v1/admin/event/images/upload"' \
+      '"/api/v1/admin/event/exhibits/{record_id}/survey"' \
+      '"/api/v1/public/exhibit-surveys/{token}"'; do
+      if [[ "$openapi_document" != *"$required_route"* ]]; then
+        restart_reason="running API is missing required route $required_route"
+        break
+      fi
+    done
+  fi
+  [[ -n "$restart_reason" ]] || return 0
+  echo "Restarting API because $restart_reason"
   kill "$pid"
   for _ in {1..40}; do
     kill -0 "$pid" >/dev/null 2>&1 || break
@@ -288,6 +305,7 @@ start_admin() {
   local admin_host="${web_host:-${OPENTALKING_WEB_HOST:-0.0.0.0}}"
   local admin_port="${OPENTALKING_ADMIN_PORT:-5174}"
   local admin_backend_port="${api_port:-${VITE_BACKEND_PORT:-${OPENTALKING_API_PORT:-${OPENTALKING_UNIFIED_PORT:-8000}}}}"
+  local admin_api_base="${OPENTALKING_ADMIN_API_BASE:-/api}"
   local repo_root="$(cd -- "$script_dir/.." && pwd)"
   local digital_human_home="${DIGITAL_HUMAN_HOME:-$(cd -- "$repo_root/.." && pwd)}"
   local run_dir="$digital_human_home/run"
@@ -328,18 +346,20 @@ start_admin() {
     return 1
   fi
 
-  if [[ ! -d "$admin_dir/node_modules" ]]; then
-    echo "Installing admin dependencies with npm ci ..."
-    if ! (cd "$admin_dir" && npm ci >>"$log_file" 2>&1); then
-      echo "Failed to install admin dependencies. Last log lines:" >&2
-      tail -80 "$log_file" >&2 || true
-      return 1
-    fi
+  # Keep node_modules in sync with package-lock.json on every startup. Merely
+  # checking whether the directory exists leaves deployments with stale
+  # dependencies after package.json changes (for example the qrcode runtime
+  # dependency used by the event survey page).
+  echo "Installing admin dependencies with npm ci ..."
+  if ! (cd "$admin_dir" && npm ci >>"$log_file" 2>&1); then
+    echo "Failed to install admin dependencies. Last log lines:" >&2
+    tail -80 "$log_file" >&2 || true
+    return 1
   fi
 
   if [[ "$admin_dev_server" != "1" ]]; then
     echo "Building OpenTalking admin"
-    if ! (cd "$admin_dir" && npm run build >>"$log_file" 2>&1); then
+    if ! (cd "$admin_dir" && VITE_API_BASE="$admin_api_base" npm run build >>"$log_file" 2>&1); then
       echo "OpenTalking admin build failed. Last log lines:" >&2
       tail -80 "$log_file" >&2 || true
       return 1
@@ -354,6 +374,7 @@ start_admin() {
   (
     cd "$admin_dir"
     export VITE_BACKEND_PORT="$admin_backend_port"
+    export VITE_API_BASE="$admin_api_base"
     if [[ "$admin_dev_server" == "1" ]]; then
       quickstart_detach "$log_file" ./node_modules/.bin/vite --mode development --host "$admin_host" --port "$admin_port" --strictPort >"$pid_file"
     else
@@ -374,7 +395,8 @@ start_admin() {
       rm -f "$pid_file"
       return 1
     fi
-    if curl "${admin_curl_args[@]}" "$admin_url" >/dev/null 2>&1; then
+    if curl "${admin_curl_args[@]}" "$admin_url" >/dev/null 2>&1 \
+      && curl "${admin_curl_args[@]}" "$admin_url/api/models" >/dev/null 2>&1; then
       echo "OpenTalking admin is up: $admin_url"
       return 0
     fi

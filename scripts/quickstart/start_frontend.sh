@@ -69,6 +69,9 @@ while [[ $# -gt 0 ]]; do
 done
 
 export DIGITAL_HUMAN_HOME="${DIGITAL_HUMAN_HOME:-$default_home}"
+# Keep browser traffic on the frontend origin. VITE_BACKEND_URL remains the
+# server-side proxy target and may safely point to 127.0.0.1:8000.
+export VITE_API_BASE="${OPENTALKING_WEB_API_BASE:-/api}"
 
 run_dir="$DIGITAL_HUMAN_HOME/run"
 log_dir="$DIGITAL_HUMAN_HOME/logs"
@@ -95,10 +98,8 @@ if quickstart_port_in_use "$web_port"; then
   exit 1
 fi
 
-if [[ ! -d "$web_dir/node_modules" ]]; then
-  echo "Installing frontend dependencies with npm ci ..."
-  (cd "$web_dir" && npm ci)
-fi
+echo "Installing frontend dependencies with npm ci ..."
+(cd "$web_dir" && npm ci)
 
 echo "Starting OpenTalking frontend"
 echo "  web:  $web_dir"
@@ -130,11 +131,13 @@ for _ in {1..60}; do
     rm -f "$pid_file"
     exit 1
   fi
-  if curl --max-time 2 -fsS "$web_url" >/dev/null 2>&1; then
+  if curl --max-time 2 -fsS "$web_url" >/dev/null 2>&1 \
+    && curl --max-time 2 -fsS "$web_url/api/models" >/dev/null 2>&1; then
     echo "OpenTalking frontend is up: $web_url"
     exit 0
   fi
-  if curl --max-time 2 -k -fsS "https://127.0.0.1:$web_port" >/dev/null 2>&1; then
+  if curl --max-time 2 -k -fsS "https://127.0.0.1:$web_port" >/dev/null 2>&1 \
+    && curl --max-time 2 -k -fsS "https://127.0.0.1:$web_port/api/models" >/dev/null 2>&1; then
     web_url="https://127.0.0.1:$web_port"
     echo "OpenTalking frontend is up: $web_url"
     exit 0

@@ -1,6 +1,6 @@
 import type { ExhibitionEntityCard, MemoryItem, MemoryLibrary, MemoryTurn, WeChatImportCommitResult, WeChatImportJob } from "../types";
 
-export const API_BASE = import.meta.env.VITE_API_BASE ?? "api";
+export const API_BASE = import.meta.env.VITE_API_BASE ?? "/api";
 
 export function buildApiUrl(path: string): string {
   const p = path.startsWith("/") ? path.slice(1) : path;
@@ -31,11 +31,24 @@ export function buildWsUrl(path: string): string {
 }
 
 function normalizedApiBase(): URL {
-  const base = API_BASE.endsWith("/") ? API_BASE : `${API_BASE}/`;
-  if (typeof window === "undefined") {
-    return new URL(base, "http://127.0.0.1:5173/");
+  const raw = API_BASE.trim() || "/api";
+  const base = raw.endsWith("/") ? raw : `${raw}/`;
+  if (/^[a-z][a-z\d+.-]*:\/\//i.test(base)) {
+    return new URL(base);
   }
-  return new URL(base, window.location.href);
+
+  const origin = typeof window === "undefined" ? "http://127.0.0.1:5173" : window.location.origin;
+  if (base.startsWith("/")) {
+    return new URL(base, origin);
+  }
+
+  // Notebook/container platforms can expose Vite below /proxy/<port>/.
+  // Keep that prefix when a relative VITE_API_BASE is explicitly used, but
+  // never resolve it below an application route such as /survey/<token>/.
+  const pathname = typeof window === "undefined" ? "/" : window.location.pathname;
+  const proxyPrefix = pathname.match(/^(.*\/proxy\/\d+)(?:\/|$)/)?.[1];
+  const rootRelativeBase = `${proxyPrefix || ""}/${base.replace(/^\/+/, "")}`;
+  return new URL(rootRelativeBase, origin);
 }
 
 /** Rich error type so callers can show the FastAPI {"detail": "..."} message. */
