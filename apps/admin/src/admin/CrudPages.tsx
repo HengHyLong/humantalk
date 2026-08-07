@@ -1,5 +1,5 @@
 import { useEffect, useState, type MouseEvent, type ReactNode } from "react";
-import { ApiError, apiGet, type AvatarSummary, type SceneBackgroundAsset, type SceneComposition } from "../lib/api";
+import { ApiError, apiGet, buildApiUrl, type AvatarSummary, type SceneBackgroundAsset, type SceneComposition } from "../lib/api";
 import { DEFAULT_VOICES, adminApi } from "./api";
 import { openTalkingClient } from "./openTalkingClient";
 import type { GifAssetMeta, IdleContent, KnowledgeDocument, KnowledgeQa, MissPoolItem, PublishPackage, ScriptTemplate, VoiceAsset } from "./types";
@@ -32,6 +32,45 @@ export function Field({ label, value, onChange, placeholder, textarea = false }:
 export function Detail({ title, rows, onClose }: { title: string; rows: Array<[string, ReactNode]>; onClose: () => void }) { return <Modal title={title} onClose={onClose}><dl className="divide-y divide-slate-100 rounded-xl border border-slate-200">{rows.map(([label, value]) => <div key={label} className="grid grid-cols-[120px_1fr] gap-3 px-4 py-3 text-xs"><dt className="text-slate-400">{label}</dt><dd className="break-words text-slate-700">{value}</dd></div>)}</dl></Modal>; }
 
 const PAGE_SIZE = 9;
+
+const CUSTOM_AVATAR_IMAGE_EXTENSIONS = ["jpg", "jpeg", "png", "webp"];
+const CUSTOM_AVATAR_VIDEO_EXTENSIONS = ["mp4", "webm", "mov", "avi"];
+
+function fileExtension(file: File): string {
+  return file.name.toLowerCase().split(".").pop() || "";
+}
+
+function isCustomAvatarVideo(file: File | null): boolean {
+  if (!file) return false;
+  return file.type.toLowerCase().startsWith("video/") || CUSTOM_AVATAR_VIDEO_EXTENSIONS.includes(fileExtension(file));
+}
+
+function customAvatarFileError(file: File): string | null {
+  const extension = fileExtension(file);
+  const isImage = file.type.toLowerCase().startsWith("image/") || CUSTOM_AVATAR_IMAGE_EXTENSIONS.includes(extension);
+  const isVideo = isCustomAvatarVideo(file);
+  if (!isImage && !isVideo) return "仅支持 JPEG、PNG、WebP 图片或 MP4、WebM、MOV、AVI 视频。";
+  const maxSize = isVideo ? 200 * 1024 * 1024 : 10 * 1024 * 1024;
+  if (file.size > maxSize) return `${isVideo ? "视频" : "图片"}不能超过 ${isVideo ? "200MB" : "10MB"}。`;
+  return null;
+}
+
+function AvatarCardPreview({ avatar }: { avatar: AvatarSummary }) {
+  return avatar.has_preview_video ? (
+    <video
+      src={buildApiUrl(`/avatars/${encodeURIComponent(avatar.id)}/preview-video`)}
+      className="h-full w-full object-cover"
+      autoPlay
+      muted
+      loop
+      playsInline
+      preload="metadata"
+      onError={(event) => { event.currentTarget.style.display = "none"; }}
+    />
+  ) : (
+    <img src={openTalkingClient.previewUrl(avatar.id)} alt={avatar.name || avatar.id} className="h-full w-full object-cover" onError={(event) => { event.currentTarget.style.display = "none"; }} />
+  );
+}
 
 export function usePagination<T>(items: T[]) {
   const [page, setPage] = useState(1);
@@ -90,24 +129,17 @@ export function EnhancedAvatarPage({ onDebug }: { onDebug?: (avatarId: string) =
       }
     } else {
       if (!form.file) {
-        setError("请选择 JPEG、PNG 或 WebP 图片。");
+        setError("请选择 JPEG、PNG、WebP 图片或 MP4、WebM、MOV、AVI 视频。");
         return;
       }
-      const imageType = form.file.type.toLowerCase();
-      const imageExtension = form.file.name.toLowerCase().split(".").pop();
-      const supportedByMime = imageType === "image/jpeg" || imageType === "image/png" || imageType === "image/webp";
-      const supportedByExtension = ["jpg", "jpeg", "png", "webp"].includes(imageExtension || "");
-      if (!supportedByMime && !supportedByExtension) {
-        setError("仅支持 JPEG、PNG 或 WebP 图片。");
-        return;
-      }
-      if (form.file.size > 10 * 1024 * 1024) {
-        setError("图片不能超过 10MB。");
+      const fileError = customAvatarFileError(form.file);
+      if (fileError) {
+        setError(fileError);
         return;
       }
     }
     try {
-      const item = await openTalkingClient.createCustomAvatar({ file: form.file ?? undefined, name: form.name.trim(), baseAvatarId, model: form.model || null, personMode: "single", removeBackground: form.removeBackground, waitingGif: form.waitingGif ?? undefined, speakingGif: form.speakingGif ?? undefined });
+      const item = await openTalkingClient.createCustomAvatar({ file: isCustomAvatarVideo(form.file) ? undefined : form.file ?? undefined, video: isCustomAvatarVideo(form.file) ? form.file ?? undefined : undefined, name: form.name.trim(), baseAvatarId, model: form.model || null, personMode: "single", removeBackground: form.removeBackground, waitingGif: form.waitingGif ?? undefined, speakingGif: form.speakingGif ?? undefined });
       setAvatars((current) => [...current, item]);
       setSelected(item.id);
       setForm({ file: null, waitingGif: null, speakingGif: null, name: "", baseAvatarId, model: form.model, removeBackground: false });
@@ -126,7 +158,7 @@ export function EnhancedAvatarPage({ onDebug }: { onDebug?: (avatarId: string) =
       setError("删除失败：系统形象不可删除，或后端未允许删除该自定义形象。");
     }
   };
-  return <div className="p-6 xl:p-8"><Header eyebrow="数字人中心 / 真实后端" title="数字人形象" description="从 OpenTalking 读取形象和模型；新增时自动使用系统模板，不需要手工选择基础形象。GIF 类型需要同时上传等待聆听和张嘴讲话两张动图。" action={<Button onClick={() => setForm((current) => ({ ...current, name: current.name || "新数字人", baseAvatarId: current.baseAvatarId || avatars.find((avatar) => !avatar.is_custom)?.id || "", model: current.model || models[0] || "" }))}>+ 导入形象</Button>} />{error ? <p className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-700">{error}</p> : null}{form.name ? <Modal title="导入数字人形象" onClose={() => { setForm((current) => ({ ...current, file: null, waitingGif: null, speakingGif: null, name: "", removeBackground: false })); setError(""); }} onSave={() => void add()} saveLabel="上传并创建"><Field label="形象名称" value={form.name} onChange={(value) => setForm({ ...form, name: value })} placeholder="例如：古装美女" /><label className="mt-4 block text-xs font-semibold text-slate-600">模型<select value={form.model} onChange={(event) => setForm({ ...form, model: event.target.value })} className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-normal"><option value="">使用后端默认模型</option>{models.map((model) => <option key={model} value={model}>{model === "gif" ? "gif（等待聆听 + 张嘴讲话）" : model}</option>)}</select></label>{form.model === "gif" ? <div className="mt-4 space-y-3"><p className="rounded-xl bg-violet-50 px-4 py-3 text-xs leading-5 text-violet-700">GIF 形象由两张动图组成，系统会在聆听和讲话状态之间切换。每张文件限制 20MB。</p><p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-700">当前远程 OpenTalking 尚未在 /models 注册 gif；前端已按 waiting_gif / speaking_gif 字段准备提交，后端扩展后即可正式落库。</p><label className="block rounded-xl border border-dashed border-violet-300 bg-violet-50 p-5 text-center text-xs text-violet-700">上传等待聆听动图<input type="file" accept=".gif,image/gif" className="sr-only" onChange={(event) => setForm({ ...form, waitingGif: event.target.files?.[0] ?? null })} />{form.waitingGif ? <p className="mt-2 font-semibold">{form.waitingGif.name}</p> : null}</label><label className="block rounded-xl border border-dashed border-violet-300 bg-violet-50 p-5 text-center text-xs text-violet-700">上传张嘴讲话动图<input type="file" accept=".gif,image/gif" className="sr-only" onChange={(event) => setForm({ ...form, speakingGif: event.target.files?.[0] ?? null })} />{form.speakingGif ? <p className="mt-2 font-semibold">{form.speakingGif.name}</p> : null}</label></div> : <div className="mt-4"><label className="block rounded-xl border border-dashed border-cyan-300 bg-cyan-50 p-5 text-center text-xs text-cyan-700">选择 JPEG / PNG / WebP 图片（≤ 10MB）<input type="file" accept="image/jpeg,image/png,image/webp" className="sr-only" onChange={(event) => setForm({ ...form, file: event.target.files?.[0] ?? null })} />{form.file ? <p className="mt-2 font-semibold">{form.file.name}</p> : null}</label><label className="mt-4 flex items-center gap-2 text-xs font-semibold text-slate-600"><input type="checkbox" checked={form.removeBackground} onChange={(event) => setForm({ ...form, removeBackground: event.target.checked })} className="h-4 w-4 rounded border-slate-300 text-cyan-600" />上传时抠除背景</label></div>}</Modal> : null}<div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">{avatarPagination.pageItems.map((avatar) => <Card key={avatar.id} className={`overflow-hidden ${selected === avatar.id ? "border-cyan-400 ring-4 ring-cyan-50" : ""}`}><div className="relative flex h-64 items-center justify-center bg-slate-100 p-3"><img src={openTalkingClient.previewUrl(avatar.id)} alt={avatar.name || avatar.id} className="h-full w-full object-contain" onError={(event) => { event.currentTarget.style.display = "none"; }} /><div className="absolute left-3 top-3"><Badge tone={selected === avatar.id ? "cyan" : "slate"}>{selected === avatar.id ? "当前绑定" : avatar.is_custom ? "自定义" : "系统形象"}</Badge></div></div><div className="p-4"><div className="flex items-start justify-between gap-2"><div><h3 className="font-semibold text-slate-900">{avatar.name || avatar.id}</h3><p className="mt-1 text-xs text-slate-400">{avatar.id}</p></div><Badge tone="green">{avatar.model_type}</Badge></div><div className="mt-4 flex gap-2"><Button variant={selected === avatar.id ? "primary" : "secondary"} onClick={() => setSelected(avatar.id)} className="flex-1">{selected === avatar.id ? "已绑定" : "绑定"}</Button><Button variant="ghost" onClick={() => onDebug?.(avatar.id)}>直接调试</Button>{avatar.is_custom ? <Button variant="danger" onClick={() => void remove(avatar)}>删除</Button> : null}</div></div></Card>)}</div><Pagination page={avatarPagination.page} pageCount={avatarPagination.pageCount} total={avatars.length} onChange={avatarPagination.setPage} /></div>;
+  return <div className="p-6 xl:p-8"><Header eyebrow="数字人中心 / 真实后端" title="数字人形象" description="从 OpenTalking 读取形象和模型；新增时自动使用系统模板，支持图片或视频源文件。GIF 类型需要同时上传等待聆听和张嘴讲话两张动图。" action={<Button onClick={() => setForm((current) => ({ ...current, name: current.name || "新数字人", baseAvatarId: current.baseAvatarId || avatars.find((avatar) => !avatar.is_custom)?.id || "", model: current.model || models[0] || "" }))}>+ 导入形象</Button>} />{error ? <p className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-700">{error}</p> : null}{form.name ? <Modal title="导入数字人形象" onClose={() => { setForm((current) => ({ ...current, file: null, waitingGif: null, speakingGif: null, name: "", removeBackground: false })); setError(""); }} onSave={() => void add()} saveLabel="上传并创建"><Field label="形象名称" value={form.name} onChange={(value) => setForm({ ...form, name: value })} placeholder="例如：古装美女" /><label className="mt-4 block text-xs font-semibold text-slate-600">模型<select value={form.model} onChange={(event) => setForm({ ...form, model: event.target.value })} className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-normal"><option value="">使用后端默认模型</option>{models.map((model) => <option key={model} value={model}>{model === "gif" ? "gif（等待聆听 + 张嘴讲话）" : model}</option>)}</select></label>{form.model === "gif" ? <div className="mt-4 space-y-3"><p className="rounded-xl bg-violet-50 px-4 py-3 text-xs leading-5 text-violet-700">GIF 形象由两张动图组成，系统会在聆听和讲话状态之间切换。每张文件限制 20MB。</p><p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-700">当前远程 OpenTalking 尚未在 /models 注册 gif；前端已按 waiting_gif / speaking_gif 字段准备提交，后端扩展后即可正式落库。</p><label className="block rounded-xl border border-dashed border-violet-300 bg-violet-50 p-5 text-center text-xs text-violet-700">上传等待聆听动图<input type="file" accept=".gif,image/gif" className="sr-only" onChange={(event) => setForm({ ...form, waitingGif: event.target.files?.[0] ?? null })} />{form.waitingGif ? <p className="mt-2 font-semibold">{form.waitingGif.name}</p> : null}</label><label className="block rounded-xl border border-dashed border-violet-300 bg-violet-50 p-5 text-center text-xs text-violet-700">上传张嘴讲话动图<input type="file" accept=".gif,image/gif" className="sr-only" onChange={(event) => setForm({ ...form, speakingGif: event.target.files?.[0] ?? null })} />{form.speakingGif ? <p className="mt-2 font-semibold">{form.speakingGif.name}</p> : null}</label></div> : <div className="mt-4"><label className="block rounded-xl border border-dashed border-cyan-300 bg-cyan-50 p-5 text-center text-xs text-cyan-700">选择图片或视频（图片 ≤ 10MB，视频 ≤ 200MB）<input type="file" accept="image/jpeg,image/png,image/webp,video/mp4,video/webm,video/quicktime,video/x-msvideo,.mov,.avi" className="sr-only" onChange={(event) => setForm({ ...form, file: event.target.files?.[0] ?? null })} />{form.file ? <p className="mt-2 font-semibold">{form.file.name}{isCustomAvatarVideo(form.file) ? " · 视频源" : " · 图片源"}</p> : null}</label><label className={`mt-4 flex items-center gap-2 text-xs font-semibold text-slate-600 ${isCustomAvatarVideo(form.file) ? "opacity-50" : ""}`}><input type="checkbox" checked={form.removeBackground} disabled={isCustomAvatarVideo(form.file)} onChange={(event) => setForm({ ...form, removeBackground: event.target.checked })} className="h-4 w-4 rounded border-slate-300 text-cyan-600" />上传时抠除背景（视频源不支持）</label></div>}</Modal> : null}<div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">{avatarPagination.pageItems.map((avatar) => <Card key={avatar.id} className={`overflow-hidden ${selected === avatar.id ? "border-cyan-400 ring-4 ring-cyan-50" : ""}`}><div className="relative flex h-64 items-center justify-center bg-slate-100 p-3"><AvatarCardPreview avatar={avatar} /><div className="absolute left-3 top-3"><Badge tone={selected === avatar.id ? "cyan" : "slate"}>{selected === avatar.id ? "当前绑定" : avatar.is_custom ? "自定义" : "系统形象"}</Badge></div></div><div className="p-4"><div className="flex items-start justify-between gap-2"><div><h3 className="font-semibold text-slate-900">{avatar.name || avatar.id}</h3><p className="mt-1 text-xs text-slate-400">{avatar.id}</p></div><Badge tone="green">{avatar.model_type}</Badge></div><div className="mt-4 flex gap-2"><Button variant={selected === avatar.id ? "primary" : "secondary"} onClick={() => setSelected(avatar.id)} className="flex-1">{selected === avatar.id ? "已绑定" : "绑定"}</Button><Button variant="ghost" onClick={() => onDebug?.(avatar.id)}>直接调试</Button>{avatar.is_custom ? <Button variant="danger" onClick={() => void remove(avatar)}>删除</Button> : null}</div></div></Card>)}</div><Pagination page={avatarPagination.page} pageCount={avatarPagination.pageCount} total={avatars.length} onChange={avatarPagination.setPage} /></div>;
 }
 
 export function EnhancedGifPage() {

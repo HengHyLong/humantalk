@@ -6,6 +6,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import tempfile
 from datetime import datetime
 from io import BytesIO
@@ -276,20 +277,41 @@ async def _read_upload_video(upload: UploadFile) -> tuple[Image.Image, bytes, st
     if suffix not in {".mp4", ".webm", ".mov", ".avi"}:
         raise HTTPException(status_code=400, detail="unsupported video format")
 
-    import cv2
-
     with tempfile.NamedTemporaryFile(suffix=suffix) as tmp:
         tmp.write(raw)
         tmp.flush()
-        cap = cv2.VideoCapture(tmp.name)
+        ffmpeg_bin = os.environ.get("OPENTALKING_FFMPEG_BIN", "").strip() or shutil.which("ffmpeg") or "ffmpeg"
         try:
-            ok, frame = cap.read()
-        finally:
-            cap.release()
-    if not ok or frame is None:
+            result = subprocess.run(
+                [
+                    ffmpeg_bin,
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-i",
+                    tmp.name,
+                    "-frames:v",
+                    "1",
+                    "-f",
+                    "image2pipe",
+                    "-vcodec",
+                    "png",
+                    "pipe:1",
+                ],
+                capture_output=True,
+                check=False,
+                timeout=30,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+            raise HTTPException(status_code=400, detail="video processing dependency is unavailable") from exc
+    if result.returncode != 0 or not result.stdout:
         raise HTTPException(status_code=400, detail="invalid video")
-    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    return Image.fromarray(frame_rgb).convert("RGB"), raw, suffix
+    try:
+        image = Image.open(BytesIO(result.stdout))
+        image.load()
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail="invalid video") from exc
+    return image.convert("RGB"), raw, suffix
 
 
 def _normalize_custom_avatar_model(model: str | None, fallback: str) -> str:

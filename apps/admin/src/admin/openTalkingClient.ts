@@ -21,6 +21,7 @@ export type OpenTalkingClient = {
   createCustomAvatar(input: {
     name: string;
     file?: File;
+    video?: File;
     baseAvatarId?: string | null;
     model?: string | null;
     personMode?: "single" | "double";
@@ -52,7 +53,7 @@ export const openTalkingClient: OpenTalkingClient = {
       Array.isArray(response) ? response : response.items ?? [],
     ),
   deleteVoiceEntry: (entryId) => apiDelete<Record<string, unknown>>(`/voices/${entryId}`).then(() => undefined),
-  createCustomAvatar: ({ file, name, baseAvatarId, model = null, personMode = "single", removeBackground = false, waitingGif, speakingGif }) => {
+  createCustomAvatar: ({ file, video, name, baseAvatarId, model = null, personMode = "single", removeBackground = false, waitingGif, speakingGif }) => {
     const form = new FormData();
     if (baseAvatarId) form.set("base_avatar_id", baseAvatarId);
     form.set("name", name);
@@ -62,6 +63,9 @@ export const openTalkingClient: OpenTalkingClient = {
       if (!waitingGif || !speakingGif) throw new Error("GIF 形象必须同时提供等待聆听和张嘴讲话动图。");
       form.set("waiting_gif", waitingGif);
       form.set("speaking_gif", speakingGif);
+    } else if (video) {
+      form.set("video", video);
+      form.set("remove_background", "false");
     } else {
       if (!file) throw new Error("静态形象必须提供图片文件。");
       form.set("image", file);

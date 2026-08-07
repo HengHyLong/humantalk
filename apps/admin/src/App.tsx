@@ -2401,8 +2401,9 @@ export default function App() {
       fd.set("base_avatar_id", avatarId);
       fd.set("name", trimmedName);
       fd.set("model", model);
-      fd.set("image", file);
-      fd.set("remove_background", options?.removeBackground ? "true" : "false");
+      const isVideo = file.type.toLowerCase().startsWith("video/") || /\.(mp4|webm|mov|avi)$/i.test(file.name);
+      fd.set(isVideo ? "video" : "image", file);
+      fd.set("remove_background", !isVideo && options?.removeBackground ? "true" : "false");
       const created = await apiPostForm<AvatarSummary>("/avatars/custom", fd);
       setAvatars((prev) => {
         const filtered = prev.filter((avatar) => avatar.id !== created.id);
@@ -2419,7 +2420,7 @@ export default function App() {
     } catch (e) {
       console.warn("create custom avatar failed", e);
       const detail = e instanceof ApiError ? e.detail : null;
-      notify(detail ? `创建失败：${detail}` : "创建自定义形象失败，请查看后端日志。", "error");
+      notify(detail ? `创建失败：${detail}` : "创建自定义形象失败，请检查图片或视频格式及后端处理状态。", "error");
       return null;
     } finally {
       setReferenceSaving(false);

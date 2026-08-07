@@ -6,6 +6,11 @@ import type { ModelConnectionBadge } from "../lib/modelStatus";
 
 const CUSTOM_REFERENCE_NAME_KEY = "opentalking-custom-reference-name";
 
+function isVideoFile(file: File | null): boolean {
+  if (!file) return false;
+  return file.type.toLowerCase().startsWith("video/") || /\.(mp4|webm|mov|avi)$/i.test(file.name);
+}
+
 export type AgentConfig = {
   memoryEnabled: boolean;
   knowledgeEnabled: boolean;
@@ -124,6 +129,7 @@ export function AvatarSelectionStage({
     const file = event.target.files?.[0] ?? null;
     event.target.value = "";
     setCustomFile(file);
+    if (isVideoFile(file)) setCustomRemoveBackground(false);
     if (customPreviewUrl) URL.revokeObjectURL(customPreviewUrl);
     setCustomPreviewUrl(file ? URL.createObjectURL(file) : null);
   };
@@ -202,7 +208,7 @@ export function AvatarSelectionStage({
               <input
                 ref={fileInputRef}
                 type="file"
-                accept="image/*"
+                accept="image/jpeg,image/png,image/webp,video/mp4,video/webm,video/quicktime,video/x-msvideo,.mov,.avi"
                 className="hidden"
                 tabIndex={-1}
                 aria-hidden
@@ -430,17 +436,17 @@ export function AvatarSelectionStage({
                 className="flex w-full items-center gap-3 rounded-lg border border-dashed border-cyan-300 bg-cyan-50 p-3 text-left transition hover:bg-cyan-100"
               >
                 <span className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-white text-2xl font-light text-cyan-700">
-                  {customPreviewUrl ? (
-                    <img src={customPreviewUrl} alt="" className="h-full w-full object-cover" />
+                    {customPreviewUrl ? (
+                    isVideoFile(customFile) ? <video src={customPreviewUrl} muted loop autoPlay playsInline className="h-full w-full object-cover" /> : <img src={customPreviewUrl} alt="" className="h-full w-full object-cover" />
                   ) : (
                     "+"
                   )}
                 </span>
                 <span className="min-w-0">
                   <span className="block text-sm font-semibold text-slate-950">
-                    {customFile ? customFile.name : "选择本地图片"}
+                    {customFile ? `${customFile.name} · ${isVideoFile(customFile) ? "视频源" : "图片源"}` : "选择本地图片或视频"}
                   </span>
-                  <span className="mt-0.5 block text-xs text-slate-500">会作为新资产加入形象库</span>
+                  <span className="mt-0.5 block text-xs text-slate-500">支持图片或视频，会作为新资产加入形象库</span>
                 </span>
               </button>
               <label className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5">
@@ -448,10 +454,10 @@ export function AvatarSelectionStage({
                   type="checkbox"
                   checked={customRemoveBackground}
                   onChange={(event) => setCustomRemoveBackground(event.target.checked)}
-                  disabled={referenceSaving}
+                  disabled={referenceSaving || isVideoFile(customFile)}
                   className="h-4 w-4 rounded border-slate-300 text-cyan-600 focus:ring-cyan-500"
                 />
-                <span className="text-sm font-medium text-slate-700">上传时抠除背景</span>
+                <span className="text-sm font-medium text-slate-700">上传时抠除背景{isVideoFile(customFile) ? "（视频源不支持）" : ""}</span>
               </label>
               {customUploadState === "processing" ? (
                 <div className="rounded-lg border border-cyan-200 bg-cyan-50 px-3 py-2.5">
@@ -469,11 +475,22 @@ export function AvatarSelectionStage({
                 <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3">
                   <div className="flex items-center gap-3">
                     <span className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-[linear-gradient(45deg,#e2e8f0_25%,transparent_25%),linear-gradient(-45deg,#e2e8f0_25%,transparent_25%),linear-gradient(45deg,transparent_75%,#e2e8f0_75%),linear-gradient(-45deg,transparent_75%,#e2e8f0_75%)] bg-[length:16px_16px] bg-[position:0_0,0_8px,8px_-8px,-8px_0]">
-                      <img
-                        src={buildApiUrl(`/avatars/${encodeURIComponent(createdCustomAvatar.id)}/preview`)}
-                        alt={createdCustomAvatar.name ?? createdCustomAvatar.id}
-                        className="h-full w-full object-contain"
-                      />
+                      {createdCustomAvatar.has_preview_video ? (
+                        <video
+                          src={buildApiUrl(`/avatars/${encodeURIComponent(createdCustomAvatar.id)}/preview-video`)}
+                          className="h-full w-full object-contain"
+                          autoPlay
+                          muted
+                          loop
+                          playsInline
+                        />
+                      ) : (
+                        <img
+                          src={buildApiUrl(`/avatars/${encodeURIComponent(createdCustomAvatar.id)}/preview`)}
+                          alt={createdCustomAvatar.name ?? createdCustomAvatar.id}
+                          className="h-full w-full object-contain"
+                        />
+                      )}
                     </span>
                     <span className="min-w-0">
                       <span className="block text-sm font-semibold text-emerald-900">抠图完成</span>
