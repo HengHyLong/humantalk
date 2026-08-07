@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { adminApi } from "./api";
+import { canAccess } from "./policy";
 import {
   Badge,
   Button,
@@ -88,7 +89,7 @@ const download = (content: string, name: string) => {
   URL.revokeObjectURL(url);
 };
 
-export function UserManagementPage({ canWrite }: SystemProps) {
+export function UserManagementPage({ user, canWrite }: SystemProps) {
   const [items, setItems] = useState<AdminUserRecord[]>([]);
   const [roles, setRoles] = useState<RoleRecord[]>([]);
   const [keyword, setKeyword] = useState("");
@@ -121,6 +122,7 @@ export function UserManagementPage({ canWrite }: SystemProps) {
     ]);
     setEditing(null);
   };
+  if (!canAccess(user.role, "system:user")) return <div className="flex min-h-full items-center justify-center p-8"><Card className="w-full max-w-lg p-10 text-center"><div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-rose-50 text-rose-600"><span className="text-xl font-bold">403</span></div><h1 className="mt-5 text-lg font-semibold text-slate-900">无权限访问</h1><p className="mt-2 text-sm leading-6 text-slate-500">当前账号没有用户管理权限。请联系系统管理员申请权限，或返回首页继续操作。</p><div className="mt-6 rounded-xl bg-slate-50 px-4 py-3 text-left text-xs text-slate-500"><p className="font-semibold text-slate-700">权限码：system:user</p><p className="mt-1">服务端接口返回 403 时，页面会保持相同提示。</p></div></Card></div>;
   const roleName = (ids: string[]) =>
     ids
       .map((id) => roles.find((role) => role.id === id)?.name)

@@ -7,6 +7,7 @@ import time
 from typing import Any
 
 from fastapi import HTTPException, Request
+from fastapi.security import HTTPAuthorizationCredentials
 
 
 ADMIN_ROLES = {"sys_admin", "content_ops", "data_viewer", "security_audit", "readonly"}
@@ -45,6 +46,8 @@ ROLE_BUTTON_PERMISSIONS: dict[str, frozenset[str]] = {
         {
             "asset:gif:write",
             "asset:scene:write",
+            "asset:voice:write",
+            "asset:idle:write",
             "interact:welcome:write",
             "interact:explain:write",
             "interact:shopping:write",
@@ -56,6 +59,8 @@ ROLE_BUTTON_PERMISSIONS: dict[str, frozenset[str]] = {
         {
             "asset:gif:write",
             "asset:scene:write",
+            "asset:voice:write",
+            "asset:idle:write",
             "interact:welcome:write",
             "interact:explain:write",
             "interact:shopping:write",
@@ -141,12 +146,38 @@ def current_admin_user(request: Request) -> dict[str, Any]:
     if scheme.lower() != "bearer" or not token.strip():
         raise HTTPException(status_code=401, detail="admin authentication required")
     session = tokens.get(token.strip())
-    if not session or int(session.get("expiresAt", 0)) <= now:
-        raise HTTPException(status_code=401, detail="admin token is invalid or expired")
-    user = session.get("user")
-    if not isinstance(user, dict) or user.get("role") not in ADMIN_ROLES:
-        raise HTTPException(status_code=401, detail="admin token is invalid")
-    return user
+    if session and int(session.get("expiresAt", 0)) > now:
+        user = session.get("user")
+        if not isinstance(user, dict) or user.get("role") not in ADMIN_ROLES:
+            raise HTTPException(status_code=401, detail="admin token is invalid")
+        return user
+
+    # The full Admin API issues JWTs from /api/v1/auth/login while the
+    # compatibility admin routes historically issued opaque in-memory tokens
+    # from /api/v1/admin/auth/login. Accept the JWT here as well so the asset
+    # and operations routers do not require a second Authorization header.
+    try:
+        from apps.api.admin.security import current_user as current_jwt_user, get_store
+
+        jwt_auth = current_jwt_user(
+            request,
+            credentials=HTTPAuthorizationCredentials(scheme="Bearer", credentials=token.strip()),
+        )
+        db_user = jwt_auth["user"]
+        store = get_store(request)
+        roles = store.roles_for_user(db_user["id"])
+        role = next((item["code"] for item in roles if item.get("code") in ADMIN_ROLES), "readonly")
+        permissions = {item["code"] for item in store.permissions_for_user(db_user["id"])}
+        return {
+            "id": db_user["id"],
+            "username": db_user["username"],
+            "displayName": db_user.get("display_name") or db_user["username"],
+            "role": role,
+            "permissions": sorted(permissions),
+            "buttonPermissions": sorted(ROLE_BUTTON_PERMISSIONS.get(role, frozenset())),
+        }
+    except HTTPException as exc:
+        raise HTTPException(status_code=401, detail="admin token is invalid or expired") from exc
 
 
 def revoke_admin_token(request: Request) -> None:

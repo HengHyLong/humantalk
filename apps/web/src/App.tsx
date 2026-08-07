@@ -549,6 +549,8 @@ function validateAudioProviderConfigBeforeStart({
   ttsProvider: TtsProviderExtended;
   runtimeStatus: HealthResponse | null;
 }): string | null {
+  // API deployments configure OPENTALKING_STT_DASHSCOPE_API_KEY and
+  // OPENTALKING_TTS_DASHSCOPE_API_KEY on the backend; health only exposes key_set.
   const missing: string[] = [];
   const sttStatus = runtimeStatus?.stt_providers?.[normalizeAsrProvider(sttProvider, "dashscope")];
   const ttsStatus = runtimeStatus?.tts_providers?.[ttsProvider];
@@ -899,15 +901,16 @@ export default function App() {
   const pendingAssistantMsgIdRef = useRef<string | null>(null);
   /** 首帧已进入 WebRTC 后再叠字幕（与口型对齐）；旧版 Worker 无 speech.media_started 时用定时回退 */
   const subtitleMediaReadyRef = useRef(false);
-  const subtitleFallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const subtitleAccRef = useRef("");
+  const subtitleFallbackTimerRef = useRef<number | null>(null);
   const subtitleBufferRef = useRef(createSubtitleTurnBuffer());
   const subtitleTurnCounterRef = useRef(0);
   const activeSubtitleTurnRef = useRef<{ scopeKey: string; turnKey: string; nextChunkOrder: number } | null>(null);
   const reconnectAttemptRef = useRef(0);
-  const reconnectTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
+  const reconnectTimerRef = useRef<number | null>(null);
   const reconnectSessionIdRef = useRef<string | null>(null);
   const scheduleReconnectRef = useRef<(category?: MediaFailureCategory) => void>(() => {});
-  const welcomeTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
+  const welcomeTimerRef = useRef<number | null>(null);
   const welcomeSpeechSessionRef = useRef<string | null>(null);
   const inputEventLogRef = useRef<InputCaptureEvent[]>([]);
 
@@ -990,6 +993,7 @@ export default function App() {
   const refreshSubtitlePresentation = useCallback((nowMs = Date.now()) => {
     const active = activeSubtitleTurnRef.current;
     if (!active) {
+      subtitleAccRef.current = "";
       setCurrentSubtitle("");
       return "";
     }
@@ -1000,6 +1004,7 @@ export default function App() {
       nowMs,
     );
     if (presentation.visible) {
+      subtitleAccRef.current = presentation.text;
       setCurrentSubtitle(presentation.text);
       const msgId = streamingAssistantMsgIdRef.current;
       if (msgId) {
@@ -1031,9 +1036,11 @@ export default function App() {
     const turnKey = compatibleSubtitleTurnKey(data, fallbackTurnKey);
     activeSubtitleTurnRef.current = { scopeKey, turnKey, nextChunkOrder: 0 };
     subtitleMediaReadyRef.current = false;
+    subtitleAccRef.current = "";
   }, []);
 
   const clearSubtitleState = useCallback(() => {
+    subtitleAccRef.current = "";
     setCurrentSubtitle("");
     subtitleBufferRef.current = createSubtitleTurnBuffer();
     activeSubtitleTurnRef.current = null;
@@ -1114,7 +1121,7 @@ export default function App() {
     }
   });
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
-  const toastTimersRef = useRef<Map<string, ReturnType<typeof window.setTimeout>>>(new Map());
+  const toastTimersRef = useRef<Map<string, number>>(new Map());
   const [recordingSaving, setRecordingSaving] = useState(false);
   const [ftRecordPhase, setFtRecordPhase] = useState<"idle" | "recording" | "stopped">("idle");
   const [ftRecordBusy, setFtRecordBusy] = useState(false);
@@ -1325,16 +1332,15 @@ export default function App() {
   }, []);
 
   const refreshKnowledgeBases = useCallback(async () => {
-    setKnowledgeBaseSummaries([{
-      id: DIFY_EXHIBITION_DATASET_ID,
-      name: "西博会展会知识库（Dify）",
-      document_count: 1,
-      ready_document_count: 1,
-      error_document_count: 0,
-      created_at: "",
-      updated_at: "",
-    }]);
-  }, []);
+    try {
+      const response = await apiGet<{ data?: Array<Record<string, unknown>> }>("/v1/admin/knowledge/dify/datasets?page=1&limit=100");
+      setKnowledgeBaseSummaries((response.data ?? []).map((item) => ({ id: String(item.id ?? ""), name: String(item.name ?? item.id ?? ""), document_count: Number(item.document_count ?? 0), ready_document_count: Number(item.ready_document_count ?? item.document_count ?? 0), error_document_count: Number(item.error_document_count ?? 0), created_at: String(item.created_at ?? ""), updated_at: String(item.updated_at ?? "") })).filter((item) => item.id));
+    } catch (error) {
+      console.warn("load knowledge bases failed", error);
+      const detail = error instanceof ApiError ? error.detail : null;
+      notify(detail ? `知识库列表读取失败：${detail}` : "知识库列表读取失败，请查看后端日志。", "error");
+    }
+  }, [notify]);
 
   const refreshPersonas = useCallback(async () => {
     try {
@@ -2302,8 +2308,7 @@ export default function App() {
         });
         if (!update.accepted) return;
         subtitleBufferRef.current = update.buffer;
-        const presentation = getSubtitlePresentation(subtitleBufferRef.current, active.scopeKey, active.turnKey, Date.now());
-        if (presentation.visible || subtitleMediaReadyRef.current) {
+        if (subtitleMediaReadyRef.current) {
           flushSubtitleDisplay();
           flushSubtitleMessage();
         } else {
@@ -2441,7 +2446,8 @@ export default function App() {
         fasterliveportrait_config:
           model === "fasterliveportrait" ? fasterliveportraitConfig : undefined,
         user_id: clientUserId,
-        agent_enabled: agentConfig.memoryEnabled || agentConfig.knowledgeEnabled || (memoryEnabled && Boolean(memoryLibraryId)),
+        exhibition_id: configuredExhibitionId || "current",
+        agent_enabled: true,
         memory_enabled: agentConfig.memoryEnabled || (memoryEnabled && Boolean(memoryLibraryId)),
         memory_profile_id: MEMORY_PROFILE_ID,
         character_id: avatarId,

@@ -21,6 +21,7 @@ test("readonly users cannot use write buttons", () => {
 
 test("lead and system permissions follow the planned role matrix", () => {
   assert.equal(canAccess("sys_admin", "lead:view_sensitive"), true);
+  assert.equal(canAccess("content_ops", "system:user"), false);
   assert.equal(canAccess("content_ops", "lead:feedback"), true);
   assert.equal(canAccess("data_viewer", "lead:export"), true);
   assert.equal(canAccess("data_viewer", "lead:view_sensitive"), false);

@@ -9,6 +9,7 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
   const backendPort = env.VITE_BACKEND_PORT || "8000";
   const backendUrl = env.VITE_BACKEND_URL || `http://127.0.0.1:${backendPort}`;
+  const assetBackendUrl = env.VITE_ASSET_BACKEND_URL || backendUrl;
   const apiProxy = {
     target: backendUrl,
     changeOrigin: true,
@@ -26,6 +27,11 @@ export default defineConfig(({ mode }) => {
       });
     },
   };
+  const assetApiProxy = {
+    ...apiProxy,
+    target: assetBackendUrl,
+    rewrite: (p: string) => p.replace(/^\/api-assets/, "/api"),
+  };
   return {
     base: "./",
     plugins: [react()],
@@ -33,12 +39,12 @@ export default defineConfig(({ mode }) => {
       port: 5173,
       allowedHosts,
       fs: { allow: [repoRoot] },
-      proxy: { "/api": apiProxy },
+      proxy: { "/api-assets": assetApiProxy, "/api": apiProxy },
     },
     preview: {
       port: 5173,
       allowedHosts,
-      proxy: { "/api": apiProxy },
+      proxy: { "/api-assets": assetApiProxy, "/api": apiProxy },
     },
   };
 });

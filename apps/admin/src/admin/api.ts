@@ -38,15 +38,25 @@ import type {
   ReportFilters,
   ReportOperations,
 } from "./types";
+import type { KnowledgeBaseSummary as ApiKnowledgeBaseSummary, KnowledgeDocument as ApiKnowledgeDocument } from "../lib/api";
 
 const STORAGE_PREFIX = "opentalking-admin-";
+const REFRESH_TOKEN_KEY = `${STORAGE_PREFIX}refresh-token`;
 const now = () => new Date().toISOString();
 export type DownloadData = string | Blob;
 export type GifCreateInput = Omit<GifAssetMeta, "id" | "createdAt"> & { file?: File };
 
-function buildAdminFetchUrl(path: string): string {
+const runtimeEnv = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env ?? {};
+type AdminBackend = "business" | "assets";
+
+function buildAdminFetchUrl(path: string, backend: AdminBackend = "business"): string {
+  const knowledgeBackend = String(runtimeEnv.VITE_KNOWLEDGE_BACKEND_URL || "").trim().replace(/\/+$/, "");
+  if (knowledgeBackend && path.startsWith("/v1/admin/knowledge/")) {
+    return new URL(`/api${path}`, `${knowledgeBackend}/`).toString();
+  }
   const base = typeof window === "undefined" ? "http://127.0.0.1:5173/" : window.location.href;
-  return new URL(`/api${path}`, base).toString();
+  const proxyPrefix = backend === "assets" && runtimeEnv.VITE_ASSET_BACKEND_URL ? "/api-assets" : "/api";
+  return new URL(`${proxyPrefix}${path}`, base).toString();
 }
 
 function readStore<T>(key: string, fallback: T): T {
@@ -69,8 +79,22 @@ function writeStore<T>(key: string, value: T): void {
 function readStoredSessionToken(): string {
   try {
     const raw = window.localStorage.getItem("opentalking-admin-session");
-    const session = raw ? JSON.parse(raw) as { token?: unknown } : null;
-    return typeof session?.token === "string" ? session.token : "";
+    const session = raw ? JSON.parse(raw) as { token?: unknown; accessToken?: unknown; access_token?: unknown } : null;
+    const token = session?.token ?? session?.accessToken ?? session?.access_token;
+    return typeof token === "string" ? token : "";
+  } catch {
+    return "";
+  }
+}
+
+function readStoredRefreshToken(): string {
+  try {
+    const stored = window.localStorage.getItem(REFRESH_TOKEN_KEY);
+    if (stored) return stored;
+    const raw = window.localStorage.getItem("opentalking-admin-session");
+    const session = raw ? JSON.parse(raw) as { refreshToken?: unknown; refresh_token?: unknown } : null;
+    const token = session?.refreshToken ?? session?.refresh_token;
+    return typeof token === "string" ? token : "";
   } catch {
     return "";
   }
@@ -134,9 +158,9 @@ const DEFAULT_VENUES: EventVenue[] = [
 ];
 
 const DEFAULT_POINTS: EventPoint[] = [
-  { id: "point-entrance", venueId: "venue-1", code: "ENT-01", name: "1号入口", type: "entrance", floor: "1F", x: 12, y: 48, exhibitorId: null, exhibitId: null, description: "主入口和签到服务台。", status: "active", createdAt: "2026-07-21 10:00", updatedAt: "2026-08-01 10:00" },
-  { id: "point-booth-a1", venueId: "venue-1", code: "BOOTH-A1-08", name: "A1馆智能制造展区", type: "booth", floor: "1F", x: 62, y: 36, exhibitorId: "exhibitor-1", exhibitId: "exhibit-1", description: "四川智造科技有限公司展位。", status: "active", createdAt: "2026-07-22 10:00", updatedAt: "2026-08-01 10:00" },
-  { id: "point-rest", venueId: "venue-1", code: "SERVICE-REST", name: "中央休息区", type: "facility", floor: "1F", x: 45, y: 70, exhibitorId: null, exhibitId: null, description: "观众休息和饮水区域。", status: "active", createdAt: "2026-07-22 10:10", updatedAt: "2026-08-01 10:00" },
+  { id: "point-entrance", exhibitionId: "exhibition-1", venueId: "venue-1", code: "ENT-01", name: "1号入口", type: "entrance", floor: "1F", x: 12, y: 48, exhibitorId: null, exhibitId: null, description: "主入口和签到服务台。", status: "active", createdAt: "2026-07-21 10:00", updatedAt: "2026-08-01 10:00" },
+  { id: "point-booth-a1", exhibitionId: "exhibition-1", venueId: "venue-1", code: "BOOTH-A1-08", name: "A1馆智能制造展区", type: "booth", floor: "1F", x: 62, y: 36, exhibitorId: "exhibitor-1", exhibitId: "exhibit-1", description: "四川智造科技有限公司展位。", status: "active", createdAt: "2026-07-22 10:00", updatedAt: "2026-08-01 10:00" },
+  { id: "point-rest", exhibitionId: "exhibition-1", venueId: "venue-1", code: "SERVICE-REST", name: "中央休息区", type: "facility", floor: "1F", x: 45, y: 70, exhibitorId: null, exhibitId: null, description: "观众休息和饮水区域。", status: "active", createdAt: "2026-07-22 10:10", updatedAt: "2026-08-01 10:00" },
 ];
 
 const DEFAULT_EXHIBITORS: Exhibitor[] = [
@@ -150,8 +174,8 @@ const DEFAULT_EXHIBITS: Exhibit[] = [
 ];
 
 const DEFAULT_ROUTES: ExhibitionRoute[] = [
-  { id: "route-1", venueId: "venue-1", name: "主入口到智能制造展区", type: "navigation", pointIds: ["point-entrance", "point-booth-a1"], directions: ["从1号入口沿中央通道向东直行。", "经过服务台后右转进入A1馆。"], estimatedMinutes: 4, description: "适合现场导航和数字人讲解。", status: "published", createdAt: "2026-07-28 09:00", updatedAt: "2026-08-01 17:20" },
-  { id: "route-2", venueId: "venue-1", name: "主入口到休息区", type: "navigation", pointIds: ["point-entrance", "point-rest"], directions: ["沿中央通道直行至服务设施区域。"], estimatedMinutes: 2, description: "适合现场导航和数字人讲解。", status: "published", createdAt: "2026-07-28 09:20", updatedAt: "2026-07-28 09:20" },
+  { id: "route-1", exhibitionId: "exhibition-1", venueId: "venue-1", name: "主入口到智能制造展区", type: "navigation", pointIds: ["point-entrance", "point-booth-a1"], directions: ["从1号入口沿中央通道向东直行。", "经过服务台后右转进入A1馆。"], estimatedMinutes: 4, description: "适合现场导航和数字人讲解。", status: "published", createdAt: "2026-07-28 09:00", updatedAt: "2026-08-01 17:20" },
+  { id: "route-2", exhibitionId: "exhibition-1", venueId: "venue-1", name: "主入口到休息区", type: "navigation", pointIds: ["point-entrance", "point-rest"], directions: ["沿中央通道直行至服务设施区域。"], estimatedMinutes: 2, description: "适合现场导航和数字人讲解。", status: "published", createdAt: "2026-07-28 09:20", updatedAt: "2026-07-28 09:20" },
 ];
 
 const DEFAULT_SCHEDULES: EventSchedule[] = [
@@ -217,7 +241,7 @@ const DEFAULT_ALERTS: AlertEvent[] = [
 ];
 
 export interface AdminApiClient {
-  login(username: string, password: string): Promise<{ token: string; user: AdminUser }>;
+  login(username: string, password: string): Promise<{ token: string; refreshToken?: string; user: AdminUser }>;
   getDashboard(): Promise<DashboardData>;
   getReport(filters?: ReportFilters): Promise<ReportOperations>;
   getOperationsReport(filters?: { exhibitionId?: string; from?: string; to?: string; groupBy?: "day" | "terminal" | "scene" | "intent" }): Promise<OperationsReport>;
@@ -234,10 +258,18 @@ export interface AdminApiClient {
   saveSceneBindings(bindings: SceneBinding[]): Promise<SceneBinding[]>;
   getSceneBinding(scene: string): Promise<SceneBinding>;
   saveSceneBinding(binding: SceneBinding): Promise<SceneBinding>;
+  deleteSceneBinding(scene: string): Promise<void>;
   listIdle(): Promise<IdleContent[]>;
   saveIdle(item: IdleContent): Promise<IdleContent>;
   deleteIdle(id: string): Promise<void>;
   listDocuments(): Promise<KnowledgeDocument[]>;
+  listKnowledgeBases(): Promise<ApiKnowledgeBaseSummary[]>;
+  listKnowledgeBaseDocuments(baseId: string): Promise<ApiKnowledgeDocument[]>;
+  createKnowledgeBase(name: string): Promise<ApiKnowledgeBaseSummary>;
+  renameKnowledgeBase(id: string, name: string): Promise<ApiKnowledgeBaseSummary>;
+  deleteKnowledgeBase(id: string): Promise<void>;
+  uploadKnowledgeBaseDocument(baseId: string, file: File): Promise<ApiKnowledgeDocument>;
+  uploadKnowledgeDocument(file: File): Promise<KnowledgeDocument>;
   uploadDocument(input: Pick<KnowledgeDocument, "title" | "fileName" | "type" | "exhibition">): Promise<KnowledgeDocument>;
   updateDocument(id: string, patch: Partial<KnowledgeDocument>): Promise<KnowledgeDocument>;
   deleteDocument(id: string): Promise<void>;
@@ -269,7 +301,9 @@ export interface AdminApiClient {
   resolveMissAction(id: string, action: "ignore" | "handled" | "create_qa", reason?: string, qa?: Record<string, unknown>): Promise<MissPoolItem>;
   listExhibitions(): Promise<Exhibition[]>;
   saveExhibition(item: Exhibition): Promise<Exhibition>;
+  getExhibitionRuntimeConfig(id: string): Promise<Exhibition>;
   saveExhibitionRuntimeConfig(item: Exhibition): Promise<Exhibition>;
+  validateExhibitionRuntimeConfig(item: Exhibition): Promise<{ valid?: boolean; [key: string]: unknown }>;
   deleteExhibition(id: string): Promise<void>;
   transitionExhibition(id: string, status: ExhibitionStatus): Promise<Exhibition>;
   listVenues(): Promise<EventVenue[]>;
@@ -451,10 +485,18 @@ export class MockAdminApiClient implements AdminApiClient {
   async saveSceneBindings(bindings: SceneBinding[]) { writeStore("scene-bindings", bindings); return bindings; }
   async getSceneBinding(scene: string) { return (await this.listSceneBindings()).find((item) => item.scene === scene) ?? { scene, assets: [] }; }
   async saveSceneBinding(binding: SceneBinding) { await this.saveSceneBindings([...(await this.listSceneBindings()).filter((item) => item.scene !== binding.scene), binding]); return binding; }
+  async deleteSceneBinding(scene: string) { writeStore("scene-bindings", (await this.listSceneBindings()).filter((item) => item.scene !== scene)); }
   async listIdle() { return readStore<IdleContent[]>("idle", [{ id: "idle-1", type: "标语轮播", title: "西博会欢迎语", content: "欢迎来到 2026 西部博览会", interval: 8, exhibition: "2026 西部博览会", enabled: true }]); }
   async saveIdle(item: IdleContent) { const items = (await this.listIdle()).filter((candidate) => candidate.id !== item.id); const next = [item, ...items]; writeStore("idle", next); return item; }
   async deleteIdle(id: string) { writeStore("idle", (await this.listIdle()).filter((item) => item.id !== id)); }
   async listDocuments() { return readStore("documents", DEFAULT_DOCUMENTS); }
+  async listKnowledgeBases(): Promise<ApiKnowledgeBaseSummary[]> { return readStore("dify-knowledge-bases", []); }
+  async listKnowledgeBaseDocuments(_baseId: string): Promise<ApiKnowledgeDocument[]> { return []; }
+  async createKnowledgeBase(name: string): Promise<ApiKnowledgeBaseSummary> { const item: ApiKnowledgeBaseSummary = { id: `kb-${Date.now()}`, name, document_count: 0, ready_document_count: 0, error_document_count: 0, created_at: now(), updated_at: now() }; writeStore("dify-knowledge-bases", [item, ...(await this.listKnowledgeBases())]); return item; }
+  async renameKnowledgeBase(id: string, name: string): Promise<ApiKnowledgeBaseSummary> { const items = await this.listKnowledgeBases(); const next = items.map((item) => item.id === id ? { ...item, name, updated_at: now() } : item); writeStore("dify-knowledge-bases", next); return next.find((item) => item.id === id) ?? items[0]; }
+  async deleteKnowledgeBase(id: string) { writeStore("dify-knowledge-bases", (await this.listKnowledgeBases()).filter((item) => item.id !== id)); }
+  async uploadKnowledgeBaseDocument(baseId: string, file: File): Promise<ApiKnowledgeDocument> { return { id: `dify-doc-${Date.now()}`, kb_id: baseId, filename: file.name, mime_type: file.type || "application/octet-stream", bytes: file.size, sha256: "", status: "ready", error: null, chunk_count: 0, created_at: now(), updated_at: now() }; }
+  async uploadKnowledgeDocument(file: File): Promise<KnowledgeDocument> { return this.uploadDocument({ title: file.name, fileName: file.name, type: file.type || "document", exhibition: "" }); }
   async uploadDocument(input: Pick<KnowledgeDocument, "title" | "fileName" | "type" | "exhibition">) { const item: KnowledgeDocument = { ...input, id: `doc-${Date.now()}`, parseStatus: "parsing", vectorStatus: "pending", chunks: 0, uploader: "当前用户", uploadedAt: now() }; writeStore("documents", [item, ...await this.listDocuments()]); window.setTimeout(() => { void this.patchDocument(item.id, { parseStatus: "parsed", vectorStatus: "indexed", chunks: 32 }); }, 1200); return item; }
   private async patchDocument(id: string, patch: Partial<KnowledgeDocument>) { const next = (await this.listDocuments()).map((item) => item.id === id ? { ...item, ...patch } : item); writeStore("documents", next); }
   async updateDocument(id: string, patch: Partial<KnowledgeDocument>) { await this.patchDocument(id, patch); return (await this.listDocuments()).find((item) => item.id === id) ?? (await this.listDocuments())[0]; }
@@ -501,7 +543,16 @@ export class MockAdminApiClient implements AdminApiClient {
     writeStore("exhibitions", [saved, ...list.filter((candidate) => candidate.id !== item.id)]);
     return saved;
   }
+  async getExhibitionRuntimeConfig(id: string) {
+    const item = (await this.listExhibitions()).find((candidate) => candidate.id === id);
+    if (!item) throw new Error("展会不存在");
+    return item;
+  }
   async saveExhibitionRuntimeConfig(item: Exhibition) { return this.saveExhibition(item); }
+  async validateExhibitionRuntimeConfig(item: Exhibition) {
+    const exhibition = await this.getExhibitionRuntimeConfig(item.id).catch(() => null);
+    return { valid: Boolean(exhibition), exhibitionId: item.id };
+  }
   async transitionExhibition(id: string, status: Exhibition["status"]) {
     const list = await this.listExhibitions();
     const current = list.find((item) => item.id === id);
@@ -563,7 +614,7 @@ export class MockAdminApiClient implements AdminApiClient {
       if (route.pointIds?.length) return route;
       const venueId = route.venueId ?? DEFAULT_VENUES.find((venue) => venue.exhibitionId === route.exhibitionId)?.id ?? route.exhibitionId ?? "";
       const pointIds = [route.from, route.to].map((name) => points.find((point) => point.venueId === venueId && point.name === name)?.id).filter((id): id is string => Boolean(id));
-      return { id: route.id, venueId, name: route.name, type: "navigation" as const, pointIds, directions: route.directions ?? [], estimatedMinutes: route.estimatedMinutes, description: route.description, status: route.status, createdAt: route.createdAt, updatedAt: route.updatedAt };
+      return { id: route.id, exhibitionId: route.exhibitionId ?? DEFAULT_VENUES.find((venue) => venue.id === venueId)?.exhibitionId ?? "", venueId, name: route.name, type: "navigation" as const, pointIds, directions: route.directions ?? [], estimatedMinutes: route.estimatedMinutes, description: route.description, status: route.status, createdAt: route.createdAt, updatedAt: route.updatedAt };
     });
   }
   async saveRoute(item: ExhibitionRoute) { const venue = (await this.listVenues()).find((candidate) => candidate.id === item.venueId); if (!venue) throw new Error("路线所属场地不存在"); const points = await this.listPoints(); if (item.pointIds.length < 2 || item.pointIds.some((id) => points.find((point) => point.id === id)?.venueId !== item.venueId)) throw new Error("路线至少需要两个属于同一场地的点位"); const saved = { ...item, updatedAt: now() }; writeStore("routes", [saved, ...(await this.listRoutes()).filter((candidate) => candidate.id !== item.id)]); return saved; }
@@ -640,6 +691,18 @@ function queryString(params: Record<string, string | number | undefined>): strin
   return encoded ? `?${encoded}` : "";
 }
 
+export class AdminApiError extends Error {
+  constructor(
+    readonly status: number,
+    readonly code: string,
+    readonly traceId: string,
+    readonly detail: string,
+  ) {
+    super(detail || `Admin API ${status}`);
+    this.name = "AdminApiError";
+  }
+}
+
 function isClientDraftId(value: unknown): boolean {
   const id = String(value || "");
   return /^(?:new|user|role|welcome-config|explain-flow|shopping-strategy|voice-local|idle|doc|qa|script|package|gif|lead)-\d+$/.test(id);
@@ -651,6 +714,36 @@ function stringArray(value: unknown): string[] {
   return [];
 }
 
+function remoteTimestamp(value: unknown): string {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const milliseconds = value < 10_000_000_000 ? value * 1000 : value;
+    return new Date(milliseconds).toISOString();
+  }
+  const text = String(value ?? "");
+  return text || now();
+}
+
+function mapDifyDocument(item: JsonRecord, fallbackKnowledgeBaseId = ""): ApiKnowledgeDocument {
+  const details = item.data_source_detail_dict && typeof item.data_source_detail_dict === "object"
+    ? item.data_source_detail_dict as JsonRecord
+    : {};
+  const upload = details.upload_file && typeof details.upload_file === "object" ? details.upload_file as JsonRecord : {};
+  const status = String(item.indexing_status ?? item.status ?? "processing");
+  return {
+    id: String(item.id ?? item.document_id ?? item.batch_id ?? ""),
+    kb_id: String(item.dataset_id ?? item.knowledge_base_id ?? fallbackKnowledgeBaseId),
+    filename: String(item.name ?? upload.name ?? item.filename ?? ""),
+    mime_type: String(item.mime_type ?? upload.mime_type ?? ""),
+    bytes: Number(item.bytes ?? item.size ?? upload.size ?? 0),
+    sha256: String(item.sha256 ?? ""),
+    status: status === "completed" || String(item.display_status ?? "") === "available" ? "ready" : status === "error" ? "error" : "processing",
+    error: item.error ? String(item.error) : null,
+    chunk_count: Number(item.word_count ?? item.chunk_count ?? item.tokens ?? 0),
+    created_at: remoteTimestamp(item.created_at ?? upload.created_at),
+    updated_at: remoteTimestamp(item.updated_at ?? item.created_at ?? upload.created_at),
+  };
+}
+
 function normalizeWelcomeTrigger(value: unknown): string[] {
   if (Array.isArray(value)) return stringArray(value);
   const trigger = String(value || "");
@@ -660,14 +753,152 @@ function normalizeWelcomeTrigger(value: unknown): string[] {
   return trigger ? [trigger] : [];
 }
 
+function normalizeReportBucket(value: unknown): ReportOperations["interaction"]["byScene"][number] {
+  const item = value && typeof value === "object" ? value as JsonRecord : {};
+  return {
+    key: String(item.key ?? item.id ?? item.label ?? ""),
+    count: Number(item.count ?? item.total ?? 0),
+    averageDurationMs: item.averageDurationMs == null ? undefined : Number(item.averageDurationMs),
+    totalDurationMs: item.totalDurationMs == null ? undefined : Number(item.totalDurationMs),
+  };
+}
+
+function normalizeReportBuckets(value: unknown): ReportOperations["interaction"]["byScene"] {
+  if (Array.isArray(value)) return value.map(normalizeReportBucket);
+  if (value && typeof value === "object") {
+    return Object.entries(value as JsonRecord).map(([key, count]) => ({ key, count: Number(count || 0) }));
+  }
+  return [];
+}
+
+function normalizeReportOperations(raw: JsonRecord): ReportOperations {
+  const interaction = raw.interaction && typeof raw.interaction === "object" ? raw.interaction as JsonRecord : {};
+  const hotspot = raw.hotspot && typeof raw.hotspot === "object" ? raw.hotspot as JsonRecord : {};
+  const hit = raw.hit && typeof raw.hit === "object" ? raw.hit as JsonRecord : {};
+  const lead = raw.lead && typeof raw.lead === "object" ? raw.lead as JsonRecord : {};
+  const resource = raw.resource && typeof raw.resource === "object" ? raw.resource as JsonRecord : {};
+  const dimensions = raw.dimensions && typeof raw.dimensions === "object" ? raw.dimensions as JsonRecord : {};
+  const summary = raw.summary && typeof raw.summary === "object" ? raw.summary as JsonRecord : {};
+  const interactionDimension = dimensions.interaction ?? interaction.byScene;
+  const leadDimension = dimensions.lead ?? lead.byStatus;
+  return {
+    generatedAt: String(raw.generatedAt || raw.generated_at || now()),
+    filters: (raw.filters && typeof raw.filters === "object" ? raw.filters : {}) as Record<string, string | null | undefined>,
+    interaction: {
+      total: Number(interaction.total ?? summary.interaction_count ?? 0),
+      averageDurationMs: Number(interaction.averageDurationMs ?? 0),
+      byScene: normalizeReportBuckets(interactionDimension),
+      byTerminal: normalizeReportBuckets(dimensions.terminal ?? interaction.byTerminal),
+      byHour: normalizeReportBuckets(interaction.byHour),
+    },
+    hotspot: { items: normalizeReportBuckets(hotspot.items ?? dimensions.hotspot) },
+    hit: {
+      total: Number(hit.total ?? dimensions.hit?.total ?? 0),
+      hit: Number(hit.hit ?? dimensions.hit?.hit ?? 0),
+      miss: Number(hit.miss ?? dimensions.hit?.miss ?? 0),
+      hitRate: Number(hit.hitRate ?? 0),
+      strongQaHit: Number(hit.strongQaHit ?? 0),
+      ragHit: Number(hit.ragHit ?? 0),
+    },
+    lead: {
+      total: Number(lead.total ?? summary.new_leads ?? 0),
+      converted: Number(lead.converted ?? 0),
+      conversionRate: Number(lead.conversionRate ?? 0),
+      byStatus: normalizeReportBuckets(leadDimension),
+    },
+    resource: { items: normalizeReportBuckets(resource.items ?? dimensions.resource) },
+  };
+}
+
+function normalizeOperationsReport(raw: JsonRecord): OperationsReport {
+  const report = normalizeReportOperations(raw);
+  const rawSummary = raw.summary && typeof raw.summary === "object" ? raw.summary as JsonRecord : {};
+  const rawFilters = raw.filters && typeof raw.filters === "object" ? raw.filters as JsonRecord : {};
+  const summary = {
+    exhibition_id: String(rawSummary.exhibition_id ?? rawFilters.exhibition_id ?? ""),
+    interaction_count: Number(rawSummary.interaction_count ?? report.interaction.total),
+    online_terminals: Number(rawSummary.online_terminals ?? 0),
+    pending_knowledge: Number(rawSummary.pending_knowledge ?? 0),
+    new_leads: Number(rawSummary.new_leads ?? report.lead.total),
+    alerts: Number(rawSummary.alerts ?? 0),
+    todo: Array.isArray(rawSummary.todo) ? rawSummary.todo as DashboardData["todos"] : [],
+  };
+  const rawSeries = Array.isArray(raw.series) ? raw.series : [];
+  const dimensionItems = (items: ReportOperations["interaction"]["byScene"]) => items.map((item) => ({ label: item.key, count: item.count }));
+  return {
+    summary,
+    series: rawSeries.map((item) => {
+      const value = item && typeof item === "object" ? item as JsonRecord : {};
+      return { date: String(value.date || value.key || ""), interactions: Number(value.interactions ?? value.count ?? 0), leads: Number(value.leads ?? 0), misses: Number(value.misses ?? 0) };
+    }),
+    dimensions: {
+      interaction: dimensionItems(report.interaction.byScene),
+      hotspot: dimensionItems(report.hotspot.items),
+      hit: dimensionItems(normalizeReportBuckets((raw.dimensions as JsonRecord | undefined)?.hit)),
+      lead: dimensionItems(report.lead.byStatus),
+      resource: dimensionItems(report.resource.items),
+    },
+  };
+}
+
 export class FetchAdminApiClient implements AdminApiClient {
   private token(): string {
     return window.localStorage.getItem(`${STORAGE_PREFIX}token`) || readStoredSessionToken();
   }
 
-  private async request<T>(path: string, init: RequestInit = {}, tokenOverride?: string): Promise<T> {
-    const token = tokenOverride ?? this.token();
-    const response = await fetch(buildAdminFetchUrl(`/v1${path}`), {
+  private assetToken(): string {
+    return window.localStorage.getItem(`${STORAGE_PREFIX}asset-token`)
+      || runtimeEnv.VITE_ADMIN_ASSET_TOKEN
+      || this.token();
+  }
+
+  private backendForPath(path: string): AdminBackend {
+    return path.startsWith("/admin/report/") || path === "/admin/assets" || path.startsWith("/admin/assets/")
+      ? "assets"
+      : "business";
+  }
+
+  private tokenForBackend(backend: AdminBackend): string {
+    return backend === "assets" ? this.assetToken() : this.token();
+  }
+
+  private refreshToken(): string {
+    return window.localStorage.getItem(REFRESH_TOKEN_KEY) || readStoredRefreshToken();
+  }
+
+  private storeTokens(accessToken: string, refreshToken?: string): void {
+    if (accessToken) window.localStorage.setItem(`${STORAGE_PREFIX}token`, accessToken);
+    if (refreshToken) window.localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
+  }
+
+  private clearSession(): void {
+    window.localStorage.removeItem(`${STORAGE_PREFIX}token`);
+    window.localStorage.removeItem(REFRESH_TOKEN_KEY);
+    window.localStorage.removeItem("opentalking-admin-session");
+    window.dispatchEvent(new CustomEvent("opentalking-admin-auth-expired"));
+  }
+
+  private async refreshAccessToken(): Promise<string | null> {
+    const refreshToken = this.refreshToken();
+    if (!refreshToken) return null;
+    try {
+      const response = await this.request<JsonRecord>("/auth/refresh", {
+        method: "POST",
+        body: JSON.stringify({ refresh_token: refreshToken }),
+      }, "", "business", false);
+      const accessToken = String(response.access_token || response.token || "");
+      if (!accessToken) return null;
+      this.storeTokens(accessToken, typeof response.refresh_token === "string" ? response.refresh_token : refreshToken);
+      return accessToken;
+    } catch {
+      return null;
+    }
+  }
+
+  private async request<T>(path: string, init: RequestInit = {}, tokenOverride?: string, backendOverride?: AdminBackend, allowRefresh = true): Promise<T> {
+    const backend = backendOverride ?? this.backendForPath(path);
+    const token = tokenOverride ?? this.tokenForBackend(backend);
+    const response = await fetch(buildAdminFetchUrl(`/v1${path}`, backend), {
       ...init,
       headers: {
         ...(init.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
@@ -675,32 +906,40 @@ export class FetchAdminApiClient implements AdminApiClient {
         ...init.headers,
       },
     });
-    if (response.status === 401 && path !== "/auth/login") {
-      window.localStorage.removeItem(`${STORAGE_PREFIX}token`);
-      window.localStorage.removeItem("opentalking-admin-session");
-      window.dispatchEvent(new CustomEvent("opentalking-admin-auth-expired"));
+    if (response.status === 401 && backend === "business" && allowRefresh && path !== "/auth/login" && path !== "/auth/refresh") {
+      const accessToken = await this.refreshAccessToken();
+      if (accessToken) return this.request<T>(path, init, accessToken, backend, false);
+      this.clearSession();
     }
     if (!response.ok) {
+      let code = `HTTP_${response.status}`;
+      let traceId = "";
       let detail = `Admin API ${response.status}`;
       try {
         const payload = await response.json() as JsonRecord;
         const body = payload.detail ?? payload;
-        detail = typeof body === "string" ? body : body.detail || body.code || detail;
+        code = String(payload.code || (typeof body === "object" && body ? body.code : "") || code);
+        traceId = String(payload.trace_id || payload.traceId || (typeof body === "object" && body ? body.trace_id || body.traceId : "") || "");
+        detail = typeof body === "string" ? body : body?.detail || body?.message || code || detail;
       } catch { /* keep status fallback */ }
-      throw new Error(detail);
+      throw new AdminApiError(response.status, code, traceId, detail);
     }
     if (response.status === 204) return undefined as T;
     return response.json() as Promise<T>;
   }
 
   private async download(path: string): Promise<string> {
-    const response = await fetch(buildAdminFetchUrl(`/v1${path}`), { headers: this.token() ? { Authorization: `Bearer ${this.token()}` } : {} });
+    const backend = this.backendForPath(path);
+    const token = this.tokenForBackend(backend);
+    const response = await fetch(buildAdminFetchUrl(`/v1${path}`, backend), { headers: token ? { Authorization: `Bearer ${token}` } : {} });
     if (!response.ok) throw new Error(`Admin API ${response.status}`);
     return response.text();
   }
 
   private async downloadFile(path: string): Promise<Blob> {
-    const response = await fetch(buildAdminFetchUrl(`/v1${path}`), { headers: this.token() ? { Authorization: `Bearer ${this.token()}` } : {} });
+    const backend = this.backendForPath(path);
+    const token = this.tokenForBackend(backend);
+    const response = await fetch(buildAdminFetchUrl(`/v1${path}`, backend), { headers: token ? { Authorization: `Bearer ${token}` } : {} });
     if (!response.ok) throw new Error(`Admin API ${response.status}`);
     return response.blob();
   }
@@ -775,15 +1014,28 @@ export class FetchAdminApiClient implements AdminApiClient {
     };
   }
 
-  async login(username: string, password: string): Promise<{ token: string; user: AdminUser }> {
+  async login(username: string, password: string): Promise<{ token: string; refreshToken?: string; user: AdminUser }> {
     const response = await this.request<JsonRecord>("/auth/login", { method: "POST", body: JSON.stringify({ username, password }) });
     const token = String(response.token || response.access_token || "");
-    window.localStorage.setItem(`${STORAGE_PREFIX}token`, token);
+    const refreshToken = typeof response.refresh_token === "string" ? response.refresh_token : undefined;
+    this.storeTokens(token, refreshToken);
     const permissions = await this.request<JsonRecord>("/auth/permissions", {}, token);
+    if (runtimeEnv.VITE_ASSET_BACKEND_URL) {
+      try {
+        const assetResponse = await this.request<JsonRecord>("/admin/auth/login", { method: "POST", body: JSON.stringify({ username, password }) }, undefined, "assets");
+        const assetToken = String(assetResponse.token || assetResponse.access_token || "");
+        if (assetToken) window.localStorage.setItem(`${STORAGE_PREFIX}asset-token`, assetToken);
+      } catch {
+        // Asset authentication is isolated from the primary session until the
+        // second backend confirms whether it accepts the same credentials.
+        window.localStorage.removeItem(`${STORAGE_PREFIX}asset-token`);
+      }
+    }
     const roleCode = String(response.user?.roles?.[0] || "sys_admin") as AdminUser["role"];
     const role = (ROLE_PERMISSIONS[roleCode] ? roleCode : "readonly") as AdminUser["role"];
     return {
       token,
+      refreshToken,
       user: {
         id: String(response.user?.id || ""),
         username: String(response.user?.username || username),
@@ -797,35 +1049,46 @@ export class FetchAdminApiClient implements AdminApiClient {
 
   async getDashboard(): Promise<DashboardData> {
     const report = await this.request<JsonRecord>("/admin/report");
+    const summary = report.summary && typeof report.summary === "object" ? report.summary as JsonRecord : report;
     const metric = (id: string, label: string, value: unknown, trend: string, tone: DashboardData["metrics"][number]["tone"]) => ({ id, label, value: String(value ?? 0), trend, tone });
     return {
       metrics: [
-        metric("interactions", "今日交互量", report.interaction_count, "来自审计快照", "cyan"),
-        metric("terminals", "在线终端", report.online_terminals, "当前快照", "green"),
-        metric("pending", "待审知识", report.pending_knowledge, "需要处理", "amber"),
-        metric("leads", "新增线索", report.new_leads, "当前展会", "violet"),
-        metric("alerts", "未确认告警", report.alerts, "当前快照", report.alerts ? "rose" : "green"),
+        metric("interactions", "今日交互量", summary.interaction_count, "来自审计快照", "cyan"),
+        metric("terminals", "在线终端", summary.online_terminals, "当前快照", "green"),
+        metric("pending", "待审知识", summary.pending_knowledge, "需要处理", "amber"),
+        metric("leads", "新增线索", summary.new_leads, "当前展会", "violet"),
+        metric("alerts", "未确认告警", summary.alerts, "当前快照", summary.alerts ? "rose" : "green"),
       ],
-      todos: Array.isArray(report.todo) ? report.todo : [],
+      todos: Array.isArray(summary.todo) ? summary.todo as DashboardData["todos"] : [],
     };
   }
 
   private sceneBinding(item: JsonRecord): SceneBinding {
     const assets = Array.isArray(item.assets) ? item.assets : [];
+    const nullableString = (value: unknown): string | null => value == null ? null : String(value);
     return {
       scene: String(item.scene || ""),
       assets: assets.map((asset) => {
         const value = asset as JsonRecord;
         return { assetId: String(value.assetId || value.asset_id || ""), isPrimary: Boolean(value.isPrimary ?? value.is_primary), order: Number(value.order || 0) };
       }),
+      waitingGifId: nullableString(item.waitingGifId ?? item.waiting_gif_id),
+      speakingGifId: nullableString(item.speakingGifId ?? item.speaking_gif_id),
+      voiceConfigId: nullableString(item.voiceConfigId ?? item.voice_config_id),
+      idleContentId: nullableString(item.idleContentId ?? item.idle_content_id),
+      status: String(item.status || "active"),
     };
   }
 
   async getOperationsReport(filters: { exhibitionId?: string; from?: string; to?: string; groupBy?: "day" | "terminal" | "scene" | "intent" } = {}): Promise<OperationsReport> {
-    return this.request<OperationsReport>(`/admin/report/operations${queryString({ exhibition_id: filters.exhibitionId, from: filters.from, to: filters.to, group_by: filters.groupBy })}`);
+    const raw = await this.request<JsonRecord>(`/admin/report/operations${queryString({ exhibition_id: filters.exhibitionId, from: filters.from, to: filters.to, group_by: filters.groupBy })}`);
+    return normalizeOperationsReport(raw);
   }
 
-  async getReport(filters: ReportFilters = {}) { return this.request<ReportOperations>(`/admin/report/operations${queryString(filters as Record<string, string | undefined>)}`); }
+  async getReport(filters: ReportFilters = {}) {
+    const raw = await this.request<JsonRecord>(`/admin/report/operations${queryString(filters as Record<string, string | undefined>)}`);
+    return normalizeReportOperations(raw);
+  }
 
   async exportReport(exhibitionId?: string, format: "xlsx" | "csv" = "xlsx", filters: { from?: string; to?: string; groupBy?: "day" | "terminal" | "scene" | "intent" } = {}): Promise<DownloadData> {
     const path = `/admin/report/export${queryString({ exhibition_id: exhibitionId, format, from: filters.from, to: filters.to, group_by: filters.groupBy })}`;
@@ -890,21 +1153,102 @@ export class FetchAdminApiClient implements AdminApiClient {
   async deleteVoiceConfig(id: string) { await this.request(`/admin/assets/voice-configs/${encodeURIComponent(id)}`, { method: "DELETE" }); }
   async listSceneBindings() { const items = await this.collection<JsonRecord>("assets", "scene-bindings"); return items.map((item) => this.sceneBinding(item)); }
   async saveSceneBindings(bindings: SceneBinding[]) { await Promise.all(bindings.map((item) => this.saveSceneBinding(item))); return bindings; }
-  async getSceneBinding(scene: string) { return this.sceneBinding(await this.request<JsonRecord>(`/admin/assets/scene-bindings/${encodeURIComponent(scene)}`)); }
-  async saveSceneBinding(binding: SceneBinding) { return this.sceneBinding(await this.request<JsonRecord>(`/admin/assets/scene-bindings/${encodeURIComponent(binding.scene)}`, { method: "PUT", body: JSON.stringify({ scene: binding.scene, assets: binding.assets.map((item) => ({ asset_id: item.assetId, is_primary: item.isPrimary, order: item.order })) }) })); }
+  async getSceneBinding(scene: string) {
+    try {
+      return this.sceneBinding(await this.request<JsonRecord>(`/admin/assets/scene-bindings/${encodeURIComponent(scene)}`));
+    } catch (error) {
+      if (!(error instanceof AdminApiError) || ![404, 405].includes(error.status)) throw error;
+      const items = await this.collection<JsonRecord>("assets", "scene-bindings");
+      const matching = items.find((item) => String(item.scene || "") === scene);
+      return matching ? this.sceneBinding(matching) : { scene, assets: [] };
+    }
+  }
+  async saveSceneBinding(binding: SceneBinding) {
+    return this.sceneBinding(await this.request<JsonRecord>(`/admin/assets/scene-bindings/${encodeURIComponent(binding.scene)}`, {
+      method: "PUT",
+      body: JSON.stringify({
+        scene: binding.scene,
+        assets: binding.assets.map((item) => ({ asset_id: item.assetId, is_primary: item.isPrimary, order: item.order })),
+        waiting_gif_id: binding.waitingGifId ?? null,
+        speaking_gif_id: binding.speakingGifId ?? null,
+        voice_config_id: binding.voiceConfigId ?? null,
+        idle_content_id: binding.idleContentId ?? null,
+        status: binding.status || "active",
+      }),
+    }));
+  }
+  async deleteSceneBinding(scene: string) { await this.request(`/admin/assets/scene-bindings/${encodeURIComponent(scene)}`, { method: "DELETE" }); }
   async listIdle() { return this.collection<IdleContent>("assets", "idle-contents"); }
   async saveIdle(item: IdleContent) { return this.saveCollection<IdleContent>("assets", "idle-contents", item as JsonRecord); }
   async deleteIdle(id: string) { await this.request(`/admin/assets/idle-contents/${encodeURIComponent(id)}`, { method: "DELETE" }); }
 
-  async listDocuments() { return this.collection<KnowledgeDocument>("knowledge", "documents"); }
+  async listDocuments() {
+    const documents = await this.listKnowledgeBaseDocuments("");
+    return documents.map((document) => ({
+      id: document.id,
+      title: document.filename,
+      fileName: document.filename,
+      type: document.mime_type,
+      exhibition: "current",
+      parseStatus: document.status === "ready" ? "parsed" : document.status === "error" ? "failed" : "parsing",
+      vectorStatus: document.status === "ready" ? "indexed" : document.status === "error" ? "failed" : "indexing",
+      chunks: document.chunk_count,
+      uploader: "backend",
+      uploadedAt: document.created_at,
+    } as KnowledgeDocument));
+  }
+  async listKnowledgeBases(): Promise<ApiKnowledgeBaseSummary[]> {
+    const payload = await this.request<{ data?: JsonRecord[]; items?: JsonRecord[] }>("/admin/knowledge/bases?limit=20");
+    const items = payload.data ?? payload.items ?? [];
+    return items.map((item) => ({ id: String(item.id ?? item.knowledge_base_id ?? ""), name: String(item.name ?? ""), document_count: Number(item.document_count ?? item.documentCount ?? 0), ready_document_count: Number(item.ready_document_count ?? item.document_count ?? 0), error_document_count: Number(item.error_document_count ?? 0), created_at: remoteTimestamp(item.created_at ?? item.createdAt), updated_at: remoteTimestamp(item.updated_at ?? item.updatedAt) }));
+  }
+  async listKnowledgeBaseDocuments(baseId: string): Promise<ApiKnowledgeDocument[]> {
+    const payload = await this.request<{ data?: JsonRecord[]; items?: JsonRecord[] }>("/admin/knowledge/documents");
+    const items = payload.data ?? payload.items ?? [];
+    return items.map((item) => mapDifyDocument(item, baseId));
+  }
+  async createKnowledgeBase(name: string): Promise<ApiKnowledgeBaseSummary> {
+    void name;
+    throw new Error("当前后端仅提供知识库查询和文档上传，知识库创建接口尚未提供");
+  }
+  async renameKnowledgeBase(id: string, name: string): Promise<ApiKnowledgeBaseSummary> {
+    void id;
+    void name;
+    throw new Error("当前后端未提供知识库重命名接口");
+  }
+  async deleteKnowledgeBase(id: string) { void id; throw new Error("当前后端未提供知识库删除接口"); }
+  async uploadKnowledgeBaseDocument(baseId: string, file: File): Promise<ApiKnowledgeDocument> {
+    const form = new FormData();
+    form.set("file", file);
+    form.set("exhibition_id", "current");
+    form.set("title", file.name);
+    form.set("type", file.type || "application/octet-stream");
+    const item = await this.request<JsonRecord>("/admin/knowledge/documents/upload", { method: "POST", body: form });
+    return mapDifyDocument({ ...item, name: item.name ?? file.name, mime_type: item.mime_type ?? file.type, bytes: item.bytes ?? file.size }, baseId);
+  }
+  async uploadKnowledgeDocument(file: File): Promise<KnowledgeDocument> {
+    const document = await this.uploadKnowledgeBaseDocument("", file);
+    return {
+      id: document.id,
+      title: document.filename,
+      fileName: document.filename,
+      type: document.mime_type,
+      exhibition: "current",
+      parseStatus: document.status === "ready" ? "parsed" : document.status === "error" ? "failed" : "parsing",
+      vectorStatus: document.status === "ready" ? "indexed" : document.status === "error" ? "failed" : "indexing",
+      chunks: document.chunk_count,
+      uploader: "backend",
+      uploadedAt: document.created_at,
+    };
+  }
   async uploadDocument(input: Pick<KnowledgeDocument, "title" | "fileName" | "type" | "exhibition">) { return this.saveCollection<KnowledgeDocument>("knowledge", "documents", input as JsonRecord); }
   async updateDocument(id: string, patch: Partial<KnowledgeDocument>) { return this.saveCollection<KnowledgeDocument>("knowledge", "documents", { ...patch, id }); }
   async deleteDocument(id: string) { await this.request(`/admin/knowledge/documents/${encodeURIComponent(id)}`, { method: "DELETE" }); }
   async listQa() { return this.collection<KnowledgeQa>("knowledge", "qa"); }
   async saveQa(item: KnowledgeQa) { return this.saveCollection<KnowledgeQa>("knowledge", "qa", item as JsonRecord); }
-  async transitionQa(id: string, status: KnowledgeQa["status"]) { return this.request<KnowledgeQa>(`/admin/knowledge/qa/${encodeURIComponent(id)}/transition`, { method: "POST", body: JSON.stringify({ status }) }); }
+  async transitionQa(id: string, status: KnowledgeQa["status"]) { return this.request<KnowledgeQa>(`/admin/knowledge/qa/${encodeURIComponent(id)}/transition`, { method: "POST", body: JSON.stringify({ status, operator: "admin" }) }); }
   async listQaVersions(id: string) { const response = await this.request<{ items?: Array<Record<string, unknown>> }>(`/admin/knowledge/qa/${encodeURIComponent(id)}/versions`); return response.items ?? []; }
-  async rollbackQa(id: string, version: number, reason: string) { return this.request<KnowledgeQa>(`/admin/knowledge/qa/${encodeURIComponent(id)}/rollback`, { method: "POST", body: JSON.stringify({ version, reason }) }); }
+  async rollbackQa(id: string, version: number, reason: string) { return this.request<KnowledgeQa>(`/admin/knowledge/qa/${encodeURIComponent(id)}/rollback`, { method: "POST", body: JSON.stringify({ version, operator: "admin", reason }) }); }
   async deleteQa(id: string) { await this.request(`/admin/knowledge/qa/${encodeURIComponent(id)}`, { method: "DELETE" }); }
   async listScripts() { return this.collection<ScriptTemplate>("knowledge", "scripts"); }
   async saveScript(item: ScriptTemplate) { return this.saveCollection<ScriptTemplate>("knowledge", "scripts", item as JsonRecord); }
@@ -922,7 +1266,7 @@ export class FetchAdminApiClient implements AdminApiClient {
   async rollbackPackage(id: string, targetPackageId?: string, reason?: string) { return this.request<PublishPackage>(`/admin/knowledge/packages/${encodeURIComponent(id)}/rollback`, { method: "POST", body: JSON.stringify({ target_package_id: targetPackageId, reason }) }); }
   async listMissPool() { return this.collection<MissPoolItem>("knowledge", "miss-pool"); }
   async resolveMiss(id: string, status: MissPoolItem["status"]) { return this.resolveMissAction(id, status === "ignored" ? "ignore" : status === "converted_qa" ? "create_qa" : "handled"); }
-  async resolveMissAction(id: string, action: "ignore" | "handled" | "create_qa", reason?: string, qa?: Record<string, unknown>) { return this.request<MissPoolItem>(`/admin/knowledge/miss-pool/${encodeURIComponent(id)}/resolve`, { method: "POST", body: JSON.stringify({ action, reason, qa }) }); }
+  async resolveMissAction(id: string, action: "ignore" | "handled" | "create_qa", reason?: string, qa?: Record<string, unknown>) { void qa; return this.request<MissPoolItem>(`/admin/knowledge/miss-pool/${encodeURIComponent(id)}/resolve`, { method: "POST", body: JSON.stringify({ action, operator: "admin", note: reason || "" }) }); }
 
   async listWelcomeConfigs(exhibitionId?: string) {
     const [items, exhibitions] = await Promise.all([this.collection<JsonRecord>("interaction", "welcome-configs", { exhibition_id: exhibitionId }), this.listExhibitions()]);
@@ -953,14 +1297,19 @@ export class FetchAdminApiClient implements AdminApiClient {
 
   async listExhibitions() { return (await this.collection<JsonRecord>("event", "exhibitions")).map((item) => this.exhibition(item)); }
   async saveExhibition(item: Exhibition) { return this.exhibition(await this.saveCollection<JsonRecord>("event", "exhibitions", item as JsonRecord)); }
+  async getExhibitionRuntimeConfig(id: string) { return this.exhibition(await this.request<JsonRecord>(`/admin/event/exhibitions/${encodeURIComponent(id)}/runtime-config`)); }
   async saveExhibitionRuntimeConfig(item: Exhibition) { return this.exhibition(await this.request<JsonRecord>(`/admin/event/exhibitions/${encodeURIComponent(item.id)}/runtime-config`, { method: "PUT", body: JSON.stringify(item) })); }
+  async validateExhibitionRuntimeConfig(item: Exhibition) { return this.request<{ valid?: boolean; [key: string]: unknown }>(`/admin/event/exhibitions/${encodeURIComponent(item.id)}/runtime-config/validate`, { method: "POST", body: JSON.stringify(item) }); }
   async deleteExhibition(id: string) { await this.request(`/admin/event/exhibitions/${encodeURIComponent(id)}`, { method: "DELETE" }); }
   async transitionExhibition(id: string, status: ExhibitionStatus) { return this.exhibition(await this.request<JsonRecord>(`/admin/event/exhibitions/${encodeURIComponent(id)}/lifecycle`, { method: "POST", body: JSON.stringify({ status }) })); }
   async listVenues() { return this.collection<EventVenue>("event", "venues"); }
   async saveVenue(item: EventVenue) { return this.saveCollection<EventVenue>("event", "venues", item as JsonRecord); }
   async deleteVenue(id: string) { await this.request(`/admin/event/venues/${encodeURIComponent(id)}`, { method: "DELETE" }); }
   async listPoints() { return this.collection<EventPoint>("event", "points"); }
-  async savePoint(item: EventPoint) { return this.saveCollection<EventPoint>("event", "points", item as JsonRecord); }
+  async savePoint(item: EventPoint) {
+    const exhibitionId = item.exhibitionId || (await this.listVenues()).find((venue) => venue.id === item.venueId)?.exhibitionId || "";
+    return this.saveCollection<EventPoint>("event", "points", { ...item, exhibitionId });
+  }
   async deletePoint(id: string) { await this.request(`/admin/event/points/${encodeURIComponent(id)}`, { method: "DELETE" }); }
   async listExhibitors() { return this.collection<Exhibitor>("event", "exhibitors"); }
   async saveExhibitor(item: Exhibitor) { return this.saveCollection<Exhibitor>("event", "exhibitors", item as JsonRecord); }
@@ -969,11 +1318,20 @@ export class FetchAdminApiClient implements AdminApiClient {
   async saveExhibit(item: Exhibit) { return this.saveCollection<Exhibit>("event", "exhibits", item as JsonRecord); }
   async deleteExhibit(id: string) { await this.request(`/admin/event/exhibits/${encodeURIComponent(id)}`, { method: "DELETE" }); }
   async listRoutes() { return this.collection<ExhibitionRoute>("event", "routes"); }
-  async saveRoute(item: ExhibitionRoute) { return this.saveCollection<ExhibitionRoute>("event", "routes", item as JsonRecord); }
+  async saveRoute(item: ExhibitionRoute) {
+    const exhibitionId = item.exhibitionId || (await this.listVenues()).find((venue) => venue.id === item.venueId)?.exhibitionId || "";
+    return this.saveCollection<ExhibitionRoute>("event", "routes", { ...item, exhibitionId });
+  }
   async deleteRoute(id: string) { await this.request(`/admin/event/routes/${encodeURIComponent(id)}`, { method: "DELETE" }); }
   async listBroadcasts() { return this.collection<EmergencyBroadcast>("event", "broadcasts"); }
   async saveBroadcast(item: EmergencyBroadcast) { return this.saveCollection<EmergencyBroadcast>("event", "broadcasts", item as JsonRecord); }
-  async transitionBroadcast(id: string, status: EmergencyBroadcast["status"]) { return this.saveCollection<EmergencyBroadcast>("event", "broadcasts", { id, status }); }
+  async transitionBroadcast(id: string, status: EmergencyBroadcast["status"]) {
+    if (status === "active" || status === "ended") {
+      const action = status === "active" ? "activate" : "end";
+      return this.request<EmergencyBroadcast>(`/admin/event/broadcasts/${encodeURIComponent(id)}/${action}`, { method: "POST" });
+    }
+    return this.saveCollection<EmergencyBroadcast>("event", "broadcasts", { id, status });
+  }
   async deleteBroadcast(id: string) { await this.request(`/admin/event/broadcasts/${encodeURIComponent(id)}`, { method: "DELETE" }); }
   async listSchedules() { return this.collection<EventSchedule>("event", "schedules"); }
   async saveSchedule(item: EventSchedule) { return this.saveCollection<EventSchedule>("event", "schedules", item as JsonRecord); }
@@ -1063,8 +1421,12 @@ export class FetchAdminApiClient implements AdminApiClient {
   async saveGatewayPolicy(policy: GatewayPolicy) { return this.request<GatewayPolicy>("/admin/ops/gateway-policy", { method: "PUT", body: JSON.stringify(policy) }); }
 }
 
-const runtimeEnv = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env ?? {};
-export const adminApi: AdminApiClient = runtimeEnv.VITE_ADMIN_API_MODE === "real" ? new FetchAdminApiClient() : new MockAdminApiClient();
+export function createAdminApi(mode?: "real" | "mock"): AdminApiClient {
+  const resolved = mode ?? "real";
+  return resolved === "real" ? new FetchAdminApiClient() : new MockAdminApiClient();
+}
+
+export const adminApi: AdminApiClient = createAdminApi(runtimeEnv.VITE_ADMIN_API_MODE === "mock" ? "mock" : "real");
 
 export const DEFAULT_VOICES: VoiceAsset[] = EDGE_ZH_VOICES.map((voice) => ({
   id: `voice-edge-${voice.id}`,

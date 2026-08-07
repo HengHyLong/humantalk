@@ -518,6 +518,7 @@ export type SessionKnowledgeBasesResponse = {
 };
 
 export type CreateSessionRequest = {
+  exhibition_id?: string;
   persona_id?: string;
   avatar_id?: string;
   model?: string;
@@ -535,8 +536,8 @@ export type CreateSessionRequest = {
   character_id?: string;
   memory_library_id?: string;
   knowledge_enabled: boolean;
-  knowledge_base_id: string;
-  knowledge_base_ids: string[];
+  knowledge_base_id?: string;
+  knowledge_base_ids?: string[];
 };
 
 export type PersonaSummary = {

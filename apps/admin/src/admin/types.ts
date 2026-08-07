@@ -48,6 +48,8 @@ export type ButtonPermission =
   | "event:broadcast:write"
   | "asset:gif:write"
   | "asset:scene:write"
+  | "asset:voice:write"
+  | "asset:idle:write"
   | "knowledge:qa:write"
   | "knowledge:publish:approve"
   | "knowledge:rollback"
@@ -142,6 +144,11 @@ export type GifAssetMeta = AdminAsset & {
 export type SceneBinding = {
   scene: string;
   assets: Array<{ assetId: string; isPrimary: boolean; order: number }>;
+  waitingGifId?: string | null;
+  speakingGifId?: string | null;
+  voiceConfigId?: string | null;
+  idleContentId?: string | null;
+  status?: string;
 };
 
 export type VoiceAsset = {
@@ -315,6 +322,7 @@ export type PointStatus = "draft" | "active" | "inactive";
 
 export type EventPoint = {
   id: string;
+  exhibitionId: string;
   venueId: string;
   code: string;
   name: string;
@@ -335,6 +343,7 @@ export type RouteType = "navigation" | "tour" | "emergency";
 
 export type ExhibitionRoute = {
   id: string;
+  exhibitionId: string;
   venueId: string;
   name: string;
   type: RouteType;

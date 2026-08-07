@@ -79,14 +79,59 @@ class MissPoolResolveBody(BaseModel):
 
 
 class SceneBindingAssetBody(BaseModel):
-    asset_id: str = Field(min_length=1, max_length=200)
-    is_primary: bool = False
+    asset_id: str = Field(min_length=1, max_length=200, alias="assetId")
+    is_primary: bool = Field(default=False, alias="isPrimary")
     order: int = Field(default=0, ge=0)
+
+    model_config = {"populate_by_name": True}
 
 
 class SceneBindingBody(BaseModel):
     scene: str = Field(min_length=1, max_length=100)
     assets: list[SceneBindingAssetBody] = Field(default_factory=list)
+    waiting_gif_id: str | None = Field(default=None, max_length=200)
+    speaking_gif_id: str | None = Field(default=None, max_length=200)
+    voice_config_id: str | None = Field(default=None, max_length=200)
+    idle_content_id: str | None = Field(default=None, max_length=200)
+    status: str = Field(default="active", min_length=1, max_length=30)
+
+    model_config = {"populate_by_name": True}
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_camel_fields(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        data = dict(value)
+        for snake, camel in (
+            ("waiting_gif_id", "waitingGifId"),
+            ("speaking_gif_id", "speakingGifId"),
+            ("voice_config_id", "voiceConfigId"),
+            ("idle_content_id", "idleContentId"),
+        ):
+            if snake not in data and camel in data:
+                data[snake] = data[camel]
+        return data
+
+
+class GifAssetResponse(BaseModel):
+    id: str
+    name: str = ""
+    scene: str = "idle"
+    tags: list[str] = Field(default_factory=list)
+    width: int = 0
+    height: int = 0
+    frames: int = 0
+    duration_ms: int = 0
+    durationMs: int = 0
+    size_bytes: int = 0
+    sizeBytes: int = 0
+    preview_url: str = ""
+    previewUrl: str = ""
+    fileName: str = ""
+    mimeType: str = "application/octet-stream"
+    kind: str = "gif"
+    status: str = "active"
 
 
 class MaterialTokenResponse(BaseModel):
@@ -173,8 +218,35 @@ def _permission_codes(store: AdminStore, user_id: str) -> set[str]:
 
 
 def _require(store: AdminStore, auth: dict[str, Any], permission: str) -> None:
-    if permission not in _permission_codes(store, auth["user"]["id"]):
+    permissions = set(auth["compat_permissions"]) if "compat_permissions" in auth else _permission_codes(store, auth["user"]["id"])
+    if permission not in permissions:
         raise HTTPException(status_code=403, detail={"code": "FORBIDDEN", "detail": "没有执行该操作的权限"})
+
+
+ASSET_WRITE_PERMISSIONS = {
+    "gifs": "asset:gif:write",
+    "voice_configs": "asset:voice:write",
+    "scene_bindings": "asset:scene:write",
+    "idle_contents": "asset:idle:write",
+}
+
+ASSET_WRITE_LABELS = {
+    "gifs": "GIF",
+    "voice_configs": "声音配置",
+    "scene_bindings": "场景",
+    "idle_contents": "待机内容",
+}
+
+
+def _require_asset_write(request: Request, store: AdminStore, auth: dict[str, Any], kind: str) -> None:
+    permission = ASSET_WRITE_PERMISSIONS.get(kind)
+    if permission is None:
+        _require(store, auth, _collection_permission(kind))
+        return
+    permissions = set(auth["compat_permissions"]) if "compat_permissions" in auth else _permission_codes(store, auth["user"]["id"])
+    if permission not in permissions:
+        label = ASSET_WRITE_LABELS.get(kind, "资产")
+        raise _api_error(request, 403, "ASSET_PERMISSION_DENIED", f"当前用户无 {label} 写入权限")
 
 
 def _paginate(items: list[dict[str, Any]], page: int, page_size: int) -> dict[str, Any]:
@@ -237,12 +309,13 @@ def _record_interaction(
 
 
 def _api_error(request: Request, status_code: int, code: str, detail: str) -> HTTPException:
+    trace_id = getattr(request.state, "trace_id", "") or f"trace_{uuid.uuid4().hex[:12]}"
     return HTTPException(
         status_code=status_code,
         detail={
             "code": code,
             "detail": detail,
-            "trace_id": getattr(request.state, "trace_id", ""),
+            "trace_id": trace_id,
         },
     )
 
@@ -321,7 +394,10 @@ def refresh(request: Request, body: RefreshRequest) -> dict[str, Any]:
 
 @router.post("/auth/logout")
 def logout(request: Request, auth: dict[str, Any] = Depends(current_user)) -> dict[str, bool]:
-    get_store(request).revoke_token(str(auth["payload"]["jti"]))
+    if auth.get("compat_token"):
+        getattr(request.app.state, "admin_tokens", {}).pop(str(auth["compat_token"]), None)
+    else:
+        get_store(request).revoke_token(str(auth["payload"]["jti"]))
     _audit(request, auth, action="logout", resource_type="auth", resource_id=auth["user"]["id"], before=None, after=None)
     return {"success": True}
 
@@ -350,8 +426,40 @@ def _collection_permission(kind: str) -> str:
     return RESOURCE_PERMISSIONS.get(kind, "asset:avatar" if kind == "avatars" else "knowledge:document")
 
 
-@router.post("/admin/assets/gifs")
-@router.post("/admin/assets/gifs/upload")
+def _parse_tags(value: str) -> list[str]:
+    raw = value.strip()
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        parsed = None
+    if isinstance(parsed, list):
+        return [str(item).strip() for item in parsed if str(item).strip()]
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+def _gif_response(record: dict[str, Any]) -> dict[str, Any]:
+    """Expose the new snake_case contract while keeping the existing UI aliases."""
+    preview_url = str(record.get("preview_url") or record.get("previewUrl") or record.get("url") or "")
+    duration_ms = int(record.get("duration_ms") or record.get("durationMs") or 0)
+    size_bytes = int(record.get("size_bytes") or record.get("sizeBytes") or 0)
+    file_name = str(record.get("fileName") or record.get("filename") or "")
+    normalized = {key: value for key, value in record.items() if key != "filename"}
+    return {
+        **normalized,
+        "preview_url": preview_url,
+        "previewUrl": preview_url,
+        "duration_ms": duration_ms,
+        "durationMs": duration_ms,
+        "size_bytes": size_bytes,
+        "sizeBytes": size_bytes,
+        "fileName": file_name,
+    }
+
+
+@router.post("/admin/assets/gifs", response_model=GifAssetResponse)
+@router.post("/admin/assets/gifs/upload", response_model=GifAssetResponse)
 async def upload_gif(
     request: Request,
     file: UploadFile = File(...),
@@ -362,17 +470,17 @@ async def upload_gif(
     auth: dict[str, Any] = Depends(current_user),
 ) -> dict[str, Any]:
     store = get_store(request)
-    _require(store, auth, "asset:gif")
+    _require_asset_write(request, store, auth, "gifs")
     resolved_exhibition_id = _resolve_exhibition_id(store, exhibition_id)
     settings = getattr(request.app.state, "settings", None)
     root = Path(getattr(settings, "admin_media_root", "./data/admin-assets")) / "gifs"
     root.mkdir(parents=True, exist_ok=True)
     content = await file.read()
     if len(content) > 20 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail={"code": "FILE_TOO_LARGE", "detail": "文件不能超过 20MB"})
+        raise _api_error(request, 413, "FILE_TOO_LARGE", "文件不能超过 20MB")
     extension = Path(file.filename or "asset.gif").suffix.lower()
     if extension not in {".gif", ".mp4", ".webm"}:
-        raise HTTPException(status_code=400, detail={"code": "UNSUPPORTED_FILE", "detail": "仅支持 GIF、MP4 或 WebM"})
+        raise _api_error(request, 400, "UNSUPPORTED_FILE", "仅支持 GIF、MP4 或 WebM")
     record_id = f"gif-{uuid.uuid4().hex[:12]}"
     file_path = root / f"{record_id}{extension}"
     file_path.write_bytes(content)
@@ -393,26 +501,28 @@ async def upload_gif(
         {
             "id": record_id,
             "name": (name or file.filename or record_id).strip(),
-            "filename": file.filename or record_id,
             "fileName": file.filename or record_id,
             "mimeType": file.content_type or "application/octet-stream",
             "sizeBytes": len(content),
+            "size_bytes": len(content),
             "url": file_url,
             "previewUrl": file_url,
+            "preview_url": file_url,
             "scene": scene.strip() or "idle",
-            "tags": [item.strip() for item in tags.split(",") if item.strip()],
+            "tags": _parse_tags(tags),
             "kind": "gif",
             "width": width,
             "height": height,
             "frames": frames,
             "durationMs": duration_ms,
+            "duration_ms": duration_ms,
             "exhibitionId": resolved_exhibition_id,
             "status": "active",
         },
         resolved_exhibition_id,
     )
     _audit(request, auth, action="upload", resource_type="gif", resource_id=record_id, before=None, after=saved)
-    return saved
+    return _gif_response(saved)
 
 
 @router.post("/admin/knowledge/qa/{record_id}/transition")
@@ -560,32 +670,149 @@ def resolve_miss_pool(record_id: str, request: Request, body: MissPoolResolveBod
     return {**saved, "qaId": qa_id}
 
 
-@router.get("/admin/assets/scene-bindings/{scene}")
-def get_scene_binding(scene: str, request: Request, auth: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
-    store = get_store(request)
-    _require(store, auth, "asset:scene")
-    item = store.get_record("scene_bindings", f"scene-{scene}")
-    return item or {"id": f"scene-{scene}", "scene": scene, "assets": [], "updatedAt": utc_now()}
+def _scene_binding_response(record: dict[str, Any]) -> dict[str, Any]:
+    waiting = record.get("waiting_gif_id") or record.get("waitingGifId")
+    speaking = record.get("speaking_gif_id") or record.get("speakingGifId")
+    voice = record.get("voice_config_id") or record.get("voiceConfigId")
+    idle = record.get("idle_content_id") or record.get("idleContentId")
+    return {
+        **record,
+        "waiting_gif_id": waiting,
+        "waitingGifId": waiting,
+        "speaking_gif_id": speaking,
+        "speakingGifId": speaking,
+        "voice_config_id": voice,
+        "voiceConfigId": voice,
+        "idle_content_id": idle,
+        "idleContentId": idle,
+        "status": str(record.get("status") or "active"),
+    }
+
+
+def _validate_scene_binding_references(
+    request: Request,
+    store: AdminStore,
+    *,
+    waiting_gif_id: str | None,
+    speaking_gif_id: str | None,
+    voice_config_id: str | None,
+    idle_content_id: str | None,
+) -> None:
+    if bool(waiting_gif_id) != bool(speaking_gif_id):
+        raise _api_error(request, 400, "ASSET_DUAL_GIF_REQUIRED", "waiting_gif_id 和 speaking_gif_id 必须同时提供")
+    if waiting_gif_id and not store.get_record("gifs", waiting_gif_id):
+        raise _api_error(request, 404, "ASSET_GIF_NOT_FOUND", "waiting_gif_id 对应的 GIF 不存在")
+    if speaking_gif_id and not store.get_record("gifs", speaking_gif_id):
+        raise _api_error(request, 404, "ASSET_GIF_NOT_FOUND", "speaking_gif_id 对应的 GIF 不存在")
+    if voice_config_id and not store.get_record("voice_configs", voice_config_id):
+        raise _api_error(request, 404, "ASSET_REFERENCE_NOT_FOUND", "voice_config_id 对应的声音配置不存在")
+    if idle_content_id and not store.get_record("idle_contents", idle_content_id):
+        raise _api_error(request, 404, "ASSET_REFERENCE_NOT_FOUND", "idle_content_id 对应的待机内容不存在")
+
+
+def _validate_avatar_gifs(request: Request, store: AdminStore, data: dict[str, Any], *, required: bool) -> dict[str, Any]:
+    waiting = str(data.get("waiting_gif") or data.get("waitingGif") or "").strip()
+    speaking = str(data.get("speaking_gif") or data.get("speakingGif") or "").strip()
+    if not waiting and not speaking and not required:
+        return data
+    if not waiting or not speaking:
+        raise _api_error(request, 400, "ASSET_DUAL_GIF_REQUIRED", "waiting_gif 和 speaking_gif 必须同时提供")
+    waiting_record = store.get_record("gifs", waiting)
+    speaking_record = store.get_record("gifs", speaking)
+    if waiting_record is None or speaking_record is None:
+        raise _api_error(request, 404, "ASSET_GIF_NOT_FOUND", "waiting_gif 和 speaking_gif 必须引用已存在的 GIF")
+    waiting_url = str(waiting_record.get("preview_url") or waiting_record.get("previewUrl") or waiting_record.get("url") or "")
+    speaking_url = str(speaking_record.get("preview_url") or speaking_record.get("previewUrl") or speaking_record.get("url") or "")
+    return {
+        **data,
+        "waiting_gif": waiting,
+        "waitingGif": waiting,
+        "speaking_gif": speaking,
+        "speakingGif": speaking,
+        "waiting_gif_url": waiting_url or None,
+        "waitingGifUrl": waiting_url or None,
+        "speaking_gif_url": speaking_url or None,
+        "speakingGifUrl": speaking_url or None,
+    }
+
+
+def _avatar_response(store: AdminStore, record: dict[str, Any]) -> dict[str, Any]:
+    waiting = str(record.get("waiting_gif") or record.get("waitingGif") or "").strip()
+    speaking = str(record.get("speaking_gif") or record.get("speakingGif") or "").strip()
+    waiting_record = store.get_record("gifs", waiting) if waiting else None
+    speaking_record = store.get_record("gifs", speaking) if speaking else None
+    waiting_url = str(record.get("waiting_gif_url") or record.get("waitingGifUrl") or (waiting_record or {}).get("preview_url") or (waiting_record or {}).get("previewUrl") or "")
+    speaking_url = str(record.get("speaking_gif_url") or record.get("speakingGifUrl") or (speaking_record or {}).get("preview_url") or (speaking_record or {}).get("previewUrl") or "")
+    return {
+        **record,
+        "waiting_gif": waiting or None,
+        "waitingGif": waiting or None,
+        "speaking_gif": speaking or None,
+        "speakingGif": speaking or None,
+        "waiting_gif_url": waiting_url or None,
+        "waitingGifUrl": waiting_url or None,
+        "speaking_gif_url": speaking_url or None,
+        "speakingGifUrl": speaking_url or None,
+    }
 
 
 @router.put("/admin/assets/scene-bindings/{scene}")
 def save_scene_binding(scene: str, request: Request, body: SceneBindingBody, auth: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
     store = get_store(request)
-    _require(store, auth, "asset:scene")
+    _require_asset_write(request, store, auth, "scene_bindings")
     if body.scene != scene:
         raise _api_error(request, 400, "SCENE_MISMATCH", "路径中的场景与请求体场景不一致")
-    before = store.get_record("scene_bindings", f"scene-{scene}")
+    before = store.get_record("scene_bindings", f"scene-{scene}") or {}
+    waiting_gif_id = body.waiting_gif_id or before.get("waiting_gif_id") or before.get("waitingGifId")
+    speaking_gif_id = body.speaking_gif_id or before.get("speaking_gif_id") or before.get("speakingGifId")
+    voice_config_id = body.voice_config_id or before.get("voice_config_id") or before.get("voiceConfigId")
+    idle_content_id = body.idle_content_id or before.get("idle_content_id") or before.get("idleContentId")
+    _validate_scene_binding_references(
+        request,
+        store,
+        waiting_gif_id=waiting_gif_id,
+        speaking_gif_id=speaking_gif_id,
+        voice_config_id=voice_config_id,
+        idle_content_id=idle_content_id,
+    )
     saved = store.save_record(
         "scene_bindings",
         {
             "id": f"scene-{scene}",
             "scene": scene,
-            "assets": [item.model_dump(by_alias=True) for item in body.assets],
+            "assets": [item.model_dump(by_alias=False) for item in body.assets],
+            "waiting_gif_id": waiting_gif_id,
+            "speaking_gif_id": speaking_gif_id,
+            "voice_config_id": voice_config_id,
+            "idle_content_id": idle_content_id,
+            "status": body.status or str(before.get("status") or "active"),
             "updatedAt": utc_now(),
         },
     )
-    _audit(request, auth, action="save", resource_type="scene_binding", resource_id=saved["id"], before=before, after=saved)
-    return saved
+    _audit(request, auth, action="save", resource_type="scene_binding", resource_id=saved["id"], before=before or None, after=saved)
+    return _scene_binding_response(saved)
+
+
+@router.get("/admin/assets/scene-bindings/{scene}")
+def get_scene_binding(scene: str, request: Request, auth: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    store = get_store(request)
+    _require(store, auth, "asset:scene")
+    item = store.get_record("scene_bindings", f"scene-{scene}")
+    if item is None:
+        raise _api_error(request, 404, "SCENE_BINDING_NOT_FOUND", "场景绑定不存在")
+    return _scene_binding_response(item)
+
+
+@router.delete("/admin/assets/scene-bindings/{scene}")
+def delete_scene_binding(scene: str, request: Request, auth: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    store = get_store(request)
+    _require_asset_write(request, store, auth, "scene_bindings")
+    before = store.get_record("scene_bindings", f"scene-{scene}")
+    if before is None or not store.delete_record("scene_bindings", f"scene-{scene}"):
+        raise _api_error(request, 404, "SCENE_BINDING_NOT_FOUND", "场景绑定不存在")
+    result = {"id": f"scene-{scene}", "scene": scene, "deleted": True}
+    _audit(request, auth, action="delete", resource_type="scene_binding", resource_id=result["id"], before=before, after=None)
+    return result
 
 
 @router.get("/admin/assets/{resource}")
@@ -595,7 +822,14 @@ def list_collection(resource: str, request: Request, page: int = 1, page_size: i
     kind = _collection_kind(domain, resource)
     store = get_store(request)
     _require(store, auth, _collection_permission(kind))
-    return _paginate(store.list_records(kind, exhibition_id=exhibition_id, keyword=keyword, status=status_filter), page, page_size)
+    items = store.list_records(kind, exhibition_id=exhibition_id, keyword=keyword, status=status_filter)
+    if kind == "avatars":
+        items = [_avatar_response(store, item) for item in items]
+    elif kind == "gifs":
+        items = [_gif_response(item) for item in items]
+    elif kind == "scene_bindings":
+        items = [_scene_binding_response(item) for item in items]
+    return _paginate(items, page, page_size)
 
 
 @router.post("/admin/assets/{resource}")
@@ -604,11 +838,23 @@ def create_collection(resource: str, request: Request, body: RecordBody, auth: d
     domain = request.url.path.split("/admin/", 1)[1].split("/", 1)[0]
     kind = _collection_kind(domain, resource)
     store = get_store(request)
-    _require(store, auth, _collection_permission(kind))
+    if kind in ASSET_WRITE_PERMISSIONS:
+        _require_asset_write(request, store, auth, kind)
+    else:
+        _require(store, auth, _collection_permission(kind))
+    data = body.data
+    if kind == "avatars":
+        data = _validate_avatar_gifs(request, store, data, required=True)
     if kind in {"documents", "knowledge_bases", "qa", "scripts", "packages", "miss_pool"} and body.data.get("exhibitionId"):
-        _validate_record(store, "knowledge_bases" if kind == "documents" else kind, body.data)
-    saved = store.save_record(kind, body.data, body.data.get("exhibitionId"))
+        _validate_record(store, "knowledge_bases" if kind == "documents" else kind, data)
+    saved = store.save_record(kind, data, data.get("exhibitionId"))
     _audit(request, auth, action="create", resource_type=kind, resource_id=saved["id"], before=None, after=saved)
+    if kind == "avatars":
+        return _avatar_response(store, saved)
+    if kind == "gifs":
+        return _gif_response(saved)
+    if kind == "scene_bindings":
+        return _scene_binding_response(saved)
     return saved
 
 
@@ -632,7 +878,14 @@ def get_collection(resource: str, record_id: str, request: Request, auth: dict[s
     kind = _collection_kind(domain, resource)
     store = get_store(request)
     _require(store, auth, _collection_permission(kind))
-    return _record(store, kind, record_id) or {}
+    item = _record(store, kind, record_id) or {}
+    if kind == "avatars":
+        return _avatar_response(store, item)
+    if kind == "gifs":
+        return _gif_response(item)
+    if kind == "scene_bindings":
+        return _scene_binding_response(item)
+    return item
 
 
 @router.patch("/admin/assets/{resource}/{record_id}")
@@ -641,9 +894,15 @@ def update_collection(resource: str, record_id: str, request: Request, body: Rec
     domain = request.url.path.split("/admin/", 1)[1].split("/", 1)[0]
     kind = _collection_kind(domain, resource)
     store = get_store(request)
-    _require(store, auth, _collection_permission(kind))
+    if kind in ASSET_WRITE_PERMISSIONS:
+        _require_asset_write(request, store, auth, kind)
+    else:
+        _require(store, auth, _collection_permission(kind))
     before = _record(store, kind, record_id) or {}
     data = {**before, **body.data, "id": record_id}
+    if kind == "avatars":
+        has_gif_fields = any(key in body.data for key in ("waiting_gif", "waitingGif", "speaking_gif", "speakingGif"))
+        data = _validate_avatar_gifs(request, store, data, required=has_gif_fields or str(data.get("status") or "").lower() in {"active", "published"})
     if kind == "qa" and any(key in body.data for key in ("question", "answer", "keywords", "category")):
         previous_version = int(before.get("version", 1) or 1)
         history = list(before.get("history", []))
@@ -665,6 +924,12 @@ def update_collection(resource: str, record_id: str, request: Request, body: Rec
         data["reviewedAt"] = utc_now()
     saved = store.save_record(kind, data, data.get("exhibitionId"))
     _audit(request, auth, action="update", resource_type=kind, resource_id=record_id, before=before, after=saved)
+    if kind == "avatars":
+        return _avatar_response(store, saved)
+    if kind == "gifs":
+        return _gif_response(saved)
+    if kind == "scene_bindings":
+        return _scene_binding_response(saved)
     return saved
 
 
@@ -674,7 +939,10 @@ def delete_collection(resource: str, record_id: str, request: Request, auth: dic
     domain = request.url.path.split("/admin/", 1)[1].split("/", 1)[0]
     kind = _collection_kind(domain, resource)
     store = get_store(request)
-    _require(store, auth, _collection_permission(kind))
+    if kind in ASSET_WRITE_PERMISSIONS:
+        _require_asset_write(request, store, auth, kind)
+    else:
+        _require(store, auth, _collection_permission(kind))
     before = _record(store, kind, record_id) or {}
     if not store.delete_record(kind, record_id):
         raise HTTPException(status_code=404, detail={"code": "RESOURCE_NOT_FOUND", "detail": "资源不存在"})

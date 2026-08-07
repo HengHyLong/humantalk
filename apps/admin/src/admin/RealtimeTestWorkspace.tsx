@@ -110,7 +110,7 @@ export function RealtimeTestWorkspace({ initialAvatarId = "" }: { initialAvatarI
     void Promise.all([
       apiGet<AvatarSummary[]>("/avatars"),
       apiGet<{ models: string[]; statuses?: ModelStatus[]; default_model?: string | null }>("/models"),
-      apiGet<{ knowledge_base_summaries?: KnowledgeBaseSummary[]; knowledge_bases?: Array<string | KnowledgeBaseSummary> }>("/agent/knowledge-bases"),
+      adminApi.listKnowledgeBases().then((items) => ({ knowledge_base_summaries: items })),
       apiGet<RuntimeHealth>("/health"),
       apiGet<{ items: VoiceCatalogItem[] }>("/voices"),
     ]).then(([avatarResponse, modelResponse, knowledgeResponse, healthResponse, voiceResponse]) => {
@@ -120,7 +120,7 @@ export function RealtimeTestWorkspace({ initialAvatarId = "" }: { initialAvatarI
       setModels(statuses);
       setAvatarId((current) => current || requestedAvatarId || avatarResponse[0]?.id || "");
       setModel((current) => current || modelResponse.default_model || statuses[0]?.id || "mock");
-      const summaries = knowledgeResponse.knowledge_base_summaries ?? (knowledgeResponse.knowledge_bases ?? []).map((item) => typeof item === "string" ? { id: item, name: item, document_count: 0, ready_document_count: 0, error_document_count: 0, created_at: "", updated_at: "" } : item);
+      const summaries = knowledgeResponse.knowledge_base_summaries ?? [];
       setKnowledgeBases(summaries);
       setHealth(healthResponse);
       const enabledTtsProviders = healthResponse.tts_enabled_providers ?? [];
@@ -248,13 +248,12 @@ export function RealtimeTestWorkspace({ initialAvatarId = "" }: { initialAvatarI
         tts_voice: ttsVoice || undefined,
         tts_model: ttsModel || undefined,
         user_id: "admin-test-user",
-        agent_enabled: agentConfig.memoryEnabled || agentConfig.knowledgeEnabled || (memoryEnabled && Boolean(memoryLibraryId)),
+        exhibition_id: requestedExhibitionId || "current",
+        agent_enabled: true,
         memory_enabled: agentConfig.memoryEnabled || (memoryEnabled && Boolean(memoryLibraryId)),
         memory_profile_id: "default",
         memory_library_id: memoryEnabled && memoryLibraryId ? memoryLibraryId : undefined,
-        knowledge_enabled: agentConfig.knowledgeEnabled,
-        knowledge_base_ids: agentConfig.knowledgeBaseIds,
-        knowledge_base_id: agentConfig.knowledgeBaseIds[0] || "",
+        knowledge_enabled: true,
         character_id: avatarId,
       });
       sessionRef.current = created.session_id;

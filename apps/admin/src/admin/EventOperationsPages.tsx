@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { apiGet, type AvatarSummary, type KnowledgeBaseSummary } from "../lib/api";
 import { openTalkingClient } from "./openTalkingClient";
 import { adminApi, DEFAULT_VOICES } from "./api";
-import { Button, Card, Detail, Field, Header, Modal, Pagination, usePagination } from "./CrudPages";
+import { Button, Card, Detail, Field, Header, Modal, Pagination, RouteGuidePreview, usePagination } from "./CrudPages";
 import type { EmergencyBroadcast, EventPoint, EventSchedule, EventVenue, Exhibit, Exhibition, ExhibitionRoute, Exhibitor, PointType, VoiceAsset } from "./types";
 
 type EventPageProps = { canWrite?: boolean; initialExhibitionId?: string };
@@ -15,7 +15,7 @@ function StatusBadge({ children, tone = "slate" }: { children: ReactNode; tone?:
 }
 
 function SearchBox({ value, onChange, placeholder }: { value: string; onChange: (value: string) => void; placeholder: string }) {
-  return <input value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-cyan-400 sm:max-w-xs" />;
+  return <input value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} aria-label={placeholder} className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none transition focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100 sm:w-72" />;
 }
 
 function SelectField({ label, value, onChange, options }: { label: string; value: string; onChange: (value: string) => void; options: Array<{ value: string; label: string }> }) {
@@ -43,8 +43,8 @@ function DateTimeField({ label, value, onChange }: { label: string; value: strin
   return <label className="block text-xs font-semibold text-slate-600">{label}<input type="datetime-local" step="60" value={value.replace(" ", "T").slice(0, 16)} onChange={(event) => onChange(event.target.value.replace("T", " "))} className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-normal text-slate-800 outline-none focus:border-cyan-400" /></label>;
 }
 
-function ScopeBar({ exhibitions, value, onChange, count, label = "当前展会" }: { exhibitions: Exhibition[]; value: string; onChange: (value: string) => void; count: ReactNode; label?: string }) {
-  return <div className="flex flex-wrap items-end justify-between gap-3 border-b border-slate-100 p-4"><div className="flex flex-wrap items-end gap-3"><div><p className="mb-2 text-xs font-semibold text-slate-500">{label}</p><select value={value} onChange={(event) => onChange(event.target.value)} className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-cyan-400"><option value="all">全部展会</option>{exhibitions.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></div><p className="pb-2 text-xs text-slate-500">{count}</p></div></div>;
+function ScopeBar({ exhibitions, value, onChange, count, label = "当前展会", keyword, onKeywordChange, searchPlaceholder }: { exhibitions: Exhibition[]; value: string; onChange: (value: string) => void; count: ReactNode; label?: string; keyword?: string; onKeywordChange?: (value: string) => void; searchPlaceholder?: string }) {
+  return <div className="scope-toolbar flex flex-col gap-3 border-b border-slate-100 p-4 md:flex-row md:items-center md:justify-between md:pr-[21rem]"><div className="flex flex-wrap items-center gap-3"><div><p className="mb-2 text-xs font-semibold text-slate-500">{label}</p><select value={value} onChange={(event) => onChange(event.target.value)} className="h-11 min-w-40 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none transition focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100"><option value="all">全部展会</option>{exhibitions.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></div><p className="pt-5 text-xs text-slate-500">{count}</p></div>{keyword !== undefined && onKeywordChange && searchPlaceholder ? <SearchBox value={keyword} onChange={onKeywordChange} placeholder={searchPlaceholder} /> : null}</div>;
 }
 
 function statusTone(status: string): StatusTone {
@@ -92,12 +92,12 @@ function emptyVenue(exhibitionId: string): EventVenue {
   return { id: `new-${Date.now()}`, exhibitionId, name: "", address: "", description: "", status: "draft", createdAt: "", updatedAt: "" };
 }
 
-function emptyPoint(venueId: string): EventPoint {
-  return { id: `new-${Date.now()}`, venueId, code: "", name: "", type: "other", floor: "1F", x: 50, y: 50, exhibitorId: null, exhibitId: null, description: "", status: "draft", createdAt: "", updatedAt: "" };
+function emptyPoint(venueId: string, exhibitionId = ""): EventPoint {
+  return { id: `new-${Date.now()}`, exhibitionId, venueId, code: "", name: "", type: "other", floor: "1F", x: 50, y: 50, exhibitorId: null, exhibitId: null, description: "", status: "draft", createdAt: "", updatedAt: "" };
 }
 
-function emptyRoute(venueId: string): ExhibitionRoute {
-  return { id: `new-${Date.now()}`, venueId, name: "", type: "navigation", pointIds: [], directions: [], estimatedMinutes: 0, description: "", status: "draft", createdAt: "", updatedAt: "" };
+function emptyRoute(venueId: string, exhibitionId = ""): ExhibitionRoute {
+  return { id: `new-${Date.now()}`, exhibitionId, venueId, name: "", type: "navigation", pointIds: [], directions: [], estimatedMinutes: 0, description: "", status: "draft", createdAt: "", updatedAt: "" };
 }
 
 function emptySchedule(exhibitionId: string): EventSchedule {
@@ -241,6 +241,34 @@ export function RoutePage({ canWrite = true, initialExhibitionId = "" }: EventPa
   const save = async () => { if (!editing?.venueId || !editing.name.trim() || editing.pointIds.length < 2) { setError("请填写所属场地、路线名称，并至少选择两个同场地点位。 "); return; } try { const saved = await adminApi.saveRoute({ ...editing, name: editing.name.trim(), directions: editing.directions.filter(Boolean) }); setItems((current) => [saved, ...current.filter((item) => item.id !== saved.id)]); setEditing(null); setError(""); } catch (caught) { setError(caught instanceof Error ? caught.message : "路线保存失败。 "); } };
   const remove = async (item: ExhibitionRoute) => { if (!window.confirm(`确认删除路线“${item.name}”？`)) return; try { await adminApi.deleteRoute(item.id); setItems((current) => current.filter((candidate) => candidate.id !== item.id)); } catch (caught) { setError(caught instanceof Error ? caught.message : "路线删除失败。 "); } };
   return <div className="p-6 xl:p-8"><Header eyebrow="展会运营 / 空间导览 / 路线" title="路线规划" description="路线属于场地，由同一场地内的点位组成，按顺序维护导航节点和指引话术。" action={canWrite ? <Button onClick={() => setEditing(emptyRoute(venuesInScope[0]?.id ?? ""))}>+ 新增路线</Button> : null} />{error ? <p className="mb-4 rounded-xl bg-rose-50 px-4 py-3 text-xs text-rose-700">{error}</p> : null}<Card className="overflow-hidden"><ScopeBar exhibitions={exhibitions} value={scope} onChange={setScope} count={`共 ${filtered.length} 条路线`} /><div className="flex justify-end border-b border-slate-100 p-4 pt-0"><SearchBox value={keyword} onChange={setKeyword} placeholder="搜索路线名称" /></div><div className="overflow-x-auto"><table className="w-full min-w-[1050px] text-left text-xs"><thead className="bg-slate-50 text-slate-500"><tr><th className="px-5 py-3">路线</th><th className="px-5 py-3">场地</th><th className="px-5 py-3">点位顺序</th><th className="px-5 py-3">类型 / 用时</th><th className="px-5 py-3">操作</th></tr></thead><tbody className="divide-y divide-slate-100">{pagination.pageItems.map((item) => <tr key={item.id}><td className="px-5 py-4"><p className="font-semibold text-slate-800">{item.name}</p><p className="mt-1 text-slate-400">{item.description}</p></td><td className="px-5 py-4 text-slate-500">{venueName(item.venueId)}</td><td className="max-w-sm px-5 py-4 text-slate-500">{item.pointIds.map(pointName).join(" → ") || "未配置点位"}</td><td className="px-5 py-4 text-slate-500">{item.type} · {item.estimatedMinutes} 分钟</td><td className="whitespace-nowrap px-5 py-4"><Button variant="ghost" onClick={() => setDetail(item)}>详情</Button>{canWrite ? <><Button variant="secondary" onClick={() => setEditing(item)}>编辑</Button><Button variant="danger" onClick={() => void remove(item)}>删除</Button></> : null}</td></tr>)}</tbody></table></div></Card><Pagination page={pagination.page} pageCount={pagination.pageCount} total={filtered.length} onChange={pagination.setPage} />{editing ? <Modal title={editing.id.startsWith("new-") ? "新增路线" : "编辑路线"} onClose={() => setEditing(null)} onSave={() => void save()}><div className="grid gap-4 sm:grid-cols-2"><SelectField label="所属场地" value={editing.venueId} onChange={(value) => setEditing({ ...editing, venueId: value, pointIds: [] })} options={venuesInScope.map((item) => ({ value: item.id, label: item.name }))} /><Field label="路线名称" value={editing.name} onChange={(value) => setEditing({ ...editing, name: value })} /><SelectField label="路线类型" value={editing.type} onChange={(value) => setEditing({ ...editing, type: value as ExhibitionRoute["type"] })} options={[{ value: "navigation", label: "导航路线" }, { value: "tour", label: "参观路线" }, { value: "emergency", label: "应急疏散" }]} /><Field label="预计用时（分钟）" value={String(editing.estimatedMinutes)} onChange={(value) => setEditing({ ...editing, estimatedMinutes: Number(value) || 0 })} /></div><div className="mt-4 rounded-xl border border-slate-200 p-4"><div className="flex items-center justify-between"><p className="text-xs font-semibold text-slate-600">路线点位顺序</p><span className="text-[11px] text-slate-400">使用上下按钮调整顺序</span></div><div className="mt-3 space-y-2">{editing.pointIds.map((id, index) => <div key={id} className="flex items-center gap-2 rounded-lg bg-slate-50 px-3 py-2 text-xs"><span className="flex-1">{index + 1}. {pointName(id)}</span><Button variant="ghost" onClick={() => reorder(index, -1)}>↑</Button><Button variant="ghost" onClick={() => reorder(index, 1)}>↓</Button><Button variant="danger" onClick={() => setEditing({ ...editing, pointIds: editing.pointIds.filter((candidate) => candidate !== id) })}>移除</Button></div>)}</div><select value="" onChange={(event) => { if (event.target.value && !editing.pointIds.includes(event.target.value)) setEditing({ ...editing, pointIds: [...editing.pointIds, event.target.value] }); }} className="mt-3 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm"><option value="">添加点位…</option>{points.filter((point) => point.venueId === editing.venueId && !editing.pointIds.includes(point.id)).map((point) => <option key={point.id} value={point.id}>{point.name} · {point.code}</option>)}</select></div><div className="mt-4"><Field label="路线说明" value={editing.description} onChange={(value) => setEditing({ ...editing, description: value })} textarea /><Field label="指引话术（每行对应一个路段）" value={editing.directions.join("\n")} onChange={(value) => setEditing({ ...editing, directions: value.split("\n") })} textarea /></div></Modal> : null}{detail ? <Detail title="路线详情" onClose={() => setDetail(null)} rows={[["路线名称", detail.name], ["场地", venueName(detail.venueId)], ["类型", detail.type], ["点位顺序", detail.pointIds.map(pointName).join(" → ")], ["预计用时", `${detail.estimatedMinutes} 分钟`], ["指引话术", detail.directions.join("；") || "暂无"], ["状态", statusLabel(detail.status)]]} /> : null}</div>;
+}
+
+export function LegacyRouteDetailPage({ routeId, onBack }: { routeId: string; onBack: () => void }) {
+  const [route, setRoute] = useState<ExhibitionRoute | null>(null);
+  const [venues, setVenues] = useState<EventVenue[]>([]);
+  const [points, setPoints] = useState<EventPoint[]>([]);
+  const [error, setError] = useState("");
+  useEffect(() => { void Promise.all([adminApi.listRoutes(), adminApi.listVenues(), adminApi.listPoints()]).then(([routes, nextVenues, nextPoints]) => { setRoute(routes.find((item) => item.id === routeId) ?? null); setVenues(nextVenues); setPoints(nextPoints); }).catch(() => setError("路线详情读取失败，请检查服务状态。")); }, [routeId]);
+  useEffect(() => { if (!routeId) return; void adminApi.listRoutes().then((routes) => setRoute((current) => current ?? routes.find((item) => item.id === routeId || item.name === routeId) ?? null)); }, [routeId]);
+  if (error) return <div className="p-6 xl:p-8"><Header eyebrow="展会运营 / 空间导览 / 路线" title="路线详情" description="查看路线点位顺序、导航指引和场地图。" action={<Button variant="secondary" onClick={onBack}>返回路线列表</Button>} /><p className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</p></div>;
+  if (!route) return <div className="p-6 xl:p-8"><Header eyebrow="展会运营 / 空间导览 / 路线" title="路线详情" description="正在读取路线配置。" action={<Button variant="secondary" onClick={onBack}>返回路线列表</Button>} /><Card className="p-10 text-center text-sm text-slate-400">路线加载中…</Card></div>;
+  const venueName = venues.find((item) => item.id === route.venueId)?.name ?? route.venueId;
+  const pointNames = route.pointIds.map((id) => points.find((item) => item.id === id)?.name ?? id);
+  return <div className="p-6 xl:p-8"><Header eyebrow="展会运营 / 空间导览 / 路线详情" title={route.name || "路线详情"} description="查看路线点位顺序、导航指引和场地图。" action={<Button variant="secondary" onClick={onBack}>返回路线列表</Button>} /><Card className="p-5"><RouteGuidePreview rows={[["路线名称", route.name || "入口至数字人展台"], ["场地", venueName], ["预计用时", `${route.estimatedMinutes} 分钟`], ["点位顺序", pointNames.join(" → ")], ["状态", route.status]]} /></Card></div>;
+}
+
+export function RouteDetailPage({ routeId, onBack }: { routeId: string; onBack: () => void }) {
+  const [route, setRoute] = useState<ExhibitionRoute | null>(null);
+  const [venues, setVenues] = useState<EventVenue[]>([]);
+  const [points, setPoints] = useState<EventPoint[]>([]);
+  const [error, setError] = useState("");
+  useEffect(() => { void Promise.all([adminApi.listRoutes(), adminApi.listVenues(), adminApi.listPoints()]).then(([routes, nextVenues, nextPoints]) => { setRoute(routes.find((item) => item.id === routeId || item.name === routeId) ?? null); setVenues(nextVenues); setPoints(nextPoints); }).catch(() => setError("路线详情读取失败，请检查服务状态。")); }, [routeId]);
+  if (error) return <div className="p-6 xl:p-8"><Header eyebrow="展会运营 / 空间导览 / 路线" title="路线详情" description="查看路线点位顺序、导航指引和场地图。" action={<Button variant="secondary" onClick={onBack}>返回路线列表</Button>} /><p className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</p></div>;
+  if (!route) return <div className="p-6 xl:p-8"><Header eyebrow="展会运营 / 空间导览 / 路线" title="路线详情" description="正在读取路线配置。" action={<Button variant="secondary" onClick={onBack}>返回路线列表</Button>} /><Card className="p-10 text-center text-sm text-slate-400">路线加载中…</Card></div>;
+  const venueName = venues.find((item) => item.id === route.venueId)?.name ?? route.venueId;
+  const pointNames = route.pointIds.map((id) => points.find((item) => item.id === id)?.name ?? id);
+  const rows: Array<[string, ReactNode]> = [["路线名称", route.name || "未命名路线"], ["场地", venueName || "未选择场地"], ["预计用时", route.estimatedMinutes ? `${route.estimatedMinutes} 分钟` : "未设置"], ["点位顺序", pointNames.join(" → ")], ["指引话术", route.directions.join("，")], ["路线图片", route.imageUrl || ""], ["状态", route.status]];
+  return <div className="p-6 xl:p-8"><Header eyebrow="展会运营 / 空间导览 / 路线详情" title={route.name || "路线详情"} description="查看路线点位顺序、导航指引和场地图。" action={<Button variant="secondary" onClick={onBack}>返回路线列表</Button>} /><Card className="p-5"><RouteGuidePreview rows={rows} /></Card></div>;
 }
 
 export function SchedulePage({ canWrite = true, initialExhibitionId = "" }: EventPageProps) {

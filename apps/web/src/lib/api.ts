@@ -614,6 +614,8 @@ export function getMaterialToken(token: string): Promise<MaterialTokenResponse> 
 
 export async function submitRuntimeLead(input: {
   exhibitionId: string;
+  sessionId?: string | null;
+  traceId?: string;
   companyName: string;
   contactName: string;
   phone: string;
@@ -622,7 +624,6 @@ export async function submitRuntimeLead(input: {
   interestedExhibitIds?: string[];
   materialToken?: string;
   consent: boolean;
-  sessionId: string;
   source?: string;
 }): Promise<Record<string, unknown>> {
   const intentParts = [
@@ -633,10 +634,8 @@ export async function submitRuntimeLead(input: {
   ].filter((value): value is string => Boolean(value));
   // 18302 RuntimeLeadBody currently has no materialToken field; keep it out of
   // the request until the backend publishes an explicit binding for that token.
-  return businessPost<Record<string, unknown>>("/api/v1/runtime/lead", {
+  const body = {
     exhibitionId: input.exhibitionId,
-    sessionId: input.sessionId,
-    traceId: null,
     authorized: input.consent,
     contactName: input.contactName,
     phone: input.phone || null,
@@ -644,7 +643,10 @@ export async function submitRuntimeLead(input: {
     companyName: input.companyName,
     intent: intentParts.join("; "),
     source: input.source ?? "web",
-  });
+    ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+    ...(input.traceId ? { traceId: input.traceId } : {}),
+  };
+  return businessPost<Record<string, unknown>>("/api/v1/runtime/lead", body);
 }
 
 export async function transcribeSessionAudio(
@@ -875,6 +877,7 @@ export type SessionKnowledgeBasesResponse = {
 };
 
 export type CreateSessionRequest = {
+  exhibition_id?: string;
   persona_id?: string;
   avatar_id?: string;
   model?: string;

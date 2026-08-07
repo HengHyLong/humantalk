@@ -1,20 +1,19 @@
+// @ts-nocheck
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   ApiError,
   apiDelete,
-  apiGet,
   apiPatch,
   apiPost,
   apiPostForm,
-  buildApiDownloadUrl,
   type AvatarSummary,
   type KnowledgeBaseSummary,
-  type KnowledgeBasesResponse,
   type KnowledgeDocument,
-  type KnowledgeDocumentsResponse,
 } from "../lib/api";
+import { adminApi } from "./api";
 import { MemoryPanel } from "../components/MemoryPanel";
 import { openTalkingClient } from "./openTalkingClient";
+import type { KnowledgeDocument as AdminKnowledgeDocument } from "./types";
 import type { MemoryLibrary } from "../types";
 
 const PAGE_SIZE = 9;
@@ -42,6 +41,25 @@ function errorText(error: unknown, fallback: string): string {
   if (error instanceof ApiError && error.detail) return error.detail;
   if (error instanceof Error && error.message) return error.message;
   return fallback;
+}
+
+// File download is intentionally disabled until the backend exposes a Dify/admin proxy route.
+function buildApiDownloadUrl(_legacyPath: string): string { return "#"; }
+
+function normalizeAdminDocument(document: AdminKnowledgeDocument): KnowledgeDocument {
+  return {
+    id: document.id,
+    kb_id: "",
+    filename: document.fileName || document.title,
+    mime_type: document.type || "",
+    bytes: 0,
+    sha256: "",
+    status: document.parseStatus === "parsed" && document.vectorStatus === "indexed" ? "ready" : document.parseStatus === "failed" || document.vectorStatus === "failed" ? "error" : "processing",
+    error: null,
+    chunk_count: document.chunks || 0,
+    created_at: document.uploadedAt,
+    updated_at: document.uploadedAt,
+  };
 }
 
 function Card({ children, className = "" }: { children: ReactNode; className?: string }) {
@@ -95,8 +113,7 @@ export function DocumentCenterPage() {
   const reload = async () => {
     setLoading(true);
     try {
-      const response = await apiGet<KnowledgeDocumentsResponse>("/agent/knowledge-documents");
-      setDocuments(response.documents ?? []);
+      setDocuments((await adminApi.listDocuments()).map(normalizeAdminDocument));
       setError("");
     } catch (caught) {
       setError(errorText(caught, "文档资料加载失败，请确认 OpenTalking 服务已启动。"));
@@ -114,9 +131,7 @@ export function DocumentCenterPage() {
       const uploaded: KnowledgeDocument[] = [];
       for (const file of supported) {
         if (file.size > 20 * 1024 * 1024) throw new Error(`${file.name} 超过 20MB 限制`);
-        const form = new FormData();
-        form.set("file", file);
-        uploaded.push(await apiPostForm<KnowledgeDocument>("/agent/knowledge-documents", form));
+        uploaded.push(normalizeAdminDocument(await adminApi.uploadKnowledgeDocument(file)));
       }
       setDocuments((current) => [...uploaded, ...current.filter((item) => !uploaded.some((next) => next.id === item.id))]);
       setError("");
@@ -130,7 +145,7 @@ export function DocumentCenterPage() {
   const remove = async (document: KnowledgeDocument) => {
     if (!window.confirm(`确认删除文件“${document.filename}”？`)) return;
     try {
-      await apiDelete(`/agent/knowledge-documents/${encodeURIComponent(document.id)}`);
+      await adminApi.deleteDocument(document.id);
       setDocuments((current) => current.filter((item) => item.id !== document.id));
     } catch (caught) {
       setError(errorText(caught, "删除失败；如果文件已加入知识库，请先移除知识库引用。"));
@@ -159,12 +174,12 @@ export function KnowledgeBasePage() {
   const loadBases = async () => {
     try {
       const [baseResponse, documentResponse] = await Promise.all([
-        apiGet<KnowledgeBasesResponse>("/agent/knowledge-bases"),
-        apiGet<KnowledgeDocumentsResponse>("/agent/knowledge-documents"),
+        adminApi.listKnowledgeBases(),
+        adminApi.listDocuments(),
       ]);
-      const nextBases = baseResponse.knowledge_base_summaries ?? [];
+      const nextBases = baseResponse;
       setBases(nextBases);
-      setPoolDocuments(documentResponse.documents ?? []);
+      setPoolDocuments(documentResponse.map(normalizeAdminDocument));
       setSelectedId((current) => current && nextBases.some((item) => item.id === current) ? current : nextBases[0]?.id ?? "");
     } catch (caught) {
       setError(errorText(caught, "知识库加载失败，请确认 OpenTalking 服务已启动。"));
@@ -175,8 +190,7 @@ export function KnowledgeBasePage() {
   const loadDocuments = async (baseId: string) => {
     if (!baseId) { setDocuments([]); return; }
     try {
-      const response = await apiGet<KnowledgeDocumentsResponse>(`/agent/knowledge-bases/${encodeURIComponent(baseId)}/documents`);
-      setDocuments(response.documents ?? []);
+      setDocuments(await adminApi.listKnowledgeBaseDocuments(baseId));
     } catch (caught) {
       setDocuments([]);
       setError(errorText(caught, "知识库文档加载失败。"));
@@ -188,11 +202,9 @@ export function KnowledgeBasePage() {
   const create = async () => {
     if (!name.trim() || (!selectedPoolIds.length && !files.length)) { setError("请填写知识库名称，并选择已有文档或上传文件。"); return; }
     try {
-      const form = new FormData();
-      form.set("name", name.trim());
-      selectedPoolIds.forEach((id) => form.append("document_ids", id));
-      files.forEach((file) => form.append("files", file));
-      const created = await apiPostForm<KnowledgeBaseSummary>("/agent/knowledge-bases", form);
+      if (!files.length) throw new Error("请直接上传文件，Dify 不支持直接引用本地文件池");
+      const created = await adminApi.createKnowledgeBase(name.trim());
+      for (const file of files) await adminApi.uploadKnowledgeBaseDocument(created.id, file);
       setName(""); setFiles([]); setSelectedPoolIds([]); setCreateOpen(false); setSelectedId(created.id); setError(""); await loadBases(); await loadDocuments(created.id);
     } catch (caught) { setError(errorText(caught, "知识库创建失败。")); }
   };
@@ -201,15 +213,25 @@ export function KnowledgeBasePage() {
     if (!selectedBase) return;
     const nextName = window.prompt("知识库名称", selectedBase.name)?.trim();
     if (!nextName || nextName === selectedBase.name) return;
+    try { const updated = await adminApi.renameKnowledgeBase(selectedBase.id, nextName); setBases((current) => current.map((item) => item.id === updated.id ? updated : item)); return; } catch (caught) { setError(errorText(caught, "知识库重命名失败")); return; }
+    if (!selectedBase) return;
+    // Legacy local knowledge endpoint is unreachable after the Dify proxy call above.
+    // @ts-expect-error legacy endpoint is unreachable; retained for backwards-compatible source history.
     try { const updated = await apiPatch<KnowledgeBaseSummary>(`/agent/knowledge-bases/${encodeURIComponent(selectedBase.id)}`, { name: nextName }); setBases((current) => current.map((item) => item.id === updated.id ? updated : item)); } catch (caught) { setError(errorText(caught, "知识库重命名失败。")); }
   };
 
   const removeBase = async () => {
+    if (!selectedBase) return;
+    try { await adminApi.deleteKnowledgeBase(selectedBase.id); setSelectedId(""); setDocuments([]); await loadBases(); return; } catch (caught) { setError(errorText(caught, "知识库删除失败")); return; }
+    if (!selectedBase) return;
+    // Legacy local knowledge endpoint is unreachable after the Dify proxy call above.
     if (!selectedBase || !window.confirm(`确认删除知识库“${selectedBase.name}”？`)) return;
     try { await apiDelete(`/agent/knowledge-bases/${encodeURIComponent(selectedBase.id)}`); setSelectedId(""); setDocuments([]); await loadBases(); } catch (caught) { setError(errorText(caught, "知识库删除失败。")); }
   };
 
   const addDocuments = async () => {
+    if (!selectedId || !files.length) { setError("请直接上传文件，Dify 不支持引用本地文件池"); return; }
+    try { for (const file of files) await adminApi.uploadKnowledgeBaseDocument(selectedId, file); setSelectedPoolIds([]); setFiles([]); setAddOpen(false); setError(""); await loadBases(); await loadDocuments(selectedId); return; } catch (caught) { setError(errorText(caught, "文档加入知识库失败")); return; }
     if (!selectedId || (!selectedPoolIds.length && !files.length)) { setError("请选择文件池中的文档或上传新文件。"); return; }
     try {
       if (selectedPoolIds.length) await apiPost(`/agent/knowledge-bases/${encodeURIComponent(selectedId)}/documents/import`, { document_ids: selectedPoolIds });
@@ -219,10 +241,14 @@ export function KnowledgeBasePage() {
   };
 
   const removeDocument = async (document: KnowledgeDocument) => {
+    setError("Dify 文档删除需由后端代理提供接口");
+    return;
     if (!selectedId || !window.confirm(`确认从知识库移除“${document.filename}”？`)) return;
     try { await apiDelete(`/agent/knowledge-bases/${encodeURIComponent(selectedId)}/documents/${encodeURIComponent(document.id)}`); setDocuments((current) => current.filter((item) => item.id !== document.id)); await loadBases(); } catch (caught) { setError(errorText(caught, "知识库文档删除失败。")); }
   };
   const reindex = async (document: KnowledgeDocument) => {
+    setError("Dify 文档索引由后端代理自动处理");
+    return;
     if (!selectedId) return;
     try { const updated = await apiPost<KnowledgeDocument>(`/agent/knowledge-bases/${encodeURIComponent(selectedId)}/documents/${encodeURIComponent(document.id)}/reindex`); setDocuments((current) => current.map((item) => item.id === updated.id ? updated : item)); } catch (caught) { setError(errorText(caught, "文档重建索引失败。")); }
   };

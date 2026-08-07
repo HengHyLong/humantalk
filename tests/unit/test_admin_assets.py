@@ -36,6 +36,8 @@ def test_admin_gif_upload_update_preview_and_delete(tmp_path: Path) -> None:
         assert item["kind"] == "gif"
         assert item["width"] == 1
         assert item["height"] == 1
+        assert item["fileName"] == "welcome.gif"
+        assert "filename" not in item
         assert item["tags"] == ["欢迎", "微笑"]
 
         listed = client.get("/api/v1/admin/assets?kind=gif")
@@ -69,12 +71,34 @@ def test_admin_gif_delete_rejects_scene_binding_reference(tmp_path: Path) -> Non
             files={"file": ("idle.gif", GIF_BYTES, "image/gif")},
         ).json()
         saved = client.put(
-            "/api/v1/admin/assets/scene-bindings",
-            json=[{"scene": "idle", "assets": [{"assetId": item["id"], "isPrimary": True, "order": 0}]}],
+            "/api/v1/admin/assets/scene-bindings/idle",
+            json={"scene": "idle", "assets": [{"assetId": item["id"], "isPrimary": True, "order": 0}]},
         )
         assert saved.status_code == 200
         deleted = client.delete(f"/api/v1/admin/assets/{item['id']}")
         assert deleted.status_code == 409
+
+
+def test_scene_binding_uses_collection_read_and_item_write_contract(tmp_path: Path) -> None:
+    with _client(tmp_path) as client:
+        saved = client.put(
+            "/api/v1/admin/assets/scene-bindings/welcome",
+            json={"scene": "welcome", "assets": []},
+        )
+        assert saved.status_code == 200
+        assert saved.json()["scene"] == "welcome"
+        fetched = client.get("/api/v1/admin/assets/scene-bindings/welcome")
+        assert fetched.status_code == 200
+        assert fetched.json()["scene"] == "welcome"
+        assert fetched.json()["status"] == "active"
+        listed = client.get("/api/v1/admin/assets/scene-bindings")
+        assert listed.status_code == 200
+        assert any(item["scene"] == "welcome" for item in listed.json())
+
+        deleted = client.delete("/api/v1/admin/assets/scene-bindings/welcome")
+        assert deleted.status_code == 200
+        assert deleted.json() == {"id": "scene-welcome", "scene": "welcome", "deleted": True}
+        assert client.delete("/api/v1/admin/assets/scene-bindings/welcome").status_code == 404
 
 
 def test_admin_voice_idle_and_interaction_resources_persist(tmp_path: Path) -> None:

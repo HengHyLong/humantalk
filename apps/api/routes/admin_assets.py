@@ -10,7 +10,9 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse
+from pydantic import BaseModel, Field
 
+from apps.api.admin.routes import GifAssetResponse
 from apps.api.routes.admin_auth import authorize_admin_request
 
 router = APIRouter(
@@ -28,6 +30,16 @@ _COLLECTIONS = {
     "explain-flows": "explain_flows",
     "shopping-strategies": "shopping_strategies",
 }
+
+
+class SceneBindingPayload(BaseModel):
+    scene: str = Field(min_length=1, max_length=100)
+    assets: list[dict[str, Any]] = Field(default_factory=list)
+    waiting_gif_id: str | None = Field(default=None, max_length=200)
+    speaking_gif_id: str | None = Field(default=None, max_length=200)
+    voice_config_id: str | None = Field(default=None, max_length=200)
+    idle_content_id: str | None = Field(default=None, max_length=200)
+    status: str = Field(default="active", min_length=1, max_length=30)
 
 
 def _now() -> str:
@@ -111,7 +123,22 @@ class AdminContentStore:
 
     def list_gifs(self) -> list[dict[str, Any]]:
         value = _read_json(self.gif_index, [])
-        return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
+        if not isinstance(value, list):
+            return []
+        items: list[dict[str, Any]] = []
+        migrated = False
+        for raw_item in value:
+            if not isinstance(raw_item, dict):
+                continue
+            item = dict(raw_item)
+            legacy_name = item.pop("filename", None)
+            if legacy_name is not None:
+                item.setdefault("fileName", legacy_name)
+                migrated = True
+            items.append(item)
+        if migrated:
+            self.write_gifs(items)
+        return items
 
     def write_gifs(self, items: list[dict[str, Any]]) -> None:
         _write_json(self.gif_index, items)
@@ -200,16 +227,21 @@ def _filter_items(items: list[dict[str, Any]], exhibition_id: str | None) -> lis
     return [item for item in items if str(item.get("exhibitionId") or "") == value]
 
 
-@router.get("/assets", response_model=None)
+def _gif_contract(item: dict[str, Any]) -> dict[str, Any]:
+    file_name = str(item.get("fileName") or item.get("filename") or "")
+    return {**{key: value for key, value in item.items() if key != "filename"}, "fileName": file_name}
+
+
+@router.get("/assets", response_model=list[GifAssetResponse])
 async def list_assets(request: Request, kind: str | None = Query(default=None)) -> list[dict[str, Any]]:
     if kind not in (None, "gif"):
         return []
-    return _store(request).list_gifs()
+    return [_gif_contract(item) for item in _store(request).list_gifs()]
 
 
-@router.get("/assets/gifs", response_model=None)
+@router.get("/assets/gifs", response_model=list[GifAssetResponse])
 async def list_gifs(request: Request) -> list[dict[str, Any]]:
-    return _store(request).list_gifs()
+    return [_gif_contract(item) for item in _store(request).list_gifs()]
 
 
 @router.get("/assets/{asset_id}/file", response_model=None)
@@ -280,7 +312,7 @@ async def _create_gif(
     return item
 
 
-@router.post("/assets", response_model=None)
+@router.post("/assets", response_model=GifAssetResponse)
 async def create_gif(
     request: Request,
     file: UploadFile | None = File(default=None),
@@ -297,7 +329,7 @@ async def create_gif(
     return await _create_gif(request, file, name, scene, tags, status, description, width, height, frames, duration_ms)
 
 
-@router.post("/assets/gifs", response_model=None)
+@router.post("/assets/gifs", response_model=GifAssetResponse)
 async def create_gif_alias(
     request: Request,
     file: UploadFile | None = File(default=None),
@@ -318,10 +350,10 @@ def _get_gif(request: Request, asset_id: str) -> dict[str, Any]:
     item = _store(request).find_gif(asset_id)
     if item is None:
         raise HTTPException(status_code=404, detail="GIF asset not found")
-    return item
+    return _gif_contract(item)
 
 
-@router.get("/assets/gifs/{asset_id}", response_model=None)
+@router.get("/assets/gifs/{asset_id}", response_model=GifAssetResponse)
 async def get_gif_alias(asset_id: str, request: Request) -> dict[str, Any]:
     return _get_gif(request, asset_id)
 
@@ -405,7 +437,22 @@ async def delete_voice_config(config_id: str, request: Request) -> dict[str, Any
 
 @router.get("/assets/scene-bindings", response_model=None)
 async def list_scene_bindings(request: Request) -> list[dict[str, Any]]:
-    return _store(request).list_collection("scene_bindings")
+    return [_scene_binding_contract(item) for item in _store(request).list_collection("scene_bindings")]
+
+
+def _scene_binding_contract(item: dict[str, Any]) -> dict[str, Any]:
+    waiting = item.get("waiting_gif_id") or item.get("waitingGifId")
+    speaking = item.get("speaking_gif_id") or item.get("speakingGifId")
+    voice = item.get("voice_config_id") or item.get("voiceConfigId")
+    idle = item.get("idle_content_id") or item.get("idleContentId")
+    return {
+        **item,
+        "waiting_gif_id": waiting,
+        "speaking_gif_id": speaking,
+        "voice_config_id": voice,
+        "idle_content_id": idle,
+        "status": str(item.get("status") or "active"),
+    }
 
 
 def _save_scene_bindings(request: Request, bindings: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -417,28 +464,53 @@ def _save_scene_bindings(request: Request, bindings: list[dict[str, Any]]) -> li
             raise HTTPException(status_code=400, detail="scene bindings require scene and assets")
         normalized_assets = [
             {
-                "assetId": str(asset.get("assetId") or "").strip(),
-                "isPrimary": bool(asset.get("isPrimary", False)),
+                "assetId": str(asset.get("assetId") or asset.get("asset_id") or "").strip(),
+                "isPrimary": bool(asset.get("isPrimary", asset.get("is_primary", False))),
                 "order": int(asset.get("order", index)),
             }
             for index, asset in enumerate(assets)
-            if isinstance(asset, dict) and str(asset.get("assetId") or "").strip()
+            if isinstance(asset, dict) and str(asset.get("assetId") or asset.get("asset_id") or "").strip()
         ]
-        normalized.append({"scene": scene, "assets": normalized_assets, "updatedAt": _now()})
+        normalized.append(
+            {
+                "scene": scene,
+                "assets": normalized_assets,
+                "waiting_gif_id": binding.get("waiting_gif_id") or binding.get("waitingGifId"),
+                "speaking_gif_id": binding.get("speaking_gif_id") or binding.get("speakingGifId"),
+                "voice_config_id": binding.get("voice_config_id") or binding.get("voiceConfigId"),
+                "idle_content_id": binding.get("idle_content_id") or binding.get("idleContentId"),
+                "status": str(binding.get("status") or "active"),
+                "updatedAt": _now(),
+            }
+        )
     _store(request).write_collection("scene_bindings", normalized)
     return normalized
 
 
-@router.put("/assets/scene-bindings", response_model=None)
-async def save_scene_bindings(bindings: list[dict[str, Any]], request: Request) -> list[dict[str, Any]]:
-    return _save_scene_bindings(request, bindings)
-
-
-@router.put("/assets/scene-bindings/{scene}", response_model=None)
-async def save_scene_binding(scene: str, payload: dict[str, Any], request: Request) -> dict[str, Any]:
+@router.put("/assets/scene-bindings/{scene}", response_model=None, operation_id="save_scene_binding_content")
+async def save_scene_binding(scene: str, payload: SceneBindingPayload, request: Request) -> dict[str, Any]:
+    if payload.scene != scene:
+        raise HTTPException(status_code=400, detail="path scene must match body scene")
     current = _store(request).list_collection("scene_bindings")
-    saved = {"scene": scene, "assets": payload.get("assets", [])}
-    return _save_scene_bindings(request, [saved, *[item for item in current if item.get("scene") != scene]])[0]
+    saved = payload.model_dump()
+    return _scene_binding_contract(_save_scene_bindings(request, [saved, *[item for item in current if item.get("scene") != scene]])[0])
+
+
+@router.get("/assets/scene-bindings/{scene}", response_model=None, operation_id="get_scene_binding_content")
+async def get_scene_binding(scene: str, request: Request) -> dict[str, Any]:
+    item = next((entry for entry in _store(request).list_collection("scene_bindings") if entry.get("scene") == scene), None)
+    if item is None:
+        raise HTTPException(status_code=404, detail="scene binding not found")
+    return _scene_binding_contract(item)
+
+
+@router.delete("/assets/scene-bindings/{scene}", response_model=None, operation_id="delete_scene_binding_content")
+async def delete_scene_binding(scene: str, request: Request) -> dict[str, Any]:
+    current = _store(request).list_collection("scene_bindings")
+    if not any(item.get("scene") == scene for item in current):
+        raise HTTPException(status_code=404, detail="scene binding not found")
+    _store(request).write_collection("scene_bindings", [item for item in current if item.get("scene") != scene])
+    return {"id": f"scene-{scene}", "scene": scene, "deleted": True}
 
 
 @router.get("/assets/idle-contents", response_model=None)
