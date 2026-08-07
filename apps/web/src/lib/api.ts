@@ -402,7 +402,7 @@ export function getMaterialToken(token: string): Promise<MaterialTokenResponse> 
 
 export async function submitRuntimeLead(input: {
   exhibitionId: string;
-  sessionId: string;
+  sessionId?: string | null;
   traceId?: string;
   companyName: string;
   contactName: string;
