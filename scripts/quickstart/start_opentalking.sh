@@ -84,9 +84,10 @@ if [[ -f "$pid_file" ]]; then
   old_pid="$(cat "$pid_file" 2>/dev/null || true)"
   if [[ -n "$old_pid" ]] && kill -0 "$old_pid" >/dev/null 2>&1; then
     if curl --max-time 2 -fsS "http://127.0.0.1:$api_port/models" >/dev/null 2>&1; then
-      if ! curl --max-time 2 -fsS "http://127.0.0.1:$api_port/openapi.json" | grep -Fq '"/api/v1/admin/event/images/upload"'; then
-        echo "OpenTalking API is running but does not include the current admin image-upload route: pid=$old_pid port=$api_port" >&2
-        echo "Restart the API service before starting the admin, otherwise image uploads will return 405." >&2
+      openapi_document="$(curl --max-time 2 -fsS "http://127.0.0.1:$api_port/openapi.json")"
+      if ! grep -Fq '"/api/v1/admin/event/images/upload"' <<<"$openapi_document" || ! grep -Fq '"/api/v1/admin/event/exhibits/{record_id}/survey"' <<<"$openapi_document" || ! grep -Fq '"/api/v1/public/exhibit-surveys/{token}"' <<<"$openapi_document"; then
+        echo "OpenTalking API is running but does not include the current admin or exhibit-survey routes: pid=$old_pid port=$api_port" >&2
+        echo "Restart the API service before starting the frontend, otherwise current management features may return 404/405." >&2
         echo "  bash scripts/quickstart/stop_all.sh" >&2
         echo "  bash scripts/start_unified.sh --mock" >&2
         exit 1

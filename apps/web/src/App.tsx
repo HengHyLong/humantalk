@@ -35,6 +35,7 @@ import {
   buildApiUrl,
   getMemoryLibraries,
   getExhibitionVoiceConfig,
+  listExhibitionEntities,
   listExhibitions,
   listSceneBackgrounds,
   listSceneCompositions,
@@ -104,7 +105,7 @@ import {
   QWEN_VOICE_STORAGE_KEY,
   TTS_PROVIDER_STORAGE_KEY,
 } from "./constants/ttsQwen";
-import type { ConnectionStatus, MemoryLibrary, Message, QueueInfo } from "./types";
+import type { ConnectionStatus, ExhibitionEntityCard, MemoryLibrary, Message, QueueInfo } from "./types";
 import {
   canChangeModelForAvatar,
   normalizeAvatarModelSelection,
@@ -730,6 +731,31 @@ function makeToastId() {
   return `toast-${++toastCounter}-${Date.now()}`;
 }
 
+function normalizeEntityKeyword(value: string): string {
+  return value
+    .toLocaleLowerCase("zh-CN")
+    .replace(/[\s,，。！？!?、;；:："'“”‘’（）()【】\[\]{}<>《》·._-]+/g, "");
+}
+
+function matchExhibitionEntities(text: string, entities: ExhibitionEntityCard[]): ExhibitionEntityCard[] {
+  const normalizedText = normalizeEntityKeyword(text);
+  if (!normalizedText) return [];
+  return entities
+    .map((entity) => ({
+      entity,
+      matchLength: entity.keywords.reduce((length, keyword) => {
+        const normalizedKeyword = normalizeEntityKeyword(keyword);
+        return normalizedKeyword.length >= 2 && normalizedText.includes(normalizedKeyword)
+          ? Math.max(length, normalizedKeyword.length)
+          : length;
+      }, 0),
+    }))
+    .filter((candidate) => candidate.matchLength > 0)
+    .sort((left, right) => right.matchLength - left.matchLength)
+    .slice(0, 3)
+    .map((candidate) => candidate.entity);
+}
+
 function pickInitialAvatar(
   avatars: AvatarSummary[],
   registeredModels: string[],
@@ -928,10 +954,11 @@ export default function App() {
   const [exhibitionsError, setExhibitionsError] = useState<string | null>(null);
   const [selectedExhibitionId, setSelectedExhibitionId] = useState("");
   const [exhibitionConfirmed, setExhibitionConfirmed] = useState(false);
+  const [exhibitionBindingsReady, setExhibitionBindingsReady] = useState(false);
   const [models, setModels] = useState<string[]>([]);
   const [modelStatuses, setModelStatuses] = useState<ModelStatus[]>([]);
   const [avatarId, setAvatarId] = useState(() => readStoredAvatarId() ?? "singer");
-  const [model, setModel] = useState("flashtalk");
+  const [model, setModel] = useState("mock");
   const [selectedPersonaId, setSelectedPersonaId] = useState<string>(() => {
     try {
       return window.localStorage.getItem(SELECTED_PERSONA_STORAGE_KEY) ?? "";
@@ -972,6 +999,7 @@ export default function App() {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [currentSubtitle, setCurrentSubtitle] = useState("");
   const [exhibitionVoiceConfig, setExhibitionVoiceConfig] = useState<ExhibitionVoiceConfig | null>(null);
+  const [exhibitionEntities, setExhibitionEntities] = useState<ExhibitionEntityCard[]>([]);
   const [exhibitionConfigNotice, setExhibitionConfigNotice] = useState<string | null>(null);
   const [lastVoiceIntent, setLastVoiceIntent] = useState<"navigation" | "exhibition_content" | null>(null);
   const [navigationResult, setNavigationResult] = useState<NavigationResult | null>(null);
@@ -1156,13 +1184,11 @@ export default function App() {
   const notify = useCallback((message: string, tone: ToastTone = "info") => {
     const id = makeToastId();
     setToasts((prev) => [...prev.slice(-2), { id, tone, message }]);
-    if (tone !== "error") {
-      const timer = window.setTimeout(() => {
-        toastTimersRef.current.delete(id);
-        setToasts((prev) => prev.filter((toast) => toast.id !== id));
-      }, 3600);
-      toastTimersRef.current.set(id, timer);
-    }
+    const timer = window.setTimeout(() => {
+      toastTimersRef.current.delete(id);
+      setToasts((prev) => prev.filter((toast) => toast.id !== id));
+    }, tone === "error" ? 3000 : 3600);
+    toastTimersRef.current.set(id, timer);
   }, []);
 
   const pauseToast = useCallback((id: string) => {
@@ -1174,11 +1200,11 @@ export default function App() {
 
   const resumeToast = useCallback((id: string) => {
     const toast = toasts.find((item) => item.id === id);
-    if (!toast || toast.tone === "error" || toastTimersRef.current.has(id)) return;
+    if (!toast || toastTimersRef.current.has(id)) return;
     const timer = window.setTimeout(() => {
       toastTimersRef.current.delete(id);
       setToasts((prev) => prev.filter((item) => item.id !== id));
-    }, 1800);
+    }, toast.tone === "error" ? 1500 : 1800);
     toastTimersRef.current.set(id, timer);
   }, [toasts]);
 
@@ -2051,9 +2077,12 @@ export default function App() {
 
   useEffect(() => {
     if (!exhibitionConfirmed || !selectedExhibitionId) return;
+    setExhibitionBindingsReady(false);
+    setExhibitionEntities([]);
+    setConnection("connecting");
     void (async () => {
       try {
-        const [av, mo, health, , initialRuntimeConfig] = await Promise.all([
+        const [av, mo, health, , initialRuntimeConfig, entityResponse] = await Promise.all([
           apiGet<AvatarSummary[]>("/avatars"),
           apiGet<{ models: string[]; statuses?: ModelStatus[]; default_model?: string | null }>("/models"),
           apiGet<HealthResponse>("/health"),
@@ -2062,10 +2091,12 @@ export default function App() {
             console.warn("load runtime config during init failed", error);
             return null;
           }),
+          listExhibitionEntities(selectedExhibitionId),
         ]);
         setRuntimeStatus(health);
         setAvatars(av);
         setModels(mo.models);
+        setExhibitionEntities(entityResponse.items ?? []);
         if (initialRuntimeConfig) {
           setRuntimeConfig(initialRuntimeConfig);
           syncRuntimeConfigSelection(initialRuntimeConfig);
@@ -2101,11 +2132,10 @@ export default function App() {
         const boundAvatar = selectedExhibition?.bound_avatar_id
           ? av.find((item) => item.id === selectedExhibition.bound_avatar_id) ?? null
           : null;
-        const initialAvatar = boundAvatar ?? pickInitialAvatar(av, mo.models, storedAvatarSelection, mo.default_model);
         if (selectedExhibition && !boundAvatar) {
-          setAvatarId("");
-          writeStoredAvatarId("");
+          throw new Error(`Bound avatar not found: ${selectedExhibition.bound_avatar_id || "empty"}`);
         }
+        const initialAvatar = boundAvatar ?? pickInitialAvatar(av, mo.models, storedAvatarSelection, mo.default_model);
         if (initialAvatar) {
           setAvatarId(initialAvatar.id);
           if (initialAvatar.is_custom || storedAvatarSelection?.source === "explicit") {
@@ -2114,26 +2144,30 @@ export default function App() {
               storedAvatarSelection?.source === "explicit" ? "explicit" : "auto",
             );
           }
-          setModel((prev) => {
-            const requestedModel = selectedExhibition?.bound_model?.trim() || pickInitialModel(
-              prev,
-              mo.models,
-              statuses,
-              initialAvatar,
-              mo.default_model,
-            );
-            return normalizeAvatarModelSelection(
-              av,
-              initialAvatar.id,
-              requestedModel,
-            ).model;
-          });
+          const requestedModel = selectedExhibition?.bound_model?.trim() || pickInitialModel(
+            model,
+            mo.models,
+            statuses,
+            initialAvatar,
+            mo.default_model,
+          );
+          const normalizedSelection = normalizeAvatarModelSelection(
+            av,
+            initialAvatar.id,
+            requestedModel,
+          );
+          setModel(normalizedSelection.model);
         }
-      } catch {
+        setExhibitionBindingsReady(true);
+        setConnection("idle");
+      } catch (error) {
+        console.warn("load exhibition bindings failed", error);
+        setExhibitionBindingsReady(false);
         setConnection("error");
+        notify("会展绑定的数字人配置加载失败，请返回 Admin 检查形象和驱动模型。", "error");
       }
     })();
-  }, [exhibitionConfirmed, loadVoices, selectedExhibition, selectedExhibitionId, syncRuntimeConfigSelection]);
+  }, [exhibitionConfirmed, loadVoices, model, notify, selectedExhibition, selectedExhibitionId, syncRuntimeConfigSelection]);
 
   // ---------- SSE ----------
   useEffect(() => {
@@ -2296,6 +2330,21 @@ export default function App() {
       notify("当前会展尚未绑定数字人，请先在 Admin 中完成会展配置。", "error");
       return;
     }
+    const boundModel = selectedExhibition.bound_model?.trim();
+    if (!boundModel) {
+      notify("当前会展尚未绑定驱动模型，请先在 Admin 中完成会展配置。", "error");
+      return;
+    }
+    if (!exhibitionBindingsReady) {
+      notify("会展数字人配置仍在加载，请稍候。", "info");
+      return;
+    }
+    if (avatarId !== selectedExhibition.bound_avatar_id || model !== boundModel) {
+      setAvatarId(selectedExhibition.bound_avatar_id);
+      setModel(boundModel);
+      notify("会展绑定配置已更新，正在按最新形象和模型重新加载。", "info");
+      return;
+    }
     if (!avatarId) {
       notify("当前会展没有可用的数字人形象，请先完成绑定。", "error");
       return;
@@ -2439,6 +2488,7 @@ export default function App() {
     clearSubtitleState,
     closePeerConnection,
     edgeVoice,
+    exhibitionBindingsReady,
     exhibitions,
     llmSystemPrompt,
     memoryEnabled,
@@ -2462,15 +2512,18 @@ export default function App() {
   useEffect(() => {
     if (
       !exhibitionConfirmed
+      || !exhibitionBindingsReady
       || !selectedExhibition?.bound_avatar_id
+      || !selectedExhibition.bound_model?.trim()
       || !avatarId
       || avatarId !== selectedExhibition.bound_avatar_id
+      || model !== selectedExhibition.bound_model.trim()
       || connection !== "idle"
       || autoStartTriggeredRef.current
     ) return;
     autoStartTriggeredRef.current = true;
     void handleStart();
-  }, [avatarId, connection, exhibitionConfirmed, handleStart, selectedExhibition]);
+  }, [avatarId, connection, exhibitionBindingsReady, exhibitionConfirmed, handleStart, model, selectedExhibition]);
 
   const handleFasterLivePortraitConfigChange = useCallback((config: FasterLivePortraitConfig) => {
     setFasterliveportraitConfig(sanitizeFasterLivePortraitConfig(config));
@@ -2578,18 +2631,6 @@ export default function App() {
     [avatars, notify],
   );
 
-  const handleReturnToAvatarSelection = useCallback(() => {
-    if (!window.confirm("更换数字人会结束当前会话，是否继续？")) return;
-    void (async () => {
-      const sid = sessionIdRef.current;
-      if (sid) {
-        await releaseSession(sid);
-      }
-      resetLiveState(true);
-      setConnection("idle");
-    })();
-  }, [avatars, releaseSession, resetLiveState]);
-
   const handlePreviewTts = useCallback(async () => {
     const text = ttsPreviewText.trim();
     if (!text) {
@@ -2633,7 +2674,7 @@ export default function App() {
   }, [bailianVoices, edgeVoice, notify, qwenModel, qwenVoice, ttsPreviewText, ttsProvider]);
 
   const enqueueSpeech = useCallback(
-    (speechText: string, userText: string) => {
+    (speechText: string, userText: string, relatedEntities: ExhibitionEntityCard[] = []) => {
       const text = speechText.trim();
       const user = userText.trim();
       if (!sessionId || !text) return;
@@ -2645,7 +2686,7 @@ export default function App() {
       setMessages((prev) => [
         ...prev.filter((m) => m.id !== previousPendingId && m.id !== activeAssistantId),
         ...(user ? [{ id: makeId(), role: "user" as const, text: user, timestamp: Date.now() }] : []),
-        { id: pendingId, role: "assistant", text: "正在合成语音和口型...", timestamp: Date.now() },
+        { id: pendingId, role: "assistant", text: "正在合成语音和口型...", timestamp: Date.now(), relatedEntities },
       ]);
       if (isSpeaking) {
         void apiPost(`/sessions/${sessionId}/interrupt`, {}).catch(() => {});
@@ -2676,13 +2717,21 @@ export default function App() {
   const routeRecognizedText = useCallback(async (rawText: string) => {
     const text = rawText.trim();
     if (!text || !sessionId) return;
-    const match = matchVoiceIntent(
-      text,
-      exhibitionVoiceConfig ?? {
-        exhibition_id: configuredExhibitionId ?? "current",
-        keywords: { navigation: [], exhibition_content: [] },
+    const relatedEntities = matchExhibitionEntities(text, exhibitionEntities);
+    const baseVoiceConfig = exhibitionVoiceConfig ?? {
+      exhibition_id: configuredExhibitionId ?? "current",
+      keywords: { navigation: [], exhibition_content: [] },
+    };
+    const match = matchVoiceIntent(text, {
+      ...baseVoiceConfig,
+      keywords: {
+        ...baseVoiceConfig.keywords,
+        exhibition_content: [
+          ...baseVoiceConfig.keywords.exhibition_content,
+          ...exhibitionEntities.flatMap((entity) => entity.keywords),
+        ],
       },
-    );
+    });
     setLastVoiceIntent(match.intent);
 
     if (match.intent === "navigation") {
@@ -2693,7 +2742,7 @@ export default function App() {
         });
         setNavigationResult(result);
         const spokenText = result.spoken_text?.trim();
-        enqueueSpeech(spokenText || text, text);
+        enqueueSpeech(spokenText || text, text, relatedEntities);
         return;
       } catch (error) {
         console.warn("navigation query failed, falling back to exhibition Q&A", error);
@@ -2703,8 +2752,8 @@ export default function App() {
     } else {
       setNavigationResult(null);
     }
-    enqueueSpeech(text, text);
-  }, [configuredExhibitionId, enqueueSpeech, exhibitionVoiceConfig, notify, sessionId]);
+    enqueueSpeech(text, text, relatedEntities);
+  }, [configuredExhibitionId, enqueueSpeech, exhibitionEntities, exhibitionVoiceConfig, notify, sessionId]);
 
   const handleSend = useCallback((text: string) => {
     void routeRecognizedText(text);
@@ -2727,9 +2776,9 @@ export default function App() {
   const handleSpeakAudioStreamResult = useCallback(({ text }: { text: string }) => {
     setMessages((prev) => [
       ...prev,
-      { id: makeId(), role: "user", text, timestamp: Date.now() },
+      { id: makeId(), role: "user", text, timestamp: Date.now(), relatedEntities: matchExhibitionEntities(text, exhibitionEntities) },
     ]);
-  }, []);
+  }, [exhibitionEntities]);
 
   const handleSpeakAudioStreamError = useCallback((message: string) => {
     const detail = message || "语音识别失败，请检查 STT 配置。";
@@ -2764,7 +2813,7 @@ export default function App() {
         );
         setMessages((prev) => [
           ...prev,
-          { id: makeId(), role: "user", text: res.text, timestamp: Date.now() },
+          { id: makeId(), role: "user", text: res.text, timestamp: Date.now(), relatedEntities: matchExhibitionEntities(res.text, exhibitionEntities) },
         ]);
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") return;
@@ -2779,7 +2828,7 @@ export default function App() {
         }
       }
     },
-    [activeAsrProvider, appendAssistantError, asrProvider, bailianVoices, edgeVoice, notify, qwenModel, qwenVoice, sessionId, ttsProvider],
+    [activeAsrProvider, appendAssistantError, asrProvider, bailianVoices, edgeVoice, exhibitionEntities, notify, qwenModel, qwenVoice, sessionId, ttsProvider],
   );
 
   const handleInterrupt = useCallback(() => {
@@ -2847,6 +2896,7 @@ export default function App() {
 
   const handleExhibitionSelectionChange = useCallback((newId: string) => {
     setSelectedExhibitionId(newId);
+    setExhibitionBindingsReady(false);
     setExhibitionConfigNotice(null);
   }, []);
 
@@ -2855,10 +2905,18 @@ export default function App() {
       notify("当前会展尚未绑定数字人，请先在 Admin 会展配置中完成绑定。", "error");
       return;
     }
+    const boundModel = selectedExhibition.bound_model?.trim();
+    if (!boundModel) {
+      notify("当前会展尚未绑定驱动模型，请先在 Admin 会展配置中完成绑定。", "error");
+      return;
+    }
     writeStoredExhibitionId(selectedExhibition.id);
+    setAvatarId(selectedExhibition.bound_avatar_id);
+    setModel(boundModel);
+    setExhibitionBindingsReady(false);
     setExhibitionConfirmed(true);
     autoStartTriggeredRef.current = false;
-    setConnection("idle");
+    setConnection("connecting");
   }, [notify, selectedExhibition]);
 
   const handleAvatarChange = useCallback(
@@ -3256,7 +3314,6 @@ export default function App() {
           onStart={() => void handleStart()}
           onSend={handleSend}
           onInterrupt={handleInterrupt}
-          onChangeAvatar={handleReturnToAvatarSelection}
           onSpeakAudio={handleRealtimeVoiceAudio}
           voiceIntent={lastVoiceIntent}
           navigationResult={navigationResult}
@@ -3462,13 +3519,6 @@ export default function App() {
                         {currentAvatar?.name ?? currentAvatar?.id ?? "未选形象"}
                       </span>
                     </div>
-                    <button
-                      type="button"
-                      onClick={handleReturnToAvatarSelection}
-                      className="shrink-0 rounded-lg border border-slate-200 bg-white/95 px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-cyan-200 hover:text-cyan-700"
-                    >
-                      更换形象
-                    </button>
                   </div>
                 )}
               </SceneStage>

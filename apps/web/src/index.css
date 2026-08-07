@@ -192,6 +192,7 @@ body {
 .digital-display-chat-heading { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; color: rgba(230, 249, 255, .8); font-size: 10px; letter-spacing: .16em; }
 .digital-display-chat-state { color: rgba(185, 240, 255, .88); font-size: 9px; letter-spacing: .08em; }
 .digital-display-chat-feed { display: flex; min-height: 0; flex: 1; flex-direction: column; gap: 8px; overflow-y: auto; padding: 2px 3px; scrollbar-width: thin; scrollbar-color: rgba(183, 237, 255, .5) transparent; }
+.digital-display-chat-feed-content { display: flex; min-height: 100%; flex-direction: column; gap: 8px; }
 .digital-display-chat-notice { align-self: stretch; border: 1px solid rgba(255, 218, 144, .28); border-radius: 9px; padding: 7px 9px; color: rgba(255, 240, 199, .9); background: rgba(117, 82, 23, .2); font-size: 10px; line-height: 1.5; }
 .digital-display-navigation-card { align-self: stretch; overflow: hidden; border: 1px solid rgba(168, 235, 255, .38); border-radius: 12px; background: rgba(2, 50, 108, .42); }
 .digital-display-navigation-card img { display: block; width: 100%; max-height: 180px; object-fit: cover; }
@@ -203,12 +204,41 @@ body {
 .digital-display-navigation-copy ol { margin: 5px 0 0; padding-left: 18px; color: rgba(224, 245, 255, .88); }
 .digital-display-chat-empty { align-self: center; margin: auto 0; color: rgba(245, 253, 255, .92); font-size: clamp(16px, 2.3vw, 23px); font-weight: 500; letter-spacing: .04em; text-align: center; }
 .digital-display-chat-line { display: flex; max-width: 88%; align-items: flex-start; gap: 8px; color: rgba(245, 253, 255, .92); font-size: 12px; line-height: 1.65; }
+.digital-display-chat-line.has-entities { width: min(100%, 520px); max-width: 100%; flex-direction: column; }
+.digital-display-chat-line-copy { display: flex; min-width: 0; align-items: flex-start; gap: 8px; }
 .digital-display-chat-line.is-user { align-self: flex-start; }
 .digital-display-chat-line.is-assistant { align-self: flex-end; }
 .digital-display-chat-role { flex: 0 0 auto; border: 1px solid rgba(185, 237, 255, .34); border-radius: 999px; padding: 2px 7px; color: rgba(223, 248, 255, .9); background: rgba(2, 49, 112, .38); font-size: 9px; line-height: 1.45; }
 .digital-display-chat-line p { min-width: 0; margin: 0; border-radius: 10px; padding: 7px 10px; background: rgba(3, 60, 125, .34); }
-.digital-display-chat-line.is-user p { background: rgba(66, 174, 226, .32); }
+.digital-display-chat-line.is-user .digital-display-chat-line-copy p { background: rgba(66, 174, 226, .32); }
 .digital-display-chat-line.is-live-line p { border-color: rgba(173, 243, 255, .38); background: rgba(19, 154, 206, .38); }
+
+.exhibition-entity-card { width: 100%; overflow: hidden; border-radius: 16px; text-align: left; }
+.exhibition-entity-card-copy { padding: 14px 15px 13px; }
+.exhibition-entity-card-heading { display: flex; align-items: center; gap: 9px; }
+.exhibition-entity-card-heading span { flex: 0 0 auto; border-radius: 999px; padding: 3px 8px; font-size: 10px; font-weight: 700; letter-spacing: .08em; }
+.exhibition-entity-card-heading strong { min-width: 0; overflow: hidden; font-size: 14px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.exhibition-entity-card-copy > p { margin: 9px 0 0; padding: 0; background: transparent; font-size: 12px; line-height: 1.65; }
+.exhibition-entity-card dl { display: flex; margin: 10px 0 0; flex-wrap: wrap; gap: 6px; }
+.exhibition-entity-card dl div { display: flex; min-width: 0; align-items: center; gap: 5px; border-radius: 8px; padding: 5px 8px; }
+.exhibition-entity-card dt, .exhibition-entity-card dd { margin: 0; font-size: 10px; line-height: 1.45; }
+.exhibition-entity-card dd { min-width: 0; overflow: hidden; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.exhibition-entity-card > img { display: block; width: 100%; height: clamp(145px, 23vh, 230px); object-fit: cover; }
+.exhibition-entity-card.is-immersive { display: grid; min-height: 132px; grid-template-columns: minmax(0, 1.25fr) minmax(150px, .75fr); border: 1px solid rgba(165, 233, 255, .46); color: #f3fbff; background: rgba(2, 51, 112, .82); box-shadow: 0 14px 30px rgba(0, 19, 63, .24); backdrop-filter: blur(10px); }
+.exhibition-entity-card.is-immersive .exhibition-entity-card-copy { min-width: 0; }
+.exhibition-entity-card.is-immersive .exhibition-entity-card-copy > p { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.exhibition-entity-card.is-immersive > img { height: 100%; min-height: 132px; max-height: 170px; }
+.exhibition-entity-card.is-immersive .exhibition-entity-card-heading span { color: #dff8ff; background: rgba(34, 183, 225, .44); }
+.exhibition-entity-card.is-immersive .exhibition-entity-card-copy > p { color: rgba(229, 246, 255, .86); }
+.exhibition-entity-card.is-immersive dl div { border: 1px solid rgba(174, 232, 255, .2); background: rgba(1, 35, 86, .38); }
+.exhibition-entity-card.is-immersive dt { color: rgba(190, 228, 249, .7); }
+.exhibition-entity-card.is-immersive dd { color: rgba(242, 251, 255, .94); }
+.exhibition-entity-card.is-light { max-width: 520px; border: 1px solid #d6e9f2; color: #172033; background: #fff; box-shadow: 0 12px 28px rgba(24, 75, 104, .12); }
+.exhibition-entity-card.is-light .exhibition-entity-card-heading span { color: #08769a; background: #e4f7fc; }
+.exhibition-entity-card.is-light .exhibition-entity-card-copy > p { color: #526174; }
+.exhibition-entity-card.is-light dl div { background: #f1f7fa; }
+.exhibition-entity-card.is-light dt { color: #718096; }
+.exhibition-entity-card.is-light dd { color: #334155; }
 .digital-display-chat-suggestions { display: flex; flex: 0 0 auto; flex-wrap: wrap; gap: 7px; }
 .digital-display-chat-suggestions button { border: 1px solid rgba(181, 232, 255, .36); border-radius: 999px; padding: 7px 11px; color: rgba(232, 249, 255, .94); background: rgba(21, 122, 190, .38); font-size: 10px; cursor: pointer; backdrop-filter: blur(5px); }
 .digital-display-chat-suggestions button:hover:not(:disabled) { background: rgba(63, 186, 236, .58); }
@@ -254,4 +284,6 @@ body {
   .digital-display-voice-trigger, .digital-display-voice-break, .digital-display-mode-toggle { padding: 9px 10px; }
   .digital-display-input-row input { padding: 9px 10px; }
   .digital-display-send, .digital-display-stop { padding: 9px 12px; }
+  .exhibition-entity-card.is-immersive { display: block; min-height: 0; }
+  .exhibition-entity-card.is-immersive > img { height: 145px; min-height: 0; max-height: none; }
 }

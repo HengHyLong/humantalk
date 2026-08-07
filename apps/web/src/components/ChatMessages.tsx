@@ -10,13 +10,29 @@ interface ChatMessagesProps {
 
 export function ChatMessages({ messages, maxVisible = 0 }: ChatMessagesProps) {
   const endRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
 
   const visible =
     maxVisible > 0 ? messages.slice(-maxVisible) : messages;
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [visible.length]);
+    const frame = window.requestAnimationFrame(() => {
+      endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [messages, maxVisible]);
+
+  useEffect(() => {
+    const container = scrollRef.current;
+    const content = contentRef.current;
+    if (!container || !content || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      container.scrollTo({ top: container.scrollHeight, behavior: "smooth" });
+    });
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, []);
 
   if (visible.length === 0) {
     return (
@@ -35,8 +51,8 @@ export function ChatMessages({ messages, maxVisible = 0 }: ChatMessagesProps) {
   }
 
   return (
-    <div className="h-full overflow-y-auto">
-      <div className="flex flex-col gap-3">
+    <div ref={scrollRef} className="h-full overflow-y-auto">
+      <div ref={contentRef} className="flex flex-col gap-3">
         {visible.map((m) => (
           <ChatBubble key={m.id} message={m} />
         ))}

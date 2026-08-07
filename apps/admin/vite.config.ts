@@ -1,62 +1,82 @@
-import { defineConfig } from "vite";
-import react from "@vitejs/plugin-react";
+import fs from "node:fs";
+import type { ServerOptions as HttpsServerOptions } from "node:https";
+import path from "node:path";
 import { fileURLToPath, URL } from "node:url";
-import fs from "fs";
+import react from "@vitejs/plugin-react";
+import { defineConfig, loadEnv } from "vite";
 
-const backendPort = process.env.VITE_BACKEND_PORT ?? "8000";
-const backendUrl = process.env.VITE_BACKEND_URL ?? `http://127.0.0.1:${backendPort}`;
 const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
-const allowedHosts = [".pod.compshare.cn"];
-const apiProxy = {
-  target: backendUrl,
-  changeOrigin: true,
-  ws: true,
-  // The admin API already lives under /api/v1, while the legacy runtime
-  // endpoints keep their original root-level paths (/models, /voices, ...).
-  // Keep the former intact and strip only the frontend compatibility prefix
-  // from the latter.
-  rewrite: (path: string) => (path.startsWith("/api/v1") ? path : path.replace(/^\/api/, "")),
-  // SSE (EventSource) through proxy: avoid buffering / stale Content-Length
-  configure(proxy) {
-    proxy.on("proxyRes", (proxyRes, req) => {
-      const url = req.url ?? "";
-      if (url.includes("/events")) {
-        delete proxyRes.headers["content-length"];
-        proxyRes.headers["cache-control"] = "no-cache, no-transform";
-        proxyRes.headers["x-accel-buffering"] = "no";
-      }
-    });
-  },
-};
+const allowedHosts = ["ai.oaii.cn", ".pod.compshare.cn"];
 
-export default defineConfig({
-  // Admin uses browser history routing and is served from the site root.
-  // Root-relative assets must remain valid after refreshing a nested route.
-  base: "/",
-  plugins: [react()],
-  server: {
-    port: 5173,
-    
-//      https:{
-//        key:fs.readFileSync("./ssl/ai.oaii.cn.key"),
-//        cert:fs.readFileSync("./ssl/ai.oaii.cn_bundle.pem")
-//      },
-      
-      // 允许通过该域名访问 Vite 开发服务器
-      allowedHosts: ["ai.oaii.cn"],
+function readTlsFile(filePath: string, variableName: string): Buffer {
+  const resolvedPath = path.resolve(process.cwd(), filePath);
+  if (!fs.existsSync(resolvedPath)) {
+    throw new Error(`${variableName} points to a missing file: ${resolvedPath}`);
+  }
+  return fs.readFileSync(resolvedPath);
+}
 
-    fs: {
-      allow: [repoRoot],
+function createHttpsOptions(env: Record<string, string>): HttpsServerOptions {
+  const keyPath = env.HTTPS_KEY_PATH || "./ssl/ai.oaii.cn.key";
+  const certPath = env.HTTPS_CERT_PATH || "./ssl/ai.oaii.cn_bundle.pem";
+  const caPath = env.HTTPS_CA_PATH;
+
+  return {
+    key: readTlsFile(keyPath, "HTTPS_KEY_PATH"),
+    cert: readTlsFile(certPath, "HTTPS_CERT_PATH"),
+    ...(caPath ? { ca: readTlsFile(caPath, "HTTPS_CA_PATH") } : {}),
+  };
+}
+
+export default defineConfig(({ command, mode }) => {
+  const env = loadEnv(mode, process.cwd(), "");
+  const isProduction = mode === "production";
+  const https = isProduction && command === "serve" ? createHttpsOptions(env) : undefined;
+  const backendPort = env.VITE_BACKEND_PORT || "8000";
+  const backendUrl = env.VITE_BACKEND_URL || `http://127.0.0.1:${backendPort}`;
+  const apiProxy = {
+    target: backendUrl,
+    changeOrigin: true,
+    ws: true,
+    // The admin API already lives under /api/v1, while the legacy runtime
+    // endpoints keep their original root-level paths (/models, /voices, ...).
+    rewrite: (requestPath: string) =>
+      requestPath.startsWith("/api/v1") ? requestPath : requestPath.replace(/^\/api/, ""),
+    // SSE (EventSource) through proxy: avoid buffering / stale Content-Length.
+    configure(proxy) {
+      proxy.on("proxyRes", (proxyRes, req) => {
+        const url = req.url ?? "";
+        if (url.includes("/events")) {
+          delete proxyRes.headers["content-length"];
+          proxyRes.headers["cache-control"] = "no-cache, no-transform";
+          proxyRes.headers["x-accel-buffering"] = "no";
+        }
+      });
     },
-    proxy: {
-      "/api": apiProxy,
+  };
+
+  return {
+    // Admin uses browser history routing and is served from the site root.
+    base: "/",
+    plugins: [react()],
+    server: {
+      port: 5174,
+      https,
+      allowedHosts,
+      fs: {
+        allow: [repoRoot],
+      },
+      proxy: {
+        "/api": apiProxy,
+      },
     },
-  },
-  preview: {
-    port: 5173,
-    allowedHosts,
-    proxy: {
-      "/api": apiProxy,
+    preview: {
+      port: 5174,
+      https,
+      allowedHosts,
+      proxy: {
+        "/api": apiProxy,
+      },
     },
-  },
+  };
 });

@@ -9,23 +9,27 @@ source "$quickstart_dir/_helpers.sh"
 usage() {
   cat <<'USAGE'
 Usage:
-  bash scripts/start_unified.sh [--mock]
+  bash scripts/start_unified.sh [--production] [--mock]
+  bash scripts/start_unified.sh --dev [--mock]
   bash scripts/start_unified.sh --backend local --model MODEL [--api-port PORT] [--web-port PORT]
   bash scripts/start_unified.sh --backend omnirt --model MODEL --omnirt URL [--api-port PORT] [--web-port PORT]
 
 Options:
+  --production       Production mode (default): build Web/Admin and serve with HTTPS.
+  --dev              Development mode: run Vite development servers over HTTP without SSL.
   --mock             Use the built-in Mock backend. No model weights or OmniRT required.
   --backend BACKEND  One of: mock, local, omnirt, direct_ws.
   --model MODEL      Model name whose backend should be overridden, for example quicktalk.
   --omnirt URL       OmniRT base URL, for example http://127.0.0.1:9000.
   --api-port PORT    OpenTalking API / unified backend port.
-  --web-port PORT    WebUI dev server port.
+  --web-port PORT    WebUI port (development or production preview).
   --host HOST        WebUI bind host. API host can still be set with OPENTALKING_API_HOST.
   --env FILE         Source a quickstart env file before starting services.
   --help             Show this help.
 
 Examples:
-  bash scripts/start_unified.sh --mock
+  bash scripts/start_unified.sh
+  bash scripts/start_unified.sh --dev --mock
   bash scripts/start_unified.sh --backend local --model quicktalk
   bash scripts/start_unified.sh --backend omnirt --model flashtalk --omnirt http://127.0.0.1:9000
 USAGE
@@ -38,9 +42,18 @@ api_port=""
 web_port=""
 web_host=""
 env_file=""
+run_mode="production"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --production|--prod)
+      run_mode="production"
+      shift
+      ;;
+    --dev|--development)
+      run_mode="development"
+      shift
+      ;;
     --mock)
       backend="mock"
       shift
@@ -113,17 +126,6 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-backend="${backend:-mock}"
-backend="$(printf '%s' "$backend" | tr '[:upper:]' '[:lower:]')"
-case "$backend" in
-  mock|local|omnirt|direct_ws) ;;
-  *)
-    echo "Invalid --backend: $backend" >&2
-    echo "Expected one of: mock, local, omnirt, direct_ws" >&2
-    exit 2
-    ;;
-esac
-
 if [[ -n "$env_file" ]]; then
   if [[ ! -f "$env_file" ]]; then
     echo "Env file not found: $env_file" >&2
@@ -134,6 +136,139 @@ else
   env_file="${OPENTALKING_QUICKSTART_ENV:-$quickstart_dir/env}"
 fi
 quickstart_source_env "$env_file"
+
+backend="${backend:-${OPENTALKING_START_BACKEND:-mock}}"
+model="${model:-${OPENTALKING_START_MODEL:-${OPENTALKING_DEFAULT_MODEL:-}}}"
+backend="$(printf '%s' "$backend" | tr '[:upper:]' '[:lower:]')"
+case "$backend" in
+  mock|local|omnirt|direct_ws) ;;
+  *)
+    echo "Invalid backend: $backend" >&2
+    echo "Expected one of: mock, local, omnirt, direct_ws" >&2
+    exit 2
+    ;;
+esac
+
+env_value() {
+  local file="$1"
+  local key="$2"
+  awk -F= -v key="$key" '$1 == key {sub(/^[^=]*=/, ""); print; exit}' "$file"
+}
+
+prepare_production_app() {
+  local app_dir="$1"
+  local label="$2"
+  local production_env="$app_dir/.env.production"
+  local production_example="$app_dir/.env.production.example"
+  if [[ ! -f "$production_env" ]]; then
+    if [[ ! -f "$production_example" ]]; then
+      echo "$label production config is missing: $production_env" >&2
+      exit 1
+    fi
+    cp "$production_example" "$production_env"
+    echo "Created $production_env from its production template."
+  fi
+  local key_path="$(env_value "$production_env" HTTPS_KEY_PATH)"
+  local cert_path="$(env_value "$production_env" HTTPS_CERT_PATH)"
+  key_path="${key_path:-./ssl/ai.oaii.cn.key}"
+  cert_path="${cert_path:-./ssl/ai.oaii.cn_bundle.pem}"
+  [[ "$key_path" = /* ]] || key_path="$app_dir/$key_path"
+  [[ "$cert_path" = /* ]] || cert_path="$app_dir/$cert_path"
+  if [[ ! -f "$key_path" || ! -f "$cert_path" ]]; then
+    echo "$label HTTPS certificate is not ready." >&2
+    echo "  key:  $key_path" >&2
+    echo "  cert: $cert_path" >&2
+    echo "Update $production_env before starting production." >&2
+    exit 1
+  fi
+}
+
+if [[ "$run_mode" == "development" ]]; then
+  export OPENTALKING_WEB_DEV_SERVER=1
+  export OPENTALKING_ADMIN_DEV_SERVER=1
+else
+  export OPENTALKING_WEB_DEV_SERVER=0
+  export OPENTALKING_ADMIN_DEV_SERVER=0
+  prepare_production_app "$script_dir/../apps/web" "Web"
+  prepare_production_app "$script_dir/../apps/admin" "Admin"
+  public_web_url="$(env_value "$script_dir/../apps/admin/.env.production" VITE_PUBLIC_WEB_URL)"
+  if [[ -z "$public_web_url" || "$public_web_url" == *"localhost"* || "$public_web_url" == *"127.0.0.1"* ]]; then
+    echo "Admin production VITE_PUBLIC_WEB_URL must be a visitor-accessible HTTPS URL." >&2
+    echo "Update $script_dir/../apps/admin/.env.production before starting production." >&2
+    exit 1
+  fi
+  if [[ "$public_web_url" != https://* ]]; then
+    echo "Admin production VITE_PUBLIC_WEB_URL must start with https://: $public_web_url" >&2
+    exit 1
+  fi
+fi
+
+echo "OpenTalking startup mode: $run_mode"
+
+stop_frontend_mode_mismatch() {
+  local pid_file="$1"
+  local label="$2"
+  local app_dir="$3"
+  [[ -f "$pid_file" ]] || return 0
+  local pid="$(cat "$pid_file" 2>/dev/null || true)"
+  [[ -n "$pid" ]] || return 0
+  if ! kill -0 "$pid" >/dev/null 2>&1; then
+    rm -f "$pid_file"
+    return 0
+  fi
+  local command_line="$(ps -p "$pid" -o command= 2>/dev/null || true)"
+  local mismatched=0
+  if [[ "$run_mode" == "production" && "$command_line" == *"--mode development"* ]]; then
+    mismatched=1
+  elif [[ "$run_mode" == "development" && "$command_line" == *"preview --mode production"* ]]; then
+    mismatched=1
+  fi
+  if [[ "$run_mode" == "production" && "$mismatched" == "0" ]]; then
+    local changed_file="$(find "$app_dir/src" "$app_dir/package.json" "$app_dir/package-lock.json" "$app_dir/vite.config.ts" "$app_dir/.env.production" -newer "$pid_file" -print -quit 2>/dev/null || true)"
+    if [[ -n "$changed_file" ]]; then
+      echo "$label production source/config changed: $changed_file"
+      mismatched=1
+    fi
+  fi
+  if [[ "$mismatched" == "1" ]]; then
+    echo "Restarting $label because its running mode does not match $run_mode."
+    kill "$pid"
+    for _ in {1..20}; do
+      kill -0 "$pid" >/dev/null 2>&1 || break
+      sleep 0.1
+    done
+    rm -f "$pid_file"
+  fi
+}
+
+effective_web_port="${web_port:-${OPENTALKING_WEB_PORT:-5173}}"
+effective_admin_port="${OPENTALKING_ADMIN_PORT:-5174}"
+effective_home="${DIGITAL_HUMAN_HOME:-$(cd -- "$script_dir/../.." && pwd)}"
+stop_frontend_mode_mismatch "$effective_home/run/opentalking-web-$effective_web_port.pid" "Web" "$script_dir/../apps/web"
+stop_frontend_mode_mismatch "$effective_home/run/opentalking-admin-$effective_admin_port.pid" "Admin" "$script_dir/../apps/admin"
+
+restart_api_if_code_changed() {
+  local effective_api_port="${api_port:-${OPENTALKING_API_PORT:-${OPENTALKING_UNIFIED_PORT:-8000}}}"
+  local pid_file="$effective_home/run/opentalking-api-$effective_api_port.pid"
+  [[ -f "$pid_file" ]] || return 0
+  local pid="$(cat "$pid_file" 2>/dev/null || true)"
+  [[ -n "$pid" ]] || return 0
+  if ! kill -0 "$pid" >/dev/null 2>&1; then
+    rm -f "$pid_file"
+    return 0
+  fi
+  local changed_file="$(find "$script_dir/../apps/api" "$script_dir/../opentalking" -type f -name '*.py' -newer "$pid_file" -print -quit 2>/dev/null || true)"
+  [[ -n "$changed_file" ]] || return 0
+  echo "API source changed; restarting API to load: $changed_file"
+  kill "$pid"
+  for _ in {1..40}; do
+    kill -0 "$pid" >/dev/null 2>&1 || break
+    sleep 0.1
+  done
+  rm -f "$pid_file"
+}
+
+restart_api_if_code_changed
 
 start_args=()
 web_args=()
@@ -159,6 +294,15 @@ start_admin() {
   local log_dir="$digital_human_home/logs"
   local pid_file="$run_dir/opentalking-admin-$admin_port.pid"
   local log_file="$log_dir/opentalking-admin-$admin_port.log"
+  local admin_dev_server="${OPENTALKING_ADMIN_DEV_SERVER:-${OPENTALKING_WEB_DEV_SERVER:-0}}"
+  local admin_scheme="https"
+  local admin_curl_args=(--max-time 2 -fsS)
+  if [[ "$admin_dev_server" == "1" ]]; then
+    admin_scheme="http"
+  else
+    admin_curl_args+=(-k)
+  fi
+  local admin_url="$admin_scheme://127.0.0.1:$admin_port"
 
   mkdir -p "$run_dir" "$log_dir"
 
@@ -173,9 +317,9 @@ start_admin() {
   fi
 
   if quickstart_port_in_use "$admin_port"; then
-    if curl --max-time 2 -fsS "http://127.0.0.1:$admin_port/" 2>/dev/null | grep -Fq '<title>四川博览集团数字人项目</title>'; then
+    if curl "${admin_curl_args[@]}" "$admin_url/" 2>/dev/null | grep -Fq '<title>四川博览集团数字人项目</title>'; then
       echo "OpenTalking admin is already running: port=$admin_port"
-      echo "  url:  http://127.0.0.1:$admin_port"
+      echo "  url:  $admin_url"
       return 0
     fi
     echo "OpenTalking admin port $admin_port is already in use." >&2
@@ -193,22 +337,28 @@ start_admin() {
     fi
   fi
 
-  echo "Building OpenTalking admin"
-  if ! (cd "$admin_dir" && npm run build >>"$log_file" 2>&1); then
-    echo "OpenTalking admin build failed. Last log lines:" >&2
-    tail -80 "$log_file" >&2 || true
-    return 1
+  if [[ "$admin_dev_server" != "1" ]]; then
+    echo "Building OpenTalking admin"
+    if ! (cd "$admin_dir" && npm run build >>"$log_file" 2>&1); then
+      echo "OpenTalking admin build failed. Last log lines:" >&2
+      tail -80 "$log_file" >&2 || true
+      return 1
+    fi
   fi
 
   echo "Starting OpenTalking admin"
   echo "  admin: $admin_dir"
-  echo "  url:   http://127.0.0.1:$admin_port"
+  echo "  url:   $admin_url"
   echo "  log:   $log_file"
   echo "  api:   http://127.0.0.1:$admin_backend_port"
   (
     cd "$admin_dir"
     export VITE_BACKEND_PORT="$admin_backend_port"
-    quickstart_detach "$log_file" ./node_modules/.bin/vite preview --host "$admin_host" --port "$admin_port" --strictPort >"$pid_file"
+    if [[ "$admin_dev_server" == "1" ]]; then
+      quickstart_detach "$log_file" ./node_modules/.bin/vite --mode development --host "$admin_host" --port "$admin_port" --strictPort >"$pid_file"
+    else
+      quickstart_detach "$log_file" ./node_modules/.bin/vite preview --mode production --host "$admin_host" --port "$admin_port" --strictPort >"$pid_file"
+    fi
   )
 
   local pid="$(cat "$pid_file" 2>/dev/null || true)"
@@ -224,8 +374,8 @@ start_admin() {
       rm -f "$pid_file"
       return 1
     fi
-    if curl --max-time 2 -fsS "http://127.0.0.1:$admin_port" >/dev/null 2>&1; then
-      echo "OpenTalking admin is up: http://127.0.0.1:$admin_port"
+    if curl "${admin_curl_args[@]}" "$admin_url" >/dev/null 2>&1; then
+      echo "OpenTalking admin is up: $admin_url"
       return 0
     fi
     sleep 1
@@ -250,8 +400,16 @@ if [[ "$backend" == "mock" ]]; then
   start_admin
   echo ""
   echo "Open the app:"
-  echo "  http://127.0.0.1:${web_port:-${OPENTALKING_WEB_PORT:-5173}}"
-  echo "  Admin: http://127.0.0.1:${OPENTALKING_ADMIN_PORT:-5174}"
+  if [[ "${OPENTALKING_WEB_DEV_SERVER:-0}" == "1" ]]; then
+    echo "  http://127.0.0.1:${web_port:-${OPENTALKING_WEB_PORT:-5173}}"
+  else
+    echo "  https://127.0.0.1:${web_port:-${OPENTALKING_WEB_PORT:-5173}}"
+  fi
+  if [[ "${OPENTALKING_ADMIN_DEV_SERVER:-${OPENTALKING_WEB_DEV_SERVER:-0}}" == "1" ]]; then
+    echo "  Admin: http://127.0.0.1:${OPENTALKING_ADMIN_PORT:-5174}"
+  else
+    echo "  Admin: https://127.0.0.1:${OPENTALKING_ADMIN_PORT:-5174}"
+  fi
   echo ""
   echo "Select mock / driverless mode to test without a real driver model."
   exit 0
@@ -318,8 +476,16 @@ start_admin
 
 echo ""
 echo "Open the app:"
-echo "  http://127.0.0.1:${web_port:-${OPENTALKING_WEB_PORT:-5173}}"
-echo "  Admin: http://127.0.0.1:${OPENTALKING_ADMIN_PORT:-5174}"
+if [[ "${OPENTALKING_WEB_DEV_SERVER:-0}" == "1" ]]; then
+  echo "  http://127.0.0.1:${web_port:-${OPENTALKING_WEB_PORT:-5173}}"
+else
+  echo "  https://127.0.0.1:${web_port:-${OPENTALKING_WEB_PORT:-5173}}"
+fi
+if [[ "${OPENTALKING_ADMIN_DEV_SERVER:-${OPENTALKING_WEB_DEV_SERVER:-0}}" == "1" ]]; then
+  echo "  Admin: http://127.0.0.1:${OPENTALKING_ADMIN_PORT:-5174}"
+else
+  echo "  Admin: https://127.0.0.1:${OPENTALKING_ADMIN_PORT:-5174}"
+fi
 echo ""
 echo "Default model: $model"
 echo "Backend override: $model_env_name=$backend"

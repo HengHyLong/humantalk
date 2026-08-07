@@ -3,11 +3,14 @@ from __future__ import annotations
 import csv
 import io
 import json
+import re
+import secrets
 import time
 import uuid
 from pathlib import Path
 from typing import Any
 
+import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, model_validator
@@ -15,6 +18,7 @@ from pydantic import BaseModel, Field, model_validator
 from .security import current_user, decode_token, get_store, issue_tokens, password_hasher, verify_password
 from .monitoring import collect_runtime_monitor
 from .store import AdminStore, utc_now
+from apps.api.routes.runtime_config import RuntimeConfigPayload, apply_runtime_config
 from opentalking.scene_assets import SceneAssetStore
 
 router = APIRouter(prefix="/api/v1", tags=["admin"])
@@ -53,6 +57,34 @@ class LinkBody(BaseModel):
 class NavigationBody(BaseModel):
     text: str = Field(min_length=1, max_length=1000)
     session_id: str = Field(min_length=1, max_length=200)
+
+
+class ExhibitSurveySubmissionBody(BaseModel):
+    companyName: str = Field(default="", max_length=200)
+    contactName: str = Field(min_length=1, max_length=100)
+    phone: str = Field(default="", max_length=50)
+    email: str = Field(default="", max_length=200)
+    intentSummary: str = Field(default="", max_length=2000)
+    consent: bool
+
+    @model_validator(mode="after")
+    def validate_contact(self) -> "ExhibitSurveySubmissionBody":
+        if not self.phone.strip() and not self.email.strip():
+            raise ValueError("手机号和邮箱至少填写一项")
+        if not self.consent:
+            raise ValueError("请同意线索信息使用说明")
+        return self
+
+
+class LlmConfigBody(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    provider: str = Field(default="openai_compatible", min_length=1, max_length=64)
+    base_url: str = Field(min_length=1, max_length=2048, alias="baseUrl")
+    model: str = Field(min_length=1, max_length=256)
+    api_key: str | None = Field(default=None, max_length=4096, alias="apiKey")
+    system_prompt: str = Field(default="", max_length=12000, alias="systemPrompt")
+
+    model_config = {"populate_by_name": True}
 
 
 def _public_user(store: AdminStore, user: dict[str, Any]) -> dict[str, Any]:
@@ -177,6 +209,257 @@ RESOURCE_PERMISSIONS = {
     "gifs": "asset:gif", "voice_configs": "asset:voice", "scene_bindings": "asset:scene", "idle_contents": "asset:idle",
     "documents": "knowledge:document", "knowledge_bases": "knowledge:document", "qa": "knowledge:qa", "scripts": "knowledge:script", "packages": "knowledge:publish", "miss_pool": "knowledge:miss",
 }
+
+
+def _public_llm_config(item: dict[str, Any]) -> dict[str, Any]:
+    secret = str(item.get("apiKey") or "")
+    return {
+        "id": str(item.get("id") or ""),
+        "name": str(item.get("name") or ""),
+        "provider": str(item.get("provider") or "openai_compatible"),
+        "baseUrl": str(item.get("baseUrl") or ""),
+        "model": str(item.get("model") or ""),
+        "apiKey": "",
+        "apiKeyConfigured": bool(secret),
+        "systemPrompt": str(item.get("systemPrompt") or ""),
+        "isActive": bool(item.get("isActive")),
+        "usage": str(item.get("usage") or "conversation"),
+        "source": str(item.get("source") or "managed"),
+        "readOnly": bool(item.get("readOnly")),
+        "createdAt": str(item.get("createdAt") or ""),
+        "updatedAt": str(item.get("updatedAt") or ""),
+    }
+
+
+def _setting_text(settings: Any, name: str, default: str = "") -> str:
+    return str(getattr(settings, name, default) or default).strip()
+
+
+def _configured_llm_configs(request: Request) -> list[dict[str, Any]]:
+    settings = getattr(request.app.state, "settings", None)
+    if settings is None:
+        return []
+
+    provider = _setting_text(settings, "llm_provider", "openai_compatible")
+    base_url = _setting_text(settings, "llm_base_url").rstrip("/")
+    api_key = _setting_text(settings, "llm_api_key")
+    model = _setting_text(settings, "llm_model")
+    system_prompt = _setting_text(settings, "llm_system_prompt")
+    items: list[dict[str, Any]] = []
+
+    if base_url or api_key or model:
+        items.append({
+            "id": "configured-conversation-llm",
+            "name": "主对话大模型",
+            "provider": provider,
+            "baseUrl": base_url,
+            "model": model,
+            "apiKey": api_key,
+            "systemPrompt": system_prompt,
+            "isActive": True,
+            "usage": "conversation",
+            "source": "config",
+            "readOnly": True,
+            "createdAt": "",
+            "updatedAt": "",
+        })
+
+    knowledge_base_url = _setting_text(settings, "agent_lightrag_llm_base_url").rstrip("/") or base_url
+    knowledge_api_key = _setting_text(settings, "agent_lightrag_llm_api_key") or api_key
+    knowledge_model = _setting_text(settings, "agent_lightrag_llm_model") or model
+    if knowledge_base_url or knowledge_api_key or knowledge_model:
+        inherited = not any(
+            _setting_text(settings, name)
+            for name in ("agent_lightrag_llm_base_url", "agent_lightrag_llm_api_key", "agent_lightrag_llm_model")
+        )
+        items.append({
+            "id": "configured-knowledge-llm",
+            "name": "LightRAG 知识检索模型" + ("（继承主配置）" if inherited else ""),
+            "provider": provider,
+            "baseUrl": knowledge_base_url,
+            "model": knowledge_model,
+            "apiKey": knowledge_api_key,
+            "systemPrompt": "",
+            "isActive": True,
+            "usage": "knowledge",
+            "source": "config",
+            "readOnly": True,
+            "createdAt": "",
+            "updatedAt": "",
+        })
+
+    memory_base_url = _setting_text(settings, "memory_mem0_llm_base_url").rstrip("/")
+    memory_api_key = _setting_text(settings, "memory_mem0_llm_api_key")
+    memory_model = _setting_text(settings, "memory_mem0_llm_model")
+    memory_enabled = bool(getattr(settings, "memory_enabled", False))
+    if memory_enabled or memory_base_url or memory_api_key:
+        items.append({
+            "id": "configured-memory-llm",
+            "name": "Mem0 记忆模型",
+            "provider": _setting_text(settings, "memory_mem0_llm_provider", "openai"),
+            "baseUrl": memory_base_url,
+            "model": memory_model,
+            "apiKey": memory_api_key,
+            "systemPrompt": "",
+            "isActive": memory_enabled,
+            "usage": "memory",
+            "source": "config",
+            "readOnly": True,
+            "createdAt": "",
+            "updatedAt": "",
+        })
+
+    return items
+
+
+def _llm_signature(item: dict[str, Any]) -> tuple[str, str, str]:
+    return (
+        str(item.get("provider") or "").strip().lower(),
+        str(item.get("baseUrl") or "").strip().rstrip("/"),
+        str(item.get("model") or "").strip(),
+    )
+
+
+def _resolve_llm_config(request: Request, record_id: str) -> dict[str, Any] | None:
+    stored = get_store(request).get_record("llm_configs", record_id)
+    if stored is not None:
+        return stored
+    return next((item for item in _configured_llm_configs(request) if item["id"] == record_id), None)
+
+
+def _normalized_llm_config(body: LlmConfigBody, *, existing: dict[str, Any] | None = None) -> dict[str, Any]:
+    current = existing or {}
+    provided_key = (body.api_key or "").strip()
+    return {
+        **current,
+        "name": body.name.strip(),
+        "provider": body.provider.strip().lower(),
+        "baseUrl": body.base_url.strip().rstrip("/"),
+        "model": body.model.strip(),
+        "apiKey": provided_key or str(current.get("apiKey") or ""),
+        "systemPrompt": body.system_prompt.strip(),
+    }
+
+
+async def _apply_llm_config(request: Request, item: dict[str, Any]) -> dict[str, Any]:
+    api_key = str(item.get("apiKey") or "").strip()
+    if not api_key:
+        raise HTTPException(status_code=400, detail={"code": "LLM_API_KEY_REQUIRED", "detail": "启用前必须配置 API Key"})
+    return await apply_runtime_config(
+        RuntimeConfigPayload(
+            llm_base_url=str(item.get("baseUrl") or ""),
+            llm_model=str(item.get("model") or ""),
+            llm_api_key=api_key,
+            llm_system_prompt=str(item.get("systemPrompt") or ""),
+            sync_dashscope_api_key=False,
+        ),
+        request,
+    )
+
+
+@router.get("/admin/llm-configs")
+def list_llm_configs(request: Request, auth: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    store = get_store(request)
+    _require(store, auth, "system:llm")
+    configured = _configured_llm_configs(request)
+    configured_conversation = next((item for item in configured if item["usage"] == "conversation"), None)
+    managed = store.list_records("llm_configs")
+    if configured_conversation is not None:
+        current_signature = _llm_signature(configured_conversation)
+        matching_managed = next((item for item in managed if _llm_signature(item) == current_signature), None)
+        if matching_managed is not None:
+            configured = [item for item in configured if item["usage"] != "conversation"]
+            managed = [
+                {**item, "isActive": str(item.get("id")) == str(matching_managed.get("id"))}
+                for item in managed
+            ]
+        else:
+            managed = [{**item, "isActive": False} for item in managed]
+    managed = sorted(managed, key=lambda item: (not bool(item.get("isActive")), str(item.get("updatedAt") or "")), reverse=False)
+    items = [*configured, *managed]
+    return {"items": [_public_llm_config(item) for item in items], "total": len(items)}
+
+
+@router.post("/admin/llm-configs")
+def create_llm_config(body: LlmConfigBody, request: Request, auth: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    store = get_store(request)
+    _require(store, auth, "system:llm:write")
+    now = utc_now()
+    record_id = f"llm-{uuid.uuid4().hex[:12]}"
+    item = {**_normalized_llm_config(body), "id": record_id, "isActive": False, "createdAt": now, "updatedAt": now}
+    saved = store.save_record("llm_configs", item)
+    _audit(request, auth, action="create", resource_type="llm_config", resource_id=record_id, before=None, after=_public_llm_config(saved))
+    return _public_llm_config(saved)
+
+
+@router.patch("/admin/llm-configs/{record_id}")
+async def update_llm_config(record_id: str, body: LlmConfigBody, request: Request, auth: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    store = get_store(request)
+    _require(store, auth, "system:llm:write")
+    before = _record(store, "llm_configs", record_id) or {}
+    prospective = {**_normalized_llm_config(body, existing=before), "id": record_id, "updatedAt": utc_now()}
+    if prospective.get("isActive"):
+        await _apply_llm_config(request, prospective)
+    saved = store.save_record("llm_configs", prospective)
+    _audit(request, auth, action="update", resource_type="llm_config", resource_id=record_id, before=_public_llm_config(before), after=_public_llm_config(saved))
+    return _public_llm_config(saved)
+
+
+@router.delete("/admin/llm-configs/{record_id}")
+def delete_llm_config(record_id: str, request: Request, auth: dict[str, Any] = Depends(current_user)) -> dict[str, bool]:
+    store = get_store(request)
+    _require(store, auth, "system:llm:write")
+    before = _record(store, "llm_configs", record_id) or {}
+    if before.get("isActive"):
+        raise HTTPException(status_code=409, detail={"code": "ACTIVE_LLM_CONFIG", "detail": "当前使用中的配置不能删除，请先启用其他配置"})
+    store.delete_record("llm_configs", record_id)
+    _audit(request, auth, action="delete", resource_type="llm_config", resource_id=record_id, before=_public_llm_config(before), after=None)
+    return {"success": True}
+
+
+@router.post("/admin/llm-configs/{record_id}/activate")
+async def activate_llm_config(record_id: str, request: Request, auth: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    store = get_store(request)
+    _require(store, auth, "system:llm:write")
+    target = _record(store, "llm_configs", record_id) or {}
+    runtime = await _apply_llm_config(request, target)
+    now = utc_now()
+    for item in store.list_records("llm_configs"):
+        is_active = str(item.get("id")) == record_id
+        if bool(item.get("isActive")) != is_active:
+            store.save_record("llm_configs", {**item, "isActive": is_active, "updatedAt": now})
+    saved = _record(store, "llm_configs", record_id) or target
+    _audit(request, auth, action="activate", resource_type="llm_config", resource_id=record_id, before=None, after={**_public_llm_config(saved), "runtime": {"liveRunnersRefreshed": runtime.get("live_runners_refreshed", 0)}})
+    return {**_public_llm_config(saved), "liveRunnersRefreshed": runtime.get("live_runners_refreshed", 0)}
+
+
+@router.post("/admin/llm-configs/{record_id}/test")
+async def test_llm_config(record_id: str, request: Request, auth: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    store = get_store(request)
+    _require(store, auth, "system:llm")
+    item = _resolve_llm_config(request, record_id) or {}
+    if not item:
+        raise HTTPException(status_code=404, detail={"code": "RESOURCE_NOT_FOUND", "detail": "大模型配置不存在"})
+    api_key = str(item.get("apiKey") or "").strip()
+    if not api_key:
+        raise HTTPException(status_code=400, detail={"code": "LLM_API_KEY_REQUIRED", "detail": "请先保存 API Key"})
+    url = f"{str(item.get('baseUrl') or '').rstrip('/')}/chat/completions"
+    started = time.perf_counter()
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(12.0, connect=5.0)) as client:
+            response = await client.post(
+                url,
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                json={"model": item.get("model"), "messages": [{"role": "user", "content": "请只回复 OK"}], "max_tokens": 4, "temperature": 0},
+            )
+            response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(status_code=502, detail={"code": "LLM_TEST_FAILED", "detail": f"模型服务返回 HTTP {exc.response.status_code}"}) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail={"code": "LLM_TEST_FAILED", "detail": f"模型服务连接失败：{exc}"}) from exc
+    latency_ms = round((time.perf_counter() - started) * 1000)
+    _audit(request, auth, action="test", resource_type="llm_config", resource_id=record_id, before=None, after={"success": True, "latencyMs": latency_ms})
+    return {"success": True, "latencyMs": latency_ms, "message": "连接成功"}
 
 EVENT_IMAGE_RESOURCES = {"exhibitors", "exhibits", "venues", "points"}
 
@@ -428,6 +711,43 @@ def delete_event(resource: str, record_id: str, request: Request, auth: dict[str
     return {"deleted": True, "id": record_id}
 
 
+def _survey_payload(store: AdminStore, exhibit: dict[str, Any]) -> dict[str, Any]:
+    exhibitor = store.get_record("exhibitors", str(exhibit.get("exhibitorId", ""))) or {}
+    exhibition = store.get_record("exhibitions", str(exhibit.get("exhibitionId", ""))) or {}
+    token = str(exhibit.get("surveyToken", ""))
+    submissions = [item for item in store.list_records("leads") if item.get("qrToken") == token]
+    return {
+        "token": token,
+        "path": f"/survey/{token}",
+        "exhibitId": exhibit["id"],
+        "exhibitName": exhibit.get("name", ""),
+        "exhibitorId": exhibit.get("exhibitorId", ""),
+        "exhibitorName": exhibitor.get("name", ""),
+        "exhibitionId": exhibit.get("exhibitionId", ""),
+        "exhibitionName": exhibition.get("name", ""),
+        "description": exhibit.get("description", ""),
+        "imageUrls": exhibit.get("imageUrls", []),
+        "submissionCount": len(submissions),
+        "createdAt": exhibit.get("surveyCreatedAt", ""),
+    }
+
+
+@router.post("/admin/event/exhibits/{record_id}/survey")
+def create_exhibit_survey(record_id: str, request: Request, auth: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    store = get_store(request)
+    _require(store, auth, "event:exhibit")
+    before = _record(store, "exhibits", record_id) or {}
+    if before.get("surveyToken"):
+        return _survey_payload(store, before)
+    saved = store.save_record(
+        "exhibits",
+        {**before, "surveyToken": secrets.token_urlsafe(18), "surveyCreatedAt": utc_now()},
+        before.get("exhibitionId"),
+    )
+    _audit(request, auth, action="create_survey", resource_type="exhibit", resource_id=record_id, before=before, after=saved)
+    return _survey_payload(store, saved)
+
+
 @router.post("/admin/event/exhibitions/{record_id}/lifecycle")
 def lifecycle(record_id: str, request: Request, body: StatusBody, auth: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
     store = get_store(request)
@@ -595,17 +915,17 @@ def create_lead(request: Request, body: RecordBody, auth: dict[str, Any] = Depen
 
 
 @router.get("/admin/lead/export")
-def export_leads(request: Request, exhibition_id: str | None = None, keyword: str | None = None, status_filter: str | None = Query(None, alias="status"), from_date: str = Query("", alias="from"), to_date: str = Query("", alias="to"), auth: dict[str, Any] = Depends(current_user)) -> StreamingResponse:
+def export_leads(request: Request, exhibition_id: str | None = None, keyword: str | None = None, status_filter: str | None = Query(None, alias="status"), source: str = "", from_date: str = Query("", alias="from"), to_date: str = Query("", alias="to"), auth: dict[str, Any] = Depends(current_user)) -> StreamingResponse:
     store = get_store(request)
     _require(store, auth, "lead:export")
     items = store.list_records("leads", exhibition_id=exhibition_id, keyword=keyword, status=status_filter)
-    items = [item for item in items if (not from_date or str(item.get("createdAt", ""))[:10] >= from_date) and (not to_date or str(item.get("createdAt", ""))[:10] <= to_date)]
+    items = [item for item in items if (not from_date or str(item.get("createdAt", ""))[:10] >= from_date) and (not to_date or str(item.get("createdAt", ""))[:10] <= to_date) and (not source or (item.get("source") == "exhibit_survey" if source == "exhibit_survey" else item.get("source") != "exhibit_survey"))]
     sensitive = "lead:view_sensitive" in _permission_codes(store, auth["user"]["id"])
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(["线索ID", "展会", "单位名称", "联系人", "手机号", "邮箱", "状态", "创建时间"])
+    writer.writerow(["线索ID", "来源", "展品", "展商", "展会", "单位名称", "联系人", "手机号", "邮箱", "状态", "创建时间"])
     for item in items:
-        writer.writerow([item.get("id", ""), item.get("exhibitionName", item.get("exhibitionId", "")), item.get("companyName", ""), item.get("contactName", ""), item.get("phone", "") if sensitive else _mask_phone(str(item.get("phone", ""))), item.get("email", "") if sensitive else _mask_email(str(item.get("email", ""))), item.get("status", ""), item.get("createdAt", "")])
+        writer.writerow([item.get("id", ""), item.get("sourceName", item.get("terminalName", "")), item.get("exhibitName", ""), item.get("exhibitorName", ""), item.get("exhibitionName", item.get("exhibitionId", "")), item.get("companyName", ""), item.get("contactName", ""), item.get("phone", "") if sensitive else _mask_phone(str(item.get("phone", ""))), item.get("email", "") if sensitive else _mask_email(str(item.get("email", ""))), item.get("status", ""), item.get("createdAt", "")])
     return StreamingResponse(iter([output.getvalue().encode("utf-8-sig")]), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=leads.csv"})
 
 
@@ -1037,6 +1357,150 @@ def public_exhibitions(request: Request) -> dict[str, Any]:
             "bound_scene": item.get("boundScene") or item.get("bound_scene"),
         })
     return {"items": items}
+
+
+_MARKDOWN_IMAGE_RE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
+_MARKDOWN_LINK_RE = re.compile(r"\[([^\]]+)\]\([^)]*\)")
+
+
+def _public_description(value: Any) -> str:
+    text = _MARKDOWN_IMAGE_RE.sub(" ", str(value or ""))
+    text = _MARKDOWN_LINK_RE.sub(r"\1", text)
+    text = re.sub(r"[`#>*_~|]+", " ", text)
+    return " ".join(text.split())[:1200]
+
+
+def _public_image_urls(item: dict[str, Any], *fallback_items: dict[str, Any] | None) -> list[str]:
+    for candidate in (item, *fallback_items):
+        if not candidate:
+            continue
+        raw_urls = candidate.get("imageUrls") or candidate.get("image_urls") or []
+        if isinstance(raw_urls, str):
+            raw_urls = [raw_urls]
+        urls = [str(url).strip() for url in raw_urls if str(url).strip()]
+        if urls:
+            return urls[:6]
+    return []
+
+
+@public_router.get("/exhibitions/{exhibition_id}/entities")
+def public_exhibition_entities(exhibition_id: str, request: Request) -> dict[str, Any]:
+    """Return display-safe event entities used by the Web keyword matcher."""
+    store = get_store(request)
+    if exhibition_id == "current":
+        current = next((item for item in store.list_records("exhibitions") if item.get("isCurrent") or item.get("is_current")), None)
+        if not current:
+            raise HTTPException(status_code=404, detail={"code": "CURRENT_EXHIBITION_NOT_FOUND", "detail": "当前展会未配置"})
+        exhibition_id = str(current["id"])
+    _record(store, "exhibitions", exhibition_id)
+
+    exhibitors = {item["id"]: item for item in store.list_records("exhibitors", exhibition_id=exhibition_id)}
+    exhibits = {item["id"]: item for item in store.list_records("exhibits", exhibition_id=exhibition_id)}
+    venues = {item["id"]: item for item in store.list_records("venues", exhibition_id=exhibition_id)}
+    points = {item["id"]: item for item in store.list_records("points", exhibition_id=exhibition_id)}
+    schedules = store.list_records("schedules", exhibition_id=exhibition_id)
+    items: list[dict[str, Any]] = []
+
+    def append_entity(*, entity_id: str, kind: str, name: str, description: Any, images: list[str], details: list[tuple[str, Any]], keywords: list[Any]) -> None:
+        clean_name = str(name or "").strip()
+        if not clean_name:
+            return
+        clean_details = [{"label": label, "value": str(value).strip()} for label, value in details if str(value or "").strip()]
+        clean_keywords = list(dict.fromkeys(str(value).strip() for value in [clean_name, *keywords] if len(str(value or "").strip()) >= 2))
+        items.append({
+            "id": entity_id,
+            "kind": kind,
+            "name": clean_name,
+            "description": _public_description(description),
+            "image_urls": images,
+            "details": clean_details,
+            "keywords": clean_keywords,
+        })
+
+    for item in exhibitors.values():
+        append_entity(
+            entity_id=str(item["id"]), kind="exhibitor", name=str(item.get("name", "")), description=item.get("description"),
+            images=_public_image_urls(item),
+            details=[("展位", item.get("boothCode")), ("类别", item.get("category"))],
+            keywords=[item.get("boothCode")],
+        )
+    for item in exhibits.values():
+        exhibitor = exhibitors.get(str(item.get("exhibitorId", "")))
+        append_entity(
+            entity_id=str(item["id"]), kind="exhibit", name=str(item.get("name", "")), description=item.get("description"),
+            images=_public_image_urls(item, exhibitor),
+            details=[("展商", (exhibitor or {}).get("name")), ("类别", item.get("category")), ("型号", item.get("modelNo"))],
+            keywords=[item.get("modelNo")],
+        )
+    for item in venues.values():
+        append_entity(
+            entity_id=str(item["id"]), kind="venue", name=str(item.get("name", "")), description=item.get("description"),
+            images=_public_image_urls(item), details=[("地址", item.get("address"))], keywords=[],
+        )
+    for item in points.values():
+        venue = venues.get(str(item.get("venueId", "")))
+        exhibit = exhibits.get(str(item.get("exhibitId", "")))
+        exhibitor = exhibitors.get(str(item.get("exhibitorId", ""))) or exhibitors.get(str((exhibit or {}).get("exhibitorId", "")))
+        append_entity(
+            entity_id=str(item["id"]), kind="point", name=str(item.get("name", "")), description=item.get("description"),
+            images=_public_image_urls(item, exhibit, exhibitor, venue),
+            details=[("场地", (venue or {}).get("name")), ("楼层", item.get("floor")), ("点位编码", item.get("code"))],
+            keywords=[item.get("code")],
+        )
+    for item in schedules:
+        venue = venues.get(str(item.get("venueId", "")))
+        point = points.get(str(item.get("pointId", "")))
+        append_entity(
+            entity_id=str(item["id"]), kind="schedule", name=str(item.get("title") or item.get("name") or ""), description=item.get("description"),
+            images=_public_image_urls(item, point, venue),
+            details=[("时间", " 至 ".join(value for value in [str(item.get("startAt", "")).strip(), str(item.get("endAt", "")).strip()] if value)), ("地点", item.get("location") or (point or {}).get("name") or (venue or {}).get("name")), ("主讲方", item.get("speaker")), ("类型", item.get("type"))],
+            keywords=[item.get("location"), item.get("speaker")],
+        )
+    return {"exhibition_id": exhibition_id, "items": items}
+
+
+def _exhibit_for_survey_token(store: AdminStore, token: str) -> dict[str, Any]:
+    exhibit = next((item for item in store.list_records("exhibits") if secrets.compare_digest(str(item.get("surveyToken", "")), token)), None)
+    if not exhibit:
+        raise HTTPException(status_code=404, detail={"code": "SURVEY_NOT_FOUND", "detail": "调研表单不存在或尚未启用"})
+    return exhibit
+
+
+@public_router.get("/api/v1/public/exhibit-surveys/{token}")
+def public_exhibit_survey(token: str, request: Request) -> dict[str, Any]:
+    return _survey_payload(get_store(request), _exhibit_for_survey_token(get_store(request), token))
+
+
+@public_router.post("/api/v1/public/exhibit-surveys/{token}/submissions")
+def submit_exhibit_survey(token: str, request: Request, body: ExhibitSurveySubmissionBody) -> dict[str, Any]:
+    store = get_store(request)
+    exhibit = _exhibit_for_survey_token(store, token)
+    exhibitor = store.get_record("exhibitors", str(exhibit.get("exhibitorId", ""))) or {}
+    exhibition = store.get_record("exhibitions", str(exhibit.get("exhibitionId", ""))) or {}
+    submitted = body.model_dump()
+    lead = {
+        "exhibitionId": exhibit.get("exhibitionId", ""),
+        "exhibitionName": exhibition.get("name", ""),
+        "terminalId": "",
+        "terminalName": "展品调研二维码",
+        "companyName": submitted["companyName"].strip() or "个人访客",
+        "contactName": submitted["contactName"].strip(),
+        "phone": submitted["phone"].strip(),
+        "email": submitted["email"].strip(),
+        "intentSummary": submitted["intentSummary"].strip() or f"通过二维码关注展品：{exhibit.get('name', '')}",
+        "status": "new",
+        "source": "exhibit_survey",
+        "sourceName": "展品调研二维码",
+        "exhibitName": exhibit.get("name", ""),
+        "exhibitorName": exhibitor.get("name", ""),
+        "interestedExhibitorIds": [exhibit.get("exhibitorId")] if exhibit.get("exhibitorId") else [],
+        "interestedExhibitIds": [exhibit["id"]],
+        "qrToken": token,
+        "statusHistory": [{"status": "new", "operator": "调研表单", "time": utc_now(), "note": "访客扫码提交"}],
+    }
+    saved = store.save_record("leads", lead, str(exhibit.get("exhibitionId", "")))
+    _audit(request, None, action="survey_submit", resource_type="lead", resource_id=saved["id"], before=None, after={**saved, "phone": _mask_phone(saved.get("phone", "")), "email": _mask_email(saved.get("email", ""))})
+    return {"submitted": True, "leadId": saved["id"]}
 
 
 @router.post("/exhibitions/{exhibition_id}/navigation/query")

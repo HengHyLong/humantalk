@@ -1,4 +1,4 @@
-import type { MemoryItem, MemoryLibrary, MemoryTurn, WeChatImportCommitResult, WeChatImportJob } from "../types";
+import type { ExhibitionEntityCard, MemoryItem, MemoryLibrary, MemoryTurn, WeChatImportCommitResult, WeChatImportJob } from "../types";
 
 export const API_BASE = import.meta.env.VITE_API_BASE ?? "api";
 
@@ -338,6 +338,13 @@ export type ExhibitionSummary = {
 
 export async function listExhibitions(): Promise<{ items: ExhibitionSummary[] }> {
   return apiGet<{ items: ExhibitionSummary[] }>("/exhibitions");
+}
+
+export async function listExhibitionEntities(exhibitionId?: string | null): Promise<{ exhibition_id: string; items: ExhibitionEntityCard[] }> {
+  const id = exhibitionId?.trim();
+  return apiGet<{ exhibition_id: string; items: ExhibitionEntityCard[] }>(
+    `/exhibitions/${encodeURIComponent(id || "current")}/entities`,
+  );
 }
 
 export type NavigationQueryResponse = NavigationResult;

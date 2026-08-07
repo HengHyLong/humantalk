@@ -5,11 +5,24 @@ export interface QueueInfo {
   message: string;    // "waiting" | "slot_acquired" | "queue_full" | "timeout"
 }
 
+export type ExhibitionEntityKind = "exhibitor" | "exhibit" | "venue" | "point" | "schedule";
+
+export type ExhibitionEntityCard = {
+  id: string;
+  kind: ExhibitionEntityKind;
+  name: string;
+  description: string;
+  image_urls: string[];
+  details: Array<{ label: string; value: string }>;
+  keywords: string[];
+};
+
 export interface Message {
   id: string;
   role: "user" | "assistant";
   text: string;
   timestamp: number;
+  relatedEntities?: ExhibitionEntityCard[];
 }
 
 export type MemoryLibrary = {

@@ -198,6 +198,8 @@ class AdminStore:
             ("menu-role", "menu-system", "system:role", "角色管理", "menu", "/system/role"),
             ("menu-audit", "menu-system", "system:audit", "审计日志", "menu", "/system/audit"),
             ("menu-ops", "menu-system", "system:ops", "监控告警", "menu", "/system/ops"),
+            ("menu-llm", "menu-system", "system:llm", "大模型配置", "menu", "/system/llm"),
+            ("button-llm-write", "menu-llm", "system:llm:write", "维护大模型配置", "button", ""),
             ("button-lead-sensitive", "menu-lead", "lead:view_sensitive", "查看敏感联系方式", "button", ""),
             ("button-lead-export", "menu-lead", "lead:export", "导出线索", "button", ""),
             ("button-lead-feedback", "menu-lead", "lead:feedback", "处理反馈", "button", ""),
@@ -231,7 +233,11 @@ class AdminStore:
                 if not role:
                     continue
                 for permission_id, code, *_ in conn.execute("SELECT id,code,name,kind,path FROM admin_permissions"):
-                    if code in codes or permission_id in all_permissions and role_code in {"sys_admin", "readonly"}:
+                    if (
+                        code in codes
+                        or permission_id in all_permissions and role_code == "sys_admin"
+                        or permission_id in all_permissions and role_code == "readonly" and not code.endswith(":write")
+                    ):
                         conn.execute("INSERT OR IGNORE INTO admin_role_permissions(role_id,permission_id) VALUES (?,?)", (role[0], permission_id))
             user = conn.execute("SELECT id FROM admin_users WHERE username='admin'").fetchone()
             if not user:

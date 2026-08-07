@@ -1,4 +1,4 @@
-import { useState, type RefObject } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import type {
   AvatarSummary,
   ClientRendererDescriptor,
@@ -10,6 +10,7 @@ import type {
 import type { TtsProviderExtended } from "../constants/ttsBailian";
 import type { ConnectionStatus, Message } from "../types";
 import { ChatInput } from "./ChatInput";
+import { ExhibitionEntityCard } from "./ExhibitionEntityCard";
 import { SceneStage } from "./SceneStage";
 
 type DigitalHumanDisplayProps = {
@@ -29,7 +30,6 @@ type DigitalHumanDisplayProps = {
   onStart: () => void;
   onSend: (text: string) => void;
   onInterrupt: () => void;
-  onChangeAvatar: () => void;
   onSpeakAudio?: (blob: Blob) => void | Promise<void>;
   onSpeakAudioStreamResult?: (payload: { text: string }) => void | Promise<void>;
   onSpeakAudioStreamError?: (message: string) => void;
@@ -65,7 +65,6 @@ export function DigitalHumanDisplay({
   onStart,
   onSend,
   onInterrupt,
-  onChangeAvatar,
   onSpeakAudio,
   onSpeakAudioStreamResult,
   onSpeakAudioStreamError,
@@ -83,6 +82,8 @@ export function DigitalHumanDisplay({
   const [activeLanguage, setActiveLanguage] = useState("中文");
   const [draft, setDraft] = useState("");
   const [inputMode, setInputMode] = useState<"voice" | "keyboard">("voice");
+  const chatFeedRef = useRef<HTMLDivElement>(null);
+  const chatFeedContentRef = useRef<HTMLDivElement>(null);
   const live = connection === "live" || connection === "expiring";
   const busy = connection === "connecting" || connection === "queued";
   const displaySubtitle = subtitle?.trim() || (messages.length === 0 ? "你可以问我以下问题哦" : "");
@@ -92,6 +93,26 @@ export function DigitalHumanDisplay({
     subtitle?.trim()
       && !(latestVisibleMessage?.role === "assistant" && latestVisibleMessage.text.trim() === subtitle.trim()),
   );
+
+  useEffect(() => {
+    const feed = chatFeedRef.current;
+    if (!feed) return;
+    const frame = window.requestAnimationFrame(() => {
+      feed.scrollTo({ top: feed.scrollHeight, behavior: "smooth" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [messages, navigationResult, subtitle]);
+
+  useEffect(() => {
+    const feed = chatFeedRef.current;
+    const content = chatFeedContentRef.current;
+    if (!feed || !content || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      feed.scrollTo({ top: feed.scrollHeight, behavior: "smooth" });
+    });
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, []);
 
   const submit = () => {
     const text = draft.trim();
@@ -141,7 +162,8 @@ export function DigitalHumanDisplay({
                 {isSpeaking ? " · 正在播报" : ""}
               </span>
             </div>
-            <div className="digital-display-chat-feed" aria-live="polite">
+            <div ref={chatFeedRef} className="digital-display-chat-feed" aria-live="polite">
+              <div ref={chatFeedContentRef} className="digital-display-chat-feed-content">
               {exhibitionConfigNotice ? (
                 <div className="digital-display-chat-notice" role="status">{exhibitionConfigNotice}</div>
               ) : null}
@@ -183,9 +205,14 @@ export function DigitalHumanDisplay({
                 <div className="digital-display-chat-empty">{displaySubtitle}</div>
               ) : null}
               {visibleMessages.map((message) => (
-                <div key={message.id} className={`digital-display-chat-line ${message.role === "user" ? "is-user" : "is-assistant"}`}>
-                  <span className="digital-display-chat-role">{message.role === "user" ? "我" : "数字人"}</span>
-                  <p>{message.text || "正在准备回答…"}</p>
+                <div key={message.id} className={`digital-display-chat-line ${message.role === "user" ? "is-user" : "is-assistant"} ${message.relatedEntities?.length ? "has-entities" : ""}`}>
+                  <div className="digital-display-chat-line-copy">
+                    <span className="digital-display-chat-role">{message.role === "user" ? "我" : "数字人"}</span>
+                    <p>{message.text || "正在准备回答…"}</p>
+                  </div>
+                  {message.relatedEntities?.map((entity) => (
+                    <ExhibitionEntityCard key={`${message.id}-${entity.kind}-${entity.id}`} entity={entity} immersive />
+                  ))}
                 </div>
               ))}
               {showLiveSubtitle ? (
@@ -194,6 +221,7 @@ export function DigitalHumanDisplay({
                   <p>{subtitle}</p>
                 </div>
               ) : null}
+              </div>
             </div>
 
             <div className="digital-display-chat-suggestions" aria-label="常见问题">
@@ -270,7 +298,6 @@ export function DigitalHumanDisplay({
               <div className="digital-display-start-meta">
                 <span>{avatar?.name ?? "默认数字人"}</span>
                 <span>{modelLabel}</span>
-                <button type="button" onClick={onChangeAvatar}>更换形象</button>
               </div>
             </div>
           ) : null}

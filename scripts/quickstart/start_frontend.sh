@@ -109,10 +109,10 @@ echo "  api:  http://127.0.0.1:$backend_port"
   cd "$web_dir"
   export VITE_BACKEND_PORT="$backend_port"
   if [[ "${OPENTALKING_WEB_DEV_SERVER:-0}" == "1" ]]; then
-    quickstart_detach "$log_file" ./node_modules/.bin/vite --host "$web_host" --port "$web_port" --strictPort >"$pid_file"
+    quickstart_detach "$log_file" ./node_modules/.bin/vite --mode development --host "$web_host" --port "$web_port" --strictPort >"$pid_file"
   else
     npm run build >>"$log_file" 2>&1
-    quickstart_detach "$log_file" ./node_modules/.bin/vite preview --host "$web_host" --port "$web_port" --strictPort >"$pid_file"
+    quickstart_detach "$log_file" ./node_modules/.bin/vite preview --mode production --host "$web_host" --port "$web_port" --strictPort >"$pid_file"
   fi
 )
 

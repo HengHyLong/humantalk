@@ -87,4 +87,8 @@ bash "$script_dir/start_frontend.sh" "${web_args[@]}"
 
 echo ""
 echo "Open the app:"
-echo "  http://127.0.0.1:${web_port:-${OPENTALKING_WEB_PORT:-5173}}"
+if [[ "${OPENTALKING_WEB_DEV_SERVER:-0}" == "1" ]]; then
+  echo "  http://127.0.0.1:${web_port:-${OPENTALKING_WEB_PORT:-5173}}"
+else
+  echo "  https://127.0.0.1:${web_port:-${OPENTALKING_WEB_PORT:-5173}}"
+fi

@@ -34,6 +34,7 @@ export type PermissionCode =
   | "system:role"
   | "system:audit"
   | "system:ops"
+  | "system:llm"
   | "audit:trace"
   | "ops:failover";
 
@@ -56,6 +57,7 @@ export type ButtonPermission =
   | "lead:feedback:write"
   | "system:user:write"
   | "system:role:write"
+  | "system:llm:write"
   | "interact:welcome:write"
   | "interact:explain:write"
   | "interact:shopping:write"
@@ -272,6 +274,30 @@ export type Exhibit = {
   updatedAt: string;
 };
 
+export type ExhibitSurvey = {
+  token: string;
+  path: string;
+  exhibitId: string;
+  exhibitName: string;
+  exhibitorId: string;
+  exhibitorName: string;
+  exhibitionId: string;
+  exhibitionName: string;
+  description: string;
+  imageUrls: string[];
+  submissionCount: number;
+  createdAt: string;
+};
+
+export type ExhibitSurveySubmission = {
+  companyName: string;
+  contactName: string;
+  phone: string;
+  email: string;
+  intentSummary: string;
+  consent: boolean;
+};
+
 export type VenueStatus = "draft" | "active" | "inactive";
 
 export type EventVenue = {
@@ -376,6 +402,10 @@ export type Lead = {
   interestedExhibitorIds: string[];
   interestedExhibitIds: string[];
   qrToken: string;
+  source?: "manual" | "terminal" | "exhibit_survey";
+  sourceName?: string;
+  exhibitName?: string;
+  exhibitorName?: string;
   createdAt: string;
   statusHistory: Array<{ status: LeadStatus; operator: string; time: string; note?: string }>;
 };
@@ -431,6 +461,29 @@ export type PermissionNode = {
   path: string;
   apiPattern: string;
   children?: PermissionNode[];
+};
+
+export type LlmConfig = {
+  id: string;
+  name: string;
+  provider: string;
+  baseUrl: string;
+  model: string;
+  apiKey: string;
+  apiKeyConfigured: boolean;
+  systemPrompt: string;
+  isActive: boolean;
+  usage: "conversation" | "knowledge" | "memory";
+  source: "managed" | "config";
+  readOnly: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type LlmConnectionTestResult = {
+  success: boolean;
+  latencyMs: number;
+  message: string;
 };
 
 export type TraceSpan = {

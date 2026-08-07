@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useState, type ReactNode } from "react";
 import { adminApi } from "./api";
 import { Badge, Button, Card, Field, Header, Modal, Pagination, usePagination } from "./CrudPages";
-import type { AdminUser, AdminUserRecord, AlertEvent, AuditLog, MonitorHistoryPoint, PermissionNode, RoleRecord, SystemMonitor } from "./types";
+import type { AdminUser, AdminUserRecord, AlertEvent, AuditLog, LlmConfig, MonitorHistoryPoint, PermissionNode, RoleRecord, SystemMonitor } from "./types";
 
 type SystemProps = { user: AdminUser; canWrite: boolean; canTrace?: boolean; canFailover?: boolean; onNavigate?: (path: string) => void };
 const tones = { active: "green", inactive: "slate", ok: "green", warn: "amber", error: "rose", online: "green", offline: "rose", disabled: "slate", low: "slate", normal: "amber", high: "rose", urgent: "rose", acknowledged: "green", closed: "slate" } as const;
@@ -27,6 +27,77 @@ export function RoleManagementPage({ canWrite }: SystemProps) {
   const savePermissions = async () => { if (!selected) return; const saved = await adminApi.saveRole({ ...selected, permissionIds: [...checked] }); setRoles((items) => items.map((item) => item.id === saved.id ? saved : item)); setSelected(saved); };
   const saveRole = async () => { if (!editing) return; const saved = await adminApi.saveRole(editing); setRoles((items) => [saved, ...items.filter((item) => item.id !== saved.id)]); setSelected(saved); setEditing(null); };
   return <div className="p-6 xl:p-8"><Header eyebrow="系统管理" title="角色管理" description="通过角色集中配置数据范围和菜单权限。" action={<Button onClick={() => setEditing({ id: `role-${Date.now()}`, code: "custom_role", name: "", dataScope: "自定义", level: 4, description: "", permissionIds: [], createdAt: new Date().toISOString().slice(0, 10) })} disabled={!canWrite}>+ 新增角色</Button>} /><div className="grid gap-5 xl:grid-cols-[1.15fr_.85fr]"><Card className="overflow-hidden"><div className="border-b border-slate-200 px-5 py-4 font-semibold text-slate-900">角色列表</div><div className="overflow-x-auto"><table className="min-w-[680px] w-full text-left text-xs"><thead className="border-b border-slate-100 text-slate-400"><tr>{["名称", "数据权限", "级别", "描述", "创建日期", "操作"].map((label) => <th key={label} className="px-4 py-4 font-semibold">{label}</th>)}</tr></thead><tbody className="divide-y divide-slate-100">{roles.map((role) => <tr key={role.id} className={selected?.id === role.id ? "bg-cyan-50/50" : ""} onClick={() => setSelected(role)}><td className="px-4 py-4 font-semibold text-slate-800">{role.name}<br /><span className="font-mono text-[10px] text-cyan-700">{role.code}</span></td><td className="px-4 py-4 text-slate-600">{role.dataScope}</td><td className="px-4 py-4 text-slate-600">{role.level}</td><td className="px-4 py-4 text-slate-500">{role.description || "-"}</td><td className="px-4 py-4 text-slate-400">{role.createdAt}</td><td className="px-4 py-4"><Button variant="ghost" disabled={!canWrite} onClick={(event) => { event.stopPropagation(); setEditing(role); }}>编辑</Button></td></tr>)}</tbody></table></div></Card><Card className="overflow-hidden"><div className="flex items-center justify-between border-b border-slate-200 px-5 py-4"><div><p className="font-semibold text-slate-900">菜单分配</p><p className="mt-1 text-xs text-slate-400">{selected?.name || "请选择角色"}</p></div><Button onClick={() => void savePermissions()} disabled={!canWrite || !selected}>✓ 保存</Button></div><div className="p-5">{selected ? <Tree nodes={tree} checked={checked} onToggle={toggle} expanded={expanded} onExpand={(id) => setExpanded((current) => { const next = new Set(current); next.has(id) ? next.delete(id) : next.add(id); return next; })} /> : <p className="text-sm text-slate-400">暂无角色</p>}</div></Card></div>{editing ? <Modal title={editing.name ? "编辑角色" : "新增角色"} onClose={() => setEditing(null)} onSave={() => void saveRole()}><div className="space-y-4"><Field label="角色名称" value={editing.name} onChange={(value) => setEditing({ ...editing, name: value })} /><Field label="权限编码" value={editing.code} onChange={(value) => setEditing({ ...editing, code: value })} /><Select label="数据权限" value={editing.dataScope} onChange={(value) => setEditing({ ...editing, dataScope: value as RoleRecord["dataScope"] })}><option value="全部数据">全部数据</option><option value="本部门">本部门</option><option value="自定义">自定义</option><option value="仅本人">仅本人</option></Select><Field label="描述" value={editing.description} onChange={(value) => setEditing({ ...editing, description: value })} textarea /></div></Modal> : null}</div>;
+}
+
+const LLM_PROVIDER_OPTIONS: Array<{ value: string; label: string; baseUrl: string; model: string }> = [
+  { value: "dashscope", label: "阿里云百炼 / DashScope", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "qwen-flash" },
+  { value: "deepseek", label: "DeepSeek", baseUrl: "https://api.deepseek.com/v1", model: "deepseek-chat" },
+  { value: "openai_compatible", label: "OpenAI-compatible", baseUrl: "https://api.openai.com/v1", model: "gpt-4o-mini" },
+  { value: "custom", label: "自定义兼容服务", baseUrl: "", model: "" },
+];
+function emptyLlmConfig(): LlmConfig {
+  const preset = LLM_PROVIDER_OPTIONS[0];
+  return { id: `new-${Date.now()}`, name: "", provider: preset.value, baseUrl: preset.baseUrl, model: preset.model, apiKey: "", apiKeyConfigured: false, systemPrompt: "你是四川博览集团的数字人助手，请准确、简洁地回答展会相关问题。", isActive: false, usage: "conversation", source: "managed", readOnly: false, createdAt: "", updatedAt: "" };
+}
+
+export function LlmConfigManagementPage({ canWrite }: SystemProps) {
+  const [items, setItems] = useState<LlmConfig[]>([]);
+  const [editing, setEditing] = useState<LlmConfig | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [busyId, setBusyId] = useState("");
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const reload = async () => {
+    setLoading(true);
+    setError("");
+    try { setItems(await adminApi.listLlmConfigs()); }
+    catch (caught) { setError(caught instanceof Error ? caught.message : "大模型配置读取失败。"); }
+    finally { setLoading(false); }
+  };
+  useEffect(() => { void reload(); }, []);
+  const save = async () => {
+    if (!editing) return;
+    if (!editing.name.trim() || !editing.baseUrl.trim() || !editing.model.trim()) { setError("请填写配置名称、Base URL 和模型名称。"); return; }
+    if (!editing.apiKeyConfigured && !editing.apiKey.trim()) { setError("首次保存必须填写 API Key。"); return; }
+    setBusyId(editing.id);
+    setError("");
+    setNotice("");
+    try {
+      const saved = await adminApi.saveLlmConfig(editing);
+      setItems((current) => [saved, ...current.filter((item) => item.id !== saved.id && item.id !== editing.id)]);
+      setEditing(null);
+      setNotice(saved.isActive ? "配置已保存，并已刷新当前数字人会话。" : "配置已保存到 SQLite。");
+    } catch (caught) { setError(caught instanceof Error ? caught.message : "大模型配置保存失败。"); }
+    finally { setBusyId(""); }
+  };
+  const activate = async (item: LlmConfig) => {
+    setBusyId(item.id); setError(""); setNotice("");
+    try { const saved = await adminApi.activateLlmConfig(item.id); setItems((current) => current.map((candidate) => (candidate.usage || "conversation") === "conversation" ? { ...candidate, isActive: candidate.id === saved.id } : candidate)); setNotice(`已启用“${saved.name}”，新会话和现有会话将使用该配置。`); }
+    catch (caught) { setError(caught instanceof Error ? caught.message : "启用配置失败。"); }
+    finally { setBusyId(""); }
+  };
+  const test = async (item: LlmConfig) => {
+    setBusyId(item.id); setError(""); setNotice("");
+    try { const result = await adminApi.testLlmConfig(item.id); setNotice(`${item.name}：${result.message}，耗时 ${result.latencyMs}ms。`); }
+    catch (caught) { setError(caught instanceof Error ? caught.message : "模型服务连接测试失败。"); }
+    finally { setBusyId(""); }
+  };
+  const remove = async (item: LlmConfig) => {
+    if (!window.confirm(`确认删除大模型配置“${item.name}”？`)) return;
+    setBusyId(item.id); setError("");
+    try { await adminApi.deleteLlmConfig(item.id); setItems((current) => current.filter((candidate) => candidate.id !== item.id)); setNotice("配置已删除。"); }
+    catch (caught) { setError(caught instanceof Error ? caught.message : "删除配置失败。"); }
+    finally { setBusyId(""); }
+  };
+  const active = items.find((item) => item.isActive && (item.usage || "conversation") === "conversation")
+    ?? items.find((item) => item.isActive);
+  return <div className="p-6 xl:p-8"><Header eyebrow="系统管理" title="大模型配置" description="统一查看配置文件与 Admin 管理的大模型服务；配置文件中的密钥仅显示配置状态，不会返回明文。" action={<Button onClick={() => setEditing(emptyLlmConfig())} disabled={!canWrite}>+ 新增配置</Button>} />
+    {error ? <p className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-700">{error}</p> : null}
+    {notice ? <p className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs text-emerald-700">{notice}</p> : null}
+    <Card className="mb-4 p-5"><div className="flex flex-wrap items-center justify-between gap-4"><div><p className="text-xs font-semibold text-slate-400">当前运行配置</p><h2 className="mt-2 text-lg font-semibold text-slate-900">{active?.name || "尚未检测到当前运行配置"}</h2><p className="mt-1 text-xs text-slate-500">{active ? `${active.model} · ${active.baseUrl}` : "请在下方选择一项配置并设为当前配置。"}</p></div><Badge tone={active ? "green" : "amber"}>{active ? "运行中" : "待配置"}</Badge></div></Card>
+    <Card className="overflow-x-auto"><table className="w-full min-w-[920px] text-left text-xs"><thead className="border-b border-slate-200 bg-slate-50 text-slate-400"><tr>{["配置名称", "服务商", "模型", "状态", "更新时间", "操作"].map((label) => <th key={label} className="px-4 py-4 font-semibold">{label}</th>)}</tr></thead><tbody className="divide-y divide-slate-100">{items.map((item) => <tr key={item.id}><td className="px-4 py-4 font-semibold text-slate-800">{item.name}</td><td className="px-4 py-4 text-slate-600">{LLM_PROVIDER_OPTIONS.find((option) => option.value === item.provider)?.label || item.provider}</td><td className="px-4 py-4 font-mono text-slate-600">{item.model || "-"}</td><td className="px-4 py-4"><Badge tone={item.isActive ? "green" : "slate"}>{item.isActive ? (item.readOnly ? "配置生效" : "当前使用") : "未启用"}</Badge></td><td className="whitespace-nowrap px-4 py-4 text-slate-400">{item.source === "config" ? "随服务启动加载" : item.updatedAt || item.createdAt || "-"}</td><td className="whitespace-nowrap px-4 py-4"><Button variant="ghost" onClick={() => void test(item)} disabled={busyId === item.id || !item.apiKeyConfigured}>测试连接</Button><Button variant="secondary" onClick={() => void activate(item)} disabled={!canWrite || item.readOnly || item.isActive || (item.usage || "conversation") !== "conversation" || busyId === item.id}>设为当前配置</Button><Button variant="ghost" onClick={() => setEditing({ ...item, apiKey: "" })} disabled={!canWrite || item.readOnly}>编辑</Button><Button variant="danger" onClick={() => void remove(item)} disabled={!canWrite || item.readOnly || item.isActive || busyId === item.id}>删除</Button></td></tr>)}</tbody></table>{loading ? <p className="px-4 py-12 text-center text-sm text-slate-400">配置读取中…</p> : !items.length ? <p className="px-4 py-12 text-center text-sm text-slate-400">配置文件和 Admin 中均暂无大模型配置。</p> : null}</Card>
+    {editing ? <Modal title={editing.id.startsWith("new-") ? "新增大模型配置" : "编辑大模型配置"} onClose={() => setEditing(null)} onSave={() => void save()} saveLabel={busyId ? "保存中…" : "保存配置"}><div className="space-y-4"><Field label="配置名称" value={editing.name} onChange={(value) => setEditing({ ...editing, name: value })} placeholder="例如：百炼 Qwen 生产环境" /><Select label="服务商" value={editing.provider} onChange={(value) => { const provider = value as LlmConfig["provider"]; const preset = LLM_PROVIDER_OPTIONS.find((option) => option.value === provider); setEditing({ ...editing, provider, baseUrl: preset?.baseUrl || editing.baseUrl, model: preset?.model || editing.model }); }}>{LLM_PROVIDER_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</Select><Field label="Base URL（填写到 /v1）" value={editing.baseUrl} onChange={(value) => setEditing({ ...editing, baseUrl: value })} placeholder="https://example.com/v1" /><Field label="模型名称" value={editing.model} onChange={(value) => setEditing({ ...editing, model: value })} placeholder="qwen-flash" /><label className="block text-xs font-semibold text-slate-600">API Key<input type="password" autoComplete="new-password" value={editing.apiKey} onChange={(event) => setEditing({ ...editing, apiKey: event.target.value })} placeholder={editing.apiKeyConfigured ? "已配置；留空表示保持不变" : "请输入 API Key"} className="mt-2 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm font-normal text-slate-800 outline-none focus:border-cyan-400" /></label><Field label="系统提示词" value={editing.systemPrompt} onChange={(value) => setEditing({ ...editing, systemPrompt: value })} textarea /></div></Modal> : null}
+  </div>;
 }
 
 export function PermissionManagementPage({ canWrite }: SystemProps) {

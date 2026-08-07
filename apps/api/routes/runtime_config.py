@@ -34,6 +34,7 @@ _RUNTIME_ENV_KEYS = {
     "OPENTALKING_LLM_BASE_URL",
     "OPENTALKING_LLM_API_KEY",
     "OPENTALKING_LLM_MODEL",
+    "OPENTALKING_LLM_SYSTEM_PROMPT",
     "OPENTALKING_STT_DEFAULT_PROVIDER",
     "OPENTALKING_STT_ENABLED_PROVIDERS",
     "OPENTALKING_STT_MODEL",
@@ -105,6 +106,7 @@ class RuntimeConfigPayload(BaseModel):
     llm_base_url: Optional[str] = Field(default=None, max_length=2048)
     llm_model: Optional[str] = Field(default=None, max_length=256)
     llm_api_key: Optional[str] = Field(default=None, max_length=4096)
+    llm_system_prompt: Optional[str] = Field(default=None, max_length=12000)
     stt_provider: Optional[str] = Field(default=None, max_length=64)
     stt_base_url: Optional[str] = Field(default=None, max_length=2048)
     stt_model: Optional[str] = Field(default=None, max_length=256)
@@ -502,6 +504,7 @@ def _current_payload(settings: Any | None = None) -> dict[str, Any]:
         "llm": {
             "base_url": _env_value(values, "OPENTALKING_LLM_BASE_URL", _settings_value(settings, "llm_base_url")).rstrip("/"),
             "model": _env_value(values, "OPENTALKING_LLM_MODEL", _settings_value(settings, "llm_model", "qwen-flash")),
+            "system_prompt": _env_value(values, "OPENTALKING_LLM_SYSTEM_PROMPT", _settings_value(settings, "llm_system_prompt")),
             "api_key_set": bool(llm_key),
         },
         "stt": _current_stt_payload(stt_provider, settings, values),
@@ -521,6 +524,8 @@ def _build_updates(payload: RuntimeConfigPayload) -> dict[str, str]:
     if value := _strip(payload.llm_api_key):
         updates["OPENTALKING_LLM_API_KEY"] = value
         sync_key = value
+    if payload.llm_system_prompt is not None:
+        updates["OPENTALKING_LLM_SYSTEM_PROMPT"] = _strip(payload.llm_system_prompt)
 
     stt_provider = ""
     if raw := _strip(payload.stt_provider):
@@ -660,6 +665,7 @@ def _refresh_live_runners(request: Request, settings: Any) -> int:
             runner._llm_base_url = settings.llm_base_url
             runner._llm_api_key = settings.llm_api_key
             runner._llm_model = settings.llm_model
+            runner._llm_system_prompt = settings.llm_system_prompt
             runner._llm_client = None
             count += 1
         if hasattr(runner, "llm"):

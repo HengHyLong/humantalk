@@ -7,7 +7,7 @@ import { RealtimeTestWorkspace } from "./RealtimeTestWorkspace";
 import { BroadcastPage, ExhibitionDetailPage, ExhibitionPage, ExhibitorPage, ExhibitPage, PointPage, RoutePage, SchedulePage, VenuePage } from "./EventOperationsPages";
 import { LeadOperationsPage } from "./LeadOperationsPages";
 import { ExplainFlowPage, ShoppingStrategyPage, WelcomeConfigPage } from "./InteractionManagementPages";
-import { AuditLogPage, OpsMonitoringPage, RoleManagementPage, UserManagementPage } from "./SystemManagementPages";
+import { AuditLogPage, LlmConfigManagementPage, OpsMonitoringPage, RoleManagementPage, UserManagementPage } from "./SystemManagementPages";
 import { DocumentCenterPage, KnowledgeBasePage, MemoryCenterPage } from "./KnowledgeCenterPages";
 import {
   EnhancedAvatarPage,
@@ -86,6 +86,7 @@ const MENU_GROUPS: MenuItem[] = [
   { id: "system", label: "系统管理", children: [
     { id: "system-user", label: "用户管理", path: "/system/user", permission: "system:user" },
     { id: "system-role", label: "角色管理", path: "/system/role", permission: "system:role" },
+      { id: "system-llm", label: "模型管理", path: "/system/llm", permission: "system:llm" },
     { id: "system-audit", label: "审计日志", path: "/system/audit", permission: "system:audit" },
     { id: "system-ops", label: "监控告警", path: "/system/ops", permission: "system:ops" },
   ] },
@@ -108,6 +109,7 @@ const PAGE_LABELS: Record<string, string> = {
   "/system/role": "角色管理",
   "/system/audit": "审计日志",
   "/system/ops": "监控告警",
+  "/system/llm": "大模型配置",
   "/asset/avatar": "数字人形象",
   "/asset/gif": "动作素材",
   "/asset/voice": "声音配置",
@@ -379,6 +381,14 @@ function menuContainsPath(item: MenuItem, path: string): boolean {
   return Boolean(item.children?.some((child) => menuContainsPath(child, path)));
 }
 
+function menuGroupPath(items: MenuItem[], path: string): string[] {
+  for (const item of items) {
+    if (!item.children || !menuContainsPath(item, path)) continue;
+    return [item.id, ...menuGroupPath(item.children, path)];
+  }
+  return [];
+}
+
 function flattenMenu(items: MenuItem[]): MenuItem[] {
   return items.flatMap((item) => item.path ? [item] : flattenMenu(item.children ?? []));
 }
@@ -397,14 +407,15 @@ function menuIconName(id: string): string {
 
 function Sidebar({ user, path, navigate, collapsed, onCollapse, mobileOpen, onClose }: { user: AdminUser; path: string; navigate: (path: string) => void; collapsed: boolean; onCollapse: () => void; mobileOpen: boolean; onClose: () => void }) {
   const visible = MENU_GROUPS.filter((item) => hasVisibleMenuItem(user, item));
-  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
+  const [expandedGroups, setExpandedGroups] = useState<string[]>(() => menuGroupPath(visible, path));
 
   useEffect(() => {
-    const activeGroups = visible.filter((item) => menuContainsPath(item, path)).flatMap((item) => [item.id, ...(item.children ?? []).filter((child) => menuContainsPath(child, path)).map((child) => child.id)]);
-    if (activeGroups.length) setCollapsedGroups((current) => ({ ...current, ...Object.fromEntries(activeGroups.map((id) => [id, false])) }));
-  }, [path]);
+    setExpandedGroups(menuGroupPath(MENU_GROUPS.filter((item) => hasVisibleMenuItem(user, item)), path));
+  }, [path, user]);
 
-  const toggleGroup = (id: string) => setCollapsedGroups((current) => ({ ...current, [id]: !current[id] }));
+  const toggleGroup = (id: string, ancestors: string[]) => {
+    setExpandedGroups((current) => current.includes(id) ? ancestors : [...ancestors, id]);
+  };
   const goTo = (nextPath: string) => {
     navigate(nextPath);
     onClose();
@@ -417,9 +428,9 @@ function Sidebar({ user, path, navigate, collapsed, onCollapse, mobileOpen, onCl
     </div>
     <div className="flex-1 overflow-y-auto px-4 py-5">
       {(() => {
-        const renderItems = (items: MenuItem[], level = 0): ReactNode => items.filter((item) => hasVisibleMenuItem(user, item)).map((item) => {
+        const renderItems = (items: MenuItem[], level = 0, ancestors: string[] = []): ReactNode => items.filter((item) => hasVisibleMenuItem(user, item)).map((item) => {
           if (!item.children) return <NavButton key={item.id} item={item} path={path} navigate={goTo} collapsed={collapsed} level={level} />;
-          const groupCollapsed = Boolean(collapsedGroups[item.id]);
+          const groupExpanded = expandedGroups.includes(item.id);
           const groupClass = level === 0
             ? "mb-5 rounded-2xl border border-slate-200 bg-slate-50/80 p-2 shadow-sm"
             : "mt-3 ml-2 border-l-2 border-cyan-100 pl-2";
@@ -427,11 +438,11 @@ function Sidebar({ user, path, navigate, collapsed, onCollapse, mobileOpen, onCl
             ? "border border-slate-200 bg-white px-3 py-3 text-base font-bold text-slate-900 shadow-sm"
             : "bg-white/80 px-3 py-2.5 text-sm font-semibold text-slate-700";
           return <div key={item.id} className={collapsed ? "mb-3" : groupClass}>
-            <button type="button" onClick={() => !collapsed && toggleGroup(item.id)} aria-expanded={!groupCollapsed} title={collapsed ? item.label : undefined} className={`${collapsed ? "justify-center" : `justify-between ${groupButtonClass}`} mb-1 flex w-full items-center rounded-xl tracking-[0.02em] hover:border-cyan-200 hover:bg-cyan-50/60`}>
+            <button type="button" onClick={() => !collapsed && toggleGroup(item.id, ancestors)} aria-expanded={groupExpanded} title={collapsed ? item.label : undefined} className={`${collapsed ? "justify-center" : `justify-between ${groupButtonClass}`} mb-1 flex w-full items-center rounded-xl tracking-[0.02em] hover:border-cyan-200 hover:bg-cyan-50/60`}>
               <span className={`flex items-center ${collapsed ? "justify-center" : "gap-3"}`}><Icon name={menuIconName(item.id)} className="h-5 w-5 shrink-0" />{collapsed ? null : <span>{item.label}</span>}</span>
-              {!collapsed ? <span className={`transition-transform ${groupCollapsed ? "-rotate-90" : "rotate-90"}`}><Icon name="chevron" className="h-5 w-5" /></span> : null}
+              {!collapsed ? <span className={`transition-transform ${groupExpanded ? "rotate-90" : "-rotate-90"}`}><Icon name="chevron" className="h-5 w-5" /></span> : null}
             </button>
-            {!collapsed && !groupCollapsed ? <div className={level === 0 ? "space-y-1" : "space-y-1.5"}>{renderItems(item.children, level + 1)}</div> : null}
+            {!collapsed && groupExpanded ? <div className={level === 0 ? "space-y-1" : "space-y-1.5"}>{renderItems(item.children, level + 1, [...ancestors, item.id])}</div> : null}
           </div>;
         });
         return renderItems(visible);
@@ -480,7 +491,7 @@ export function AdminApp() {
   const exhibitionId = searchParams.get("id") ?? "";
   const initialExhibitionId = searchParams.get("exhibitionId") ?? "";
   const leadId = searchParams.get("id") ?? "";
-  return <div className="flex min-h-screen bg-[#f3f7f9] text-slate-900">{mobileOpen ? <button type="button" aria-label="关闭菜单" onClick={() => setMobileOpen(false)} className="fixed inset-0 z-40 bg-slate-950/25 lg:hidden" /> : null}<Sidebar user={user} path={path} navigate={navigate} collapsed={collapsed} onCollapse={() => setCollapsed((value) => !value)} mobileOpen={mobileOpen} onClose={() => setMobileOpen(false)} /><div className="flex min-w-0 flex-1 flex-col"><header className="sticky top-0 z-30 flex h-[72px] items-center justify-between border-b border-slate-200 bg-white/95 px-5 backdrop-blur lg:px-8"><div className="flex min-w-0 items-center gap-3"><button type="button" onClick={() => setMobileOpen(true)} aria-label="打开菜单" className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 lg:hidden"><span className="text-lg">☰</span></button><div className="hidden lg:block"><p className="text-xs text-slate-400">当前工作区</p><div className="mt-1 flex items-center gap-2"><span className="text-sm font-semibold text-slate-900">{GROUP_LABELS[path.split("/")[1]] || "运营总览"}</span><span className="text-slate-300">/</span><span className="text-sm text-slate-500">{title}</span></div></div><div className="lg:hidden"><Logo /></div></div><div className="flex items-center gap-2 sm:gap-4"><button type="button" onClick={() => { window.location.search = "mode=studio"; }} className="hidden rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:border-cyan-300 hover:text-cyan-700 sm:inline-flex">旧 Studio</button><div className="hidden h-7 w-px bg-slate-200 sm:block" /><div className="flex items-center gap-2"><div className="flex h-8 w-8 items-center justify-center rounded-full bg-cyan-100 text-xs font-bold text-cyan-700">{user.displayName.slice(0, 1)}</div><div className="hidden text-right sm:block"><p className="text-xs font-semibold text-slate-800">{user.displayName}</p><p className="text-[10px] text-slate-400">{roleLabel(user.role)}</p></div></div><button type="button" onClick={logout} title="退出登录" className="rounded-xl p-2 text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Icon name="logout" /></button></div></header><MobileNav user={user} path={path} navigate={navigate} /><main className="min-h-0 flex-1 overflow-auto">{!isKnown ? <ComingSoonPage title={title} /> : path === "/dashboard" || path === "/dashboard/todo" ? <DashboardPage navigate={navigate} /> : path === "/lead" ? <LeadOperationsPage user={user} canWrite={eventCanWrite("lead:write")} canExport={canAccess(user.role, "lead:export")} canSensitive={canAccess(user.role, "lead:view_sensitive")} canFeedback={canAccess(user.role, "lead:feedback")} initialLeadId={leadId} initialExhibitionId={initialExhibitionId} onNavigate={navigate} /> : path === "/system/user" ? <UserManagementPage user={user} canWrite={eventCanWrite("system:user:write")} /> : path === "/system/role" ? <RoleManagementPage user={user} canWrite={eventCanWrite("system:role:write")} /> : path === "/system/audit" ? <AuditLogPage user={user} canWrite={false} canTrace={canAccess(user.role, "audit:trace")} onNavigate={navigate} /> : path === "/system/ops" ? <OpsMonitoringPage user={user} canWrite={false} canFailover={eventCanWrite("ops:failover")} /> : path === "/event/exhibition/detail" ? <ExhibitionDetailPage exhibitionId={exhibitionId} canWrite={eventCanWrite("event:exhibition:write")} onBack={() => navigate("/event/exhibition")} onNavigate={navigate} /> : path === "/event/exhibition" ? <ExhibitionPage canWrite={eventCanWrite("event:exhibition:write")} onOpenDetail={(id) => navigate(`/event/exhibition/detail?id=${encodeURIComponent(id)}`)} /> : path === "/event/exhibitor" ? <ExhibitorPage canWrite={eventCanWrite("event:exhibitor:write")} initialExhibitionId={initialExhibitionId} /> : path === "/event/exhibit" ? <ExhibitPage canWrite={eventCanWrite("event:exhibit")} initialExhibitionId={initialExhibitionId} /> : path === "/event/venue" ? <VenuePage canWrite={eventCanWrite("event:venue:write")} initialExhibitionId={initialExhibitionId} /> : path === "/event/point" ? <PointPage canWrite={eventCanWrite("event:point:write")} initialExhibitionId={initialExhibitionId} /> : path === "/event/route" ? <RoutePage canWrite={eventCanWrite("event:route:write")} initialExhibitionId={initialExhibitionId} /> : path === "/event/schedule" ? <SchedulePage canWrite={eventCanWrite("event:schedule:write")} initialExhibitionId={initialExhibitionId} /> : path === "/event/broadcast" ? <BroadcastPage canWrite={eventCanWrite("event:broadcast:write")} initialExhibitionId={initialExhibitionId} /> : path === "/asset/avatar" ? <EnhancedAvatarPage onDebug={(avatarId) => navigate(`/interact/test?avatarId=${encodeURIComponent(avatarId)}`)} /> : path === "/asset/gif" ? <EnhancedGifPage /> : path === "/asset/voice" ? <EnhancedVoicePage /> : path === "/asset/scene" ? <EnhancedScenePage /> : path === "/asset/idle" ? <EnhancedIdlePage /> : path === "/knowledge/document" ? <DocumentCenterPage /> : path === "/knowledge/base" ? <KnowledgeBasePage /> : path === "/knowledge/memory" ? <MemoryCenterPage /> : path === "/knowledge/qa" ? <EnhancedQaPage /> : path === "/knowledge/script" ? <EnhancedScriptPage /> : path === "/knowledge/package" ? <EnhancedPackagePage /> : path === "/interact/test" ? <RealtimeTestWorkspace /> : path === "/interact/welcome" ? <WelcomeConfigPage user={user} canWrite={eventCanWrite("interact:welcome:write")} initialExhibitionId={initialExhibitionId} /> : path === "/interact/explain" ? <ExplainFlowPage user={user} canWrite={eventCanWrite("interact:explain:write")} initialExhibitionId={initialExhibitionId} /> : path === "/interact/shopping" ? <ShoppingStrategyPage user={user} canWrite={eventCanWrite("interact:shopping:write")} initialExhibitionId={initialExhibitionId} /> : <ComingSoonPage title={title} />}</main></div></div>;
+  return <div className="flex min-h-screen bg-[#f3f7f9] text-slate-900">{mobileOpen ? <button type="button" aria-label="关闭菜单" onClick={() => setMobileOpen(false)} className="fixed inset-0 z-40 bg-slate-950/25 lg:hidden" /> : null}<Sidebar user={user} path={path} navigate={navigate} collapsed={collapsed} onCollapse={() => setCollapsed((value) => !value)} mobileOpen={mobileOpen} onClose={() => setMobileOpen(false)} /><div className="flex min-w-0 flex-1 flex-col"><header className="sticky top-0 z-30 flex h-[72px] items-center justify-between border-b border-slate-200 bg-white/95 px-5 backdrop-blur lg:px-8"><div className="flex min-w-0 items-center gap-3"><button type="button" onClick={() => setMobileOpen(true)} aria-label="打开菜单" className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 lg:hidden"><span className="text-lg">☰</span></button><div className="hidden lg:block"><p className="text-xs text-slate-400">当前工作区</p><div className="mt-1 flex items-center gap-2"><span className="text-sm font-semibold text-slate-900">{GROUP_LABELS[path.split("/")[1]] || "运营总览"}</span><span className="text-slate-300">/</span><span className="text-sm text-slate-500">{title}</span></div></div><div className="lg:hidden"><Logo /></div></div><div className="flex items-center gap-2 sm:gap-4"><button type="button" onClick={() => { window.location.search = "mode=studio"; }} className="hidden rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:border-cyan-300 hover:text-cyan-700 sm:inline-flex">旧 Studio</button><div className="hidden h-7 w-px bg-slate-200 sm:block" /><div className="flex items-center gap-2"><div className="flex h-8 w-8 items-center justify-center rounded-full bg-cyan-100 text-xs font-bold text-cyan-700">{user.displayName.slice(0, 1)}</div><div className="hidden text-right sm:block"><p className="text-xs font-semibold text-slate-800">{user.displayName}</p><p className="text-[10px] text-slate-400">{roleLabel(user.role)}</p></div></div><button type="button" onClick={logout} title="退出登录" className="rounded-xl p-2 text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Icon name="logout" /></button></div></header><MobileNav user={user} path={path} navigate={navigate} /><main className="min-h-0 flex-1 overflow-auto">{!isKnown ? <ComingSoonPage title={title} /> : path === "/dashboard" || path === "/dashboard/todo" ? <DashboardPage navigate={navigate} /> : path === "/lead" ? <LeadOperationsPage user={user} canWrite={eventCanWrite("lead:write")} canExport={canAccess(user.role, "lead:export")} canSensitive={canAccess(user.role, "lead:view_sensitive")} canFeedback={canAccess(user.role, "lead:feedback")} initialLeadId={leadId} initialExhibitionId={initialExhibitionId} onNavigate={navigate} /> : path === "/system/user" ? <UserManagementPage user={user} canWrite={eventCanWrite("system:user:write")} /> : path === "/system/role" ? <RoleManagementPage user={user} canWrite={eventCanWrite("system:role:write")} /> : path === "/system/llm" ? <LlmConfigManagementPage user={user} canWrite={eventCanWrite("system:llm:write")} /> : path === "/system/audit" ? <AuditLogPage user={user} canWrite={false} canTrace={canAccess(user.role, "audit:trace")} onNavigate={navigate} /> : path === "/system/ops" ? <OpsMonitoringPage user={user} canWrite={false} canFailover={eventCanWrite("ops:failover")} /> : path === "/event/exhibition/detail" ? <ExhibitionDetailPage exhibitionId={exhibitionId} canWrite={eventCanWrite("event:exhibition:write")} onBack={() => navigate("/event/exhibition")} onNavigate={navigate} /> : path === "/event/exhibition" ? <ExhibitionPage canWrite={eventCanWrite("event:exhibition:write")} onOpenDetail={(id) => navigate(`/event/exhibition/detail?id=${encodeURIComponent(id)}`)} /> : path === "/event/exhibitor" ? <ExhibitorPage canWrite={eventCanWrite("event:exhibitor:write")} initialExhibitionId={initialExhibitionId} /> : path === "/event/exhibit" ? <ExhibitPage canWrite={eventCanWrite("event:exhibit")} initialExhibitionId={initialExhibitionId} /> : path === "/event/venue" ? <VenuePage canWrite={eventCanWrite("event:venue:write")} initialExhibitionId={initialExhibitionId} /> : path === "/event/point" ? <PointPage canWrite={eventCanWrite("event:point:write")} initialExhibitionId={initialExhibitionId} /> : path === "/event/route" ? <RoutePage canWrite={eventCanWrite("event:route:write")} initialExhibitionId={initialExhibitionId} /> : path === "/event/schedule" ? <SchedulePage canWrite={eventCanWrite("event:schedule:write")} initialExhibitionId={initialExhibitionId} /> : path === "/event/broadcast" ? <BroadcastPage canWrite={eventCanWrite("event:broadcast:write")} initialExhibitionId={initialExhibitionId} /> : path === "/asset/avatar" ? <EnhancedAvatarPage onDebug={(avatarId) => navigate(`/interact/test?avatarId=${encodeURIComponent(avatarId)}`)} /> : path === "/asset/gif" ? <EnhancedGifPage /> : path === "/asset/voice" ? <EnhancedVoicePage /> : path === "/asset/scene" ? <EnhancedScenePage /> : path === "/asset/idle" ? <EnhancedIdlePage /> : path === "/knowledge/document" ? <DocumentCenterPage /> : path === "/knowledge/base" ? <KnowledgeBasePage /> : path === "/knowledge/memory" ? <MemoryCenterPage /> : path === "/knowledge/qa" ? <EnhancedQaPage /> : path === "/knowledge/script" ? <EnhancedScriptPage /> : path === "/knowledge/package" ? <EnhancedPackagePage /> : path === "/interact/test" ? <RealtimeTestWorkspace /> : path === "/interact/welcome" ? <WelcomeConfigPage user={user} canWrite={eventCanWrite("interact:welcome:write")} initialExhibitionId={initialExhibitionId} /> : path === "/interact/explain" ? <ExplainFlowPage user={user} canWrite={eventCanWrite("interact:explain:write")} initialExhibitionId={initialExhibitionId} /> : path === "/interact/shopping" ? <ShoppingStrategyPage user={user} canWrite={eventCanWrite("interact:shopping:write")} initialExhibitionId={initialExhibitionId} /> : <ComingSoonPage title={title} />}</main></div></div>;
 }
 
 export function adminRoleCanWrite(user: AdminUser, permission: Parameters<typeof canUseButton>[1]): boolean { return canUseButton(user.role, permission); }

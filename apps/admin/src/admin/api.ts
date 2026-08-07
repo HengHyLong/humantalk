@@ -8,6 +8,8 @@ import type {
   EmergencyBroadcast,
   EventPoint,
   Exhibit,
+  ExhibitSurvey,
+  ExhibitSurveySubmission,
   Exhibition,
   ExhibitionRoute,
   Exhibitor,
@@ -22,6 +24,8 @@ import type {
   VoiceAsset,
   ExhibitionStatus,
   Lead,
+  LlmConfig,
+  LlmConnectionTestResult,
   LeadStatus,
   Feedback,
   AdminUserRecord,
@@ -38,6 +42,7 @@ import type {
 
 const STORAGE_PREFIX = "opentalking-admin-";
 const now = () => new Date().toISOString();
+const leadSourceName = (item: Lead) => item.sourceName || (item.source === "exhibit_survey" ? "展品调研二维码" : item.terminalName || "人工录入");
 export type EventImageResource = "exhibitors" | "exhibits" | "venues" | "points";
 
 function readLocalImage(file: File): Promise<string> {
@@ -278,6 +283,9 @@ export interface AdminApiClient {
   listExhibits(): Promise<Exhibit[]>;
   saveExhibit(item: Exhibit): Promise<Exhibit>;
   deleteExhibit(id: string): Promise<void>;
+  createExhibitSurvey(id: string): Promise<ExhibitSurvey>;
+  getExhibitSurvey(token: string): Promise<ExhibitSurvey>;
+  submitExhibitSurvey(token: string, input: ExhibitSurveySubmission): Promise<{ submitted: boolean; leadId: string }>;
   listRoutes(): Promise<ExhibitionRoute[]>;
   saveRoute(item: ExhibitionRoute): Promise<ExhibitionRoute>;
   deleteRoute(id: string): Promise<void>;
@@ -292,7 +300,7 @@ export interface AdminApiClient {
   getLead(id: string): Promise<Lead | null>;
   saveLead(item: Lead): Promise<Lead>;
   updateLeadStatus(id: string, status: LeadStatus, note?: string): Promise<Lead>;
-  exportLeads(filters?: { exhibitionId?: string; keyword?: string; status?: string; from?: string; to?: string }): Promise<string>;
+  exportLeads(filters?: { exhibitionId?: string; keyword?: string; status?: string; source?: string; from?: string; to?: string }): Promise<string>;
   listFeedback(filters?: { exhibitionId?: string; keyword?: string; status?: Feedback["status"] }): Promise<Feedback[]>;
   resolveFeedback(id: string, note: string, operator?: string): Promise<Feedback>;
   listAdminUsers(filters?: { keyword?: string; status?: AdminUserRecord["status"] }): Promise<AdminUserRecord[]>;
@@ -313,6 +321,11 @@ export interface AdminApiClient {
   getSystemMonitor(): Promise<SystemMonitor>;
   listAlerts(): Promise<AlertEvent[]>;
   acknowledgeAlert(id: string, operator?: string): Promise<AlertEvent>;
+  listLlmConfigs(): Promise<LlmConfig[]>;
+  saveLlmConfig(item: LlmConfig): Promise<LlmConfig>;
+  deleteLlmConfig(id: string): Promise<void>;
+  activateLlmConfig(id: string): Promise<LlmConfig>;
+  testLlmConfig(id: string): Promise<LlmConnectionTestResult>;
 }
 
 function buildUser(username: string, role: AdminUser["role"]): AdminUser {
@@ -501,6 +514,25 @@ export class MockAdminApiClient implements AdminApiClient {
   async listExhibits() { return readStore<Exhibit[]>("exhibits", DEFAULT_EXHIBITS); }
   async saveExhibit(item: Exhibit) { const exhibitor = (await this.listExhibitors()).find((candidate) => candidate.id === item.exhibitorId); if (!exhibitor || exhibitor.exhibitionId !== item.exhibitionId) throw new Error("展品与展商必须属于同一场展会"); const saved = { ...item, updatedAt: now() }; writeStore("exhibits", [saved, ...(await this.listExhibits()).filter((candidate) => candidate.id !== item.id)]); return saved; }
   async deleteExhibit(id: string) { if ((await this.listPoints()).some((item) => item.exhibitId === id)) throw new Error("该展品仍被点位关联，请先解除关联后再删除。"); writeStore("exhibits", (await this.listExhibits()).filter((item) => item.id !== id)); }
+  async createExhibitSurvey(id: string) {
+    const exhibits = await this.listExhibits();
+    const exhibit = exhibits.find((item) => item.id === id);
+    if (!exhibit) throw new Error("展品不存在");
+    const surveyToken = String((exhibit as Exhibit & { surveyToken?: string }).surveyToken || crypto.randomUUID().replaceAll("-", ""));
+    writeStore("exhibits", exhibits.map((item) => item.id === id ? { ...item, surveyToken, surveyCreatedAt: now() } : item));
+    return this.getExhibitSurvey(surveyToken);
+  }
+  async getExhibitSurvey(token: string) {
+    const exhibit = (await this.listExhibits()).find((item) => (item as Exhibit & { surveyToken?: string }).surveyToken === token);
+    if (!exhibit) throw new Error("调研表单不存在或尚未启用");
+    const [exhibitors, exhibitions, leads] = await Promise.all([this.listExhibitors(), this.listExhibitions(), this.listLeads()]);
+    return { token, path: `/survey/${token}`, exhibitId: exhibit.id, exhibitName: exhibit.name, exhibitorId: exhibit.exhibitorId, exhibitorName: exhibitors.find((item) => item.id === exhibit.exhibitorId)?.name || "", exhibitionId: exhibit.exhibitionId, exhibitionName: exhibitions.find((item) => item.id === exhibit.exhibitionId)?.name || "", description: exhibit.description, imageUrls: exhibit.imageUrls || [], submissionCount: leads.filter((item) => item.qrToken === token).length, createdAt: String((exhibit as Exhibit & { surveyCreatedAt?: string }).surveyCreatedAt || now()) };
+  }
+  async submitExhibitSurvey(token: string, input: ExhibitSurveySubmission) {
+    const survey = await this.getExhibitSurvey(token);
+    const saved = await this.saveLead({ id: `new-${Date.now()}`, exhibitionId: survey.exhibitionId, exhibitionName: survey.exhibitionName, terminalId: "", terminalName: "展品调研二维码", companyName: input.companyName || "个人访客", contactName: input.contactName, phone: input.phone, email: input.email, intentSummary: input.intentSummary || `通过二维码关注展品：${survey.exhibitName}`, status: "new", source: "exhibit_survey", sourceName: "展品调研二维码", exhibitName: survey.exhibitName, exhibitorName: survey.exhibitorName, interestedExhibitorIds: [survey.exhibitorId], interestedExhibitIds: [survey.exhibitId], qrToken: token, createdAt: now(), statusHistory: [{ status: "new", operator: "调研表单", time: now(), note: "访客扫码提交" }] });
+    return { submitted: true, leadId: saved.id };
+  }
   async listRoutes() {
     const routes = await readStore<Array<ExhibitionRoute & { exhibitionId?: string; from?: string; to?: string }>>("routes", DEFAULT_ROUTES);
     const points = await this.listPoints();
@@ -527,7 +559,7 @@ export class MockAdminApiClient implements AdminApiClient {
   async getLead(id: string) { return (await this.listLeads()).find((item) => item.id === id) ?? null; }
   async saveLead(item: Lead) { const saved = { ...item, updatedAt: now() } as Lead; writeStore("leads", [saved, ...(await this.listLeads()).filter((candidate) => candidate.id !== item.id)]); return saved; }
   async updateLeadStatus(id: string, status: LeadStatus, note?: string) { const list = await this.listLeads(); const existing = list.find((item) => item.id === id); if (!existing) throw new Error("线索不存在"); const saved = { ...existing, status, statusHistory: [...existing.statusHistory, { status, operator: "当前用户", time: now(), note }] }; writeStore("leads", [saved, ...list.filter((item) => item.id !== id)]); return saved; }
-  async exportLeads(filters: { exhibitionId?: string; keyword?: string; status?: string; from?: string; to?: string } = {}) { const rows = await this.listLeads(filters as { exhibitionId?: string; keyword?: string; status?: LeadStatus; from?: string; to?: string }); return [["线索ID", "展会", "单位名称", "联系人", "状态", "创建时间"], ...rows.map((item) => [item.id, item.exhibitionName, item.companyName, item.contactName, item.status, item.createdAt])].map((row) => row.map((cell) => `"${String(cell).replaceAll('"', '""')}"`).join(",")).join("\n"); }
+  async exportLeads(filters: { exhibitionId?: string; keyword?: string; status?: string; source?: string; from?: string; to?: string } = {}) { const rows = (await this.listLeads(filters as { exhibitionId?: string; keyword?: string; status?: LeadStatus; from?: string; to?: string })).filter((item) => !filters.source || (filters.source === "exhibit_survey" ? item.source === "exhibit_survey" : item.source !== "exhibit_survey")); return [["线索ID", "来源", "展品", "展会", "单位名称", "联系人", "状态", "创建时间"], ...rows.map((item) => [item.id, leadSourceName(item), item.exhibitName || "", item.exhibitionName, item.companyName, item.contactName, item.status, item.createdAt])].map((row) => row.map((cell) => `"${String(cell).replaceAll('"', '""')}"`).join(",")).join("\n"); }
   async listFeedback(filters: { exhibitionId?: string; keyword?: string; status?: Feedback["status"] } = {}) { const keyword = filters.keyword?.trim().toLowerCase(); return (await readStore<Feedback[]>("feedback", DEFAULT_FEEDBACK)).filter((item) => (!filters.exhibitionId || filters.exhibitionId === "all" || item.exhibitionId === filters.exhibitionId) && (!filters.status || item.status === filters.status) && (!keyword || `${item.content} ${item.type} ${item.traceId}`.toLowerCase().includes(keyword))); }
   async resolveFeedback(id: string, note: string, operator = "当前用户") { const list = await this.listFeedback(); const existing = list.find((item) => item.id === id); if (!existing) throw new Error("反馈不存在"); const saved = { ...existing, status: "handled" as const, note, handledBy: operator, handledAt: now() }; writeStore("feedback", [saved, ...list.filter((item) => item.id !== id)]); return saved; }
   async listAdminUsers(filters: { keyword?: string; status?: AdminUserRecord["status"] } = {}) { const keyword = filters.keyword?.trim().toLowerCase(); return (await readStore<AdminUserRecord[]>("admin-users", DEFAULT_ADMIN_USERS)).filter((item) => (!filters.status || item.status === filters.status) && (!keyword || [item.username, item.displayName, item.email].some((value) => value.toLowerCase().includes(keyword)))); }
@@ -548,6 +580,11 @@ export class MockAdminApiClient implements AdminApiClient {
   async getSystemMonitor() { const monitor = readStore<SystemMonitor>("system-monitor", DEFAULT_MONITOR); const refreshed = { ...monitor, refreshedAt: now() }; writeStore("system-monitor", refreshed); return refreshed; }
   async listAlerts() { return readStore<AlertEvent[]>("alerts", DEFAULT_ALERTS); }
   async acknowledgeAlert(id: string, operator = "当前用户") { const list = await this.listAlerts(); const existing = list.find((item) => item.id === id); if (!existing) throw new Error("告警不存在"); const saved = { ...existing, status: "acknowledged" as const, acknowledgedBy: operator, acknowledgedAt: now() }; writeStore("alerts", [saved, ...list.filter((item) => item.id !== id)]); return saved; }
+  async listLlmConfigs() { return readStore<LlmConfig[]>("llm-configs", []); }
+  async saveLlmConfig(item: LlmConfig) { const saved = { ...item, id: item.id || `llm-${Date.now()}`, updatedAt: now(), createdAt: item.createdAt || now(), apiKeyConfigured: item.apiKeyConfigured || Boolean(item.apiKey) }; writeStore("llm-configs", [saved, ...(await this.listLlmConfigs()).filter((candidate) => candidate.id !== saved.id)]); return { ...saved, apiKey: "" }; }
+  async deleteLlmConfig(id: string) { writeStore("llm-configs", (await this.listLlmConfigs()).filter((item) => item.id !== id)); }
+  async activateLlmConfig(id: string) { const items = await this.listLlmConfigs(); const saved = items.find((item) => item.id === id); if (!saved) throw new Error("大模型配置不存在"); writeStore("llm-configs", items.map((item) => ({ ...item, isActive: item.id === id }))); return { ...saved, isActive: true }; }
+  async testLlmConfig(_id: string) { return { success: true, latencyMs: 1, message: "连接成功" }; }
 }
 
 function normalizeMenuPermissionNodes(nodes: PermissionNode[]): PermissionNode[] {
@@ -700,7 +737,7 @@ export class FetchAdminApiClient implements AdminApiClient {
   private lead(item: JsonRecord): Lead {
     const history = Array.isArray(item.statusHistory || item.status_history) ? (item.statusHistory || item.status_history) as unknown[] : [];
     const status = item.status === "contacted" || item.status === "converted" || item.status === "invalid" ? item.status : "new";
-    return { ...item, id: String(item.id || ""), exhibitionId: String(item.exhibitionId || item.exhibition_id || ""), exhibitionName: String(item.exhibitionName || item.exhibition_name || ""), terminalId: String(item.terminalId || item.terminal_id || ""), terminalName: String(item.terminalName || item.terminal_name || ""), companyName: String(item.companyName || item.company_name || ""), contactName: String(item.contactName || item.contact_name || ""), phone: String(item.phone || ""), email: String(item.email || ""), intentSummary: String(item.intentSummary || item.intent_summary || ""), status, interestedExhibitorIds: stringArray(item.interestedExhibitorIds || item.interested_exhibitor_ids), interestedExhibitIds: stringArray(item.interestedExhibitIds || item.interested_exhibit_ids), qrToken: String(item.qrToken || item.qr_token || ""), createdAt: String(item.createdAt || item.created_at || ""), statusHistory: history.map((entry) => { const value = entry as JsonRecord; const entryStatus = value.status === "contacted" || value.status === "converted" || value.status === "invalid" ? value.status : "new"; return { status: entryStatus, operator: String(value.operator || ""), time: String(value.time || value.createdAt || ""), note: value.note ? String(value.note) : undefined }; }) };
+    return { ...item, id: String(item.id || ""), exhibitionId: String(item.exhibitionId || item.exhibition_id || ""), exhibitionName: String(item.exhibitionName || item.exhibition_name || ""), terminalId: String(item.terminalId || item.terminal_id || ""), terminalName: String(item.terminalName || item.terminal_name || ""), companyName: String(item.companyName || item.company_name || ""), contactName: String(item.contactName || item.contact_name || ""), phone: String(item.phone || ""), email: String(item.email || ""), intentSummary: String(item.intentSummary || item.intent_summary || ""), status, source: item.source as Lead["source"], sourceName: String(item.sourceName || item.source_name || ""), exhibitName: String(item.exhibitName || item.exhibit_name || ""), exhibitorName: String(item.exhibitorName || item.exhibitor_name || ""), interestedExhibitorIds: stringArray(item.interestedExhibitorIds || item.interested_exhibitor_ids), interestedExhibitIds: stringArray(item.interestedExhibitIds || item.interested_exhibit_ids), qrToken: String(item.qrToken || item.qr_token || ""), createdAt: String(item.createdAt || item.created_at || ""), statusHistory: history.map((entry) => { const value = entry as JsonRecord; const entryStatus = value.status === "contacted" || value.status === "converted" || value.status === "invalid" ? value.status : "new"; return { status: entryStatus, operator: String(value.operator || ""), time: String(value.time || value.createdAt || ""), note: value.note ? String(value.note) : undefined }; }) };
   }
 
   private welcomeConfig(item: JsonRecord, exhibitions: Exhibition[]): WelcomeConfig {
@@ -885,6 +922,9 @@ export class FetchAdminApiClient implements AdminApiClient {
   async listExhibits() { return (await this.collection<JsonRecord>("event", "exhibits")).map((item) => this.exhibit(item)); }
   async saveExhibit(item: Exhibit) { return this.saveCollection<Exhibit>("event", "exhibits", item as JsonRecord); }
   async deleteExhibit(id: string) { await this.request(`/admin/event/exhibits/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+  async createExhibitSurvey(id: string) { return this.request<ExhibitSurvey>(`/admin/event/exhibits/${encodeURIComponent(id)}/survey`, { method: "POST" }); }
+  async getExhibitSurvey(token: string) { return this.request<ExhibitSurvey>(`/public/exhibit-surveys/${encodeURIComponent(token)}`); }
+  async submitExhibitSurvey(token: string, input: ExhibitSurveySubmission) { return this.request<{ submitted: boolean; leadId: string }>(`/public/exhibit-surveys/${encodeURIComponent(token)}/submissions`, { method: "POST", body: JSON.stringify(input) }); }
   async listRoutes() { return (await this.collection<JsonRecord>("event", "routes")).map((item) => this.route(item)); }
   async saveRoute(item: ExhibitionRoute) { return this.saveCollection<ExhibitionRoute>("event", "routes", item as JsonRecord); }
   async deleteRoute(id: string) { await this.request(`/admin/event/routes/${encodeURIComponent(id)}`, { method: "DELETE" }); }
@@ -905,7 +945,7 @@ export class FetchAdminApiClient implements AdminApiClient {
     return this.lead(await this.request<JsonRecord>(existing ? `/admin/lead/${encodeURIComponent(item.id)}` : "/admin/lead", { method: existing ? "PATCH" : "POST", body: this.data(item) }));
   }
   async updateLeadStatus(id: string, status: LeadStatus, note?: string) { return this.lead(await this.request<JsonRecord>(`/admin/lead/${encodeURIComponent(id)}/status`, { method: "POST", body: JSON.stringify({ status, note }) })); }
-  async exportLeads(filters: { exhibitionId?: string; keyword?: string; status?: string; from?: string; to?: string } = {}) { return this.download(`/admin/lead/export${queryString({ exhibition_id: filters.exhibitionId, keyword: filters.keyword, status: filters.status, from: filters.from, to: filters.to })}`); }
+  async exportLeads(filters: { exhibitionId?: string; keyword?: string; status?: string; source?: string; from?: string; to?: string } = {}) { return this.download(`/admin/lead/export${queryString({ exhibition_id: filters.exhibitionId, keyword: filters.keyword, status: filters.status, source: filters.source, from: filters.from, to: filters.to })}`); }
   async listFeedback(filters: { exhibitionId?: string; keyword?: string; status?: Feedback["status"] } = {}) { return this.list<Feedback>("/admin/feedback", { page: 1, page_size: 100, exhibition_id: filters.exhibitionId, keyword: filters.keyword, status: filters.status }); }
   async resolveFeedback(id: string, note: string) { return this.request<Feedback>(`/admin/feedback/${encodeURIComponent(id)}/resolve`, { method: "POST", body: this.data({ note }) }); }
 
@@ -978,6 +1018,20 @@ export class FetchAdminApiClient implements AdminApiClient {
     return items.map((item) => ({ ...item, id: String(item.id), type: String(item.type || ""), severity: item.severity === "warning" ? "normal" : item.severity, target: String(item.target || item.object || ""), content: String(item.content || ""), status: item.status === "open" ? "active" : item.status, occurredAt: String(item.occurredAt || item.createdAt || item.created_at || "") })) as AlertEvent[];
   }
   async acknowledgeAlert(id: string, _operator?: string) { return this.request<AlertEvent>(`/admin/alerts/${encodeURIComponent(id)}/acknowledge`, { method: "POST" }); }
+  async listLlmConfigs() {
+    const payload = await this.request<{ items?: LlmConfig[] }>("/admin/llm-configs");
+    return payload.items || [];
+  }
+  async saveLlmConfig(item: LlmConfig) {
+    const existing = Boolean(item.id) && !isClientDraftId(item.id);
+    return this.request<LlmConfig>(existing ? `/admin/llm-configs/${encodeURIComponent(item.id)}` : "/admin/llm-configs", {
+      method: existing ? "PATCH" : "POST",
+      body: JSON.stringify({ name: item.name, provider: item.provider, baseUrl: item.baseUrl, model: item.model, apiKey: item.apiKey || undefined, systemPrompt: item.systemPrompt }),
+    });
+  }
+  async deleteLlmConfig(id: string) { await this.request(`/admin/llm-configs/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+  async activateLlmConfig(id: string) { return this.request<LlmConfig>(`/admin/llm-configs/${encodeURIComponent(id)}/activate`, { method: "POST" }); }
+  async testLlmConfig(id: string) { return this.request<LlmConnectionTestResult>(`/admin/llm-configs/${encodeURIComponent(id)}/test`, { method: "POST" }); }
 }
 
 // 管理端生产运行统一使用 FastAPI；所有配置和业务数据都通过 API 写入 SQLite。
