@@ -38,6 +38,16 @@ import type {
 
 const STORAGE_PREFIX = "opentalking-admin-";
 const now = () => new Date().toISOString();
+export type EventImageResource = "exhibitors" | "exhibits" | "venues" | "points";
+
+function readLocalImage(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(reader.error || new Error("图片读取失败"));
+    reader.readAsDataURL(file);
+  });
+}
 
 function buildAdminFetchUrl(path: string): string {
   const base = typeof window === "undefined" ? "http://127.0.0.1:5173/" : window.location.href;
@@ -255,6 +265,7 @@ export interface AdminApiClient {
   saveExhibition(item: Exhibition): Promise<Exhibition>;
   deleteExhibition(id: string): Promise<void>;
   transitionExhibition(id: string, status: ExhibitionStatus): Promise<Exhibition>;
+  uploadEventImages(files: File[], resource: "exhibitors" | "exhibits" | "venues" | "points"): Promise<string[]>;
   listVenues(): Promise<EventVenue[]>;
   saveVenue(item: EventVenue): Promise<EventVenue>;
   deleteVenue(id: string): Promise<void>;
@@ -445,6 +456,7 @@ export class MockAdminApiClient implements AdminApiClient {
     writeStore("exhibitions", [saved, ...list.filter((item) => item.id !== id)]);
     return saved;
   }
+  async uploadEventImages(files: File[]) { return Promise.all(files.map(readLocalImage)); }
   async deleteExhibition(id: string) {
     const [exhibitions, exhibitors, exhibits, venues, schedules, broadcasts, points] = await Promise.all([this.listExhibitions(), this.listExhibitors(), this.listExhibits(), this.listVenues(), this.listSchedules(), this.listBroadcasts(), this.listPoints()]);
     const venueIds = new Set(venues.filter((item) => item.exhibitionId === id).map((item) => item.id));
@@ -652,20 +664,20 @@ export class FetchAdminApiClient implements AdminApiClient {
   }
 
   private venue(item: JsonRecord): EventVenue {
-    return { ...item, id: String(item.id || ""), exhibitionId: String(item.exhibitionId || item.exhibition_id || ""), name: String(item.name || item.code || item.id || "未命名场地"), address: String(item.address || ""), description: String(item.description || ""), status: item.status === "active" || item.status === "inactive" ? item.status : "draft", createdAt: String(item.createdAt || item.created_at || ""), updatedAt: String(item.updatedAt || item.updated_at || "") } as EventVenue;
+    return { ...item, id: String(item.id || ""), exhibitionId: String(item.exhibitionId || item.exhibition_id || ""), name: String(item.name || item.code || item.id || "未命名场地"), address: String(item.address || ""), description: String(item.description || ""), imageUrls: stringArray(item.imageUrls || item.image_urls || item.images), status: item.status === "active" || item.status === "inactive" ? item.status : "draft", createdAt: String(item.createdAt || item.created_at || ""), updatedAt: String(item.updatedAt || item.updated_at || "") } as EventVenue;
   }
 
   private point(item: JsonRecord): EventPoint {
     const pointTypes = ["entrance", "booth", "forum", "facility", "service", "other"];
-    return { ...item, id: String(item.id || ""), venueId: String(item.venueId || item.venue_id || ""), code: String(item.code || item.id || ""), name: String(item.name || item.code || item.id || "未命名点位"), type: pointTypes.includes(String(item.type)) ? String(item.type) as EventPoint["type"] : "other", floor: String(item.floor || ""), x: Number(item.x ?? 0), y: Number(item.y ?? 0), exhibitorId: item.exhibitorId || item.exhibitor_id || null, exhibitId: item.exhibitId || item.exhibit_id || null, description: String(item.description || ""), status: item.status === "active" || item.status === "inactive" ? item.status : "draft", createdAt: String(item.createdAt || item.created_at || ""), updatedAt: String(item.updatedAt || item.updated_at || "") } as EventPoint;
+    return { ...item, id: String(item.id || ""), venueId: String(item.venueId || item.venue_id || ""), code: String(item.code || item.id || ""), name: String(item.name || item.code || item.id || "未命名点位"), type: pointTypes.includes(String(item.type)) ? String(item.type) as EventPoint["type"] : "other", floor: String(item.floor || ""), x: Number(item.x ?? 0), y: Number(item.y ?? 0), exhibitorId: item.exhibitorId || item.exhibitor_id || null, exhibitId: item.exhibitId || item.exhibit_id || null, description: String(item.description || ""), imageUrls: stringArray(item.imageUrls || item.image_urls || item.images), status: item.status === "active" || item.status === "inactive" ? item.status : "draft", createdAt: String(item.createdAt || item.created_at || ""), updatedAt: String(item.updatedAt || item.updated_at || "") } as EventPoint;
   }
 
   private exhibitor(item: JsonRecord): Exhibitor {
-    return { ...item, id: String(item.id || ""), exhibitionId: String(item.exhibitionId || item.exhibition_id || ""), name: String(item.name || item.companyName || item.id || "未命名展商"), boothCode: String(item.boothCode || item.booth_code || ""), category: String(item.category || ""), contact: String(item.contact || ""), phone: String(item.phone || ""), status: item.status === "active" || item.status === "inactive" ? item.status : "pending", description: String(item.description || ""), createdAt: String(item.createdAt || item.created_at || ""), updatedAt: String(item.updatedAt || item.updated_at || "") } as Exhibitor;
+    return { ...item, id: String(item.id || ""), exhibitionId: String(item.exhibitionId || item.exhibition_id || ""), name: String(item.name || item.companyName || item.id || "未命名展商"), boothCode: String(item.boothCode || item.booth_code || ""), category: String(item.category || ""), contact: String(item.contact || ""), phone: String(item.phone || ""), status: item.status === "active" || item.status === "inactive" ? item.status : "pending", description: String(item.description || ""), imageUrls: stringArray(item.imageUrls || item.image_urls || item.images), createdAt: String(item.createdAt || item.created_at || ""), updatedAt: String(item.updatedAt || item.updated_at || "") } as Exhibitor;
   }
 
   private exhibit(item: JsonRecord): Exhibit {
-    return { ...item, id: String(item.id || ""), exhibitionId: String(item.exhibitionId || item.exhibition_id || ""), exhibitorId: String(item.exhibitorId || item.exhibitor_id || ""), name: String(item.name || item.modelNo || item.model_no || item.id || "未命名展品"), category: String(item.category || ""), modelNo: String(item.modelNo || item.model_no || ""), description: String(item.description || ""), status: item.status === "published" || item.status === "offline" ? item.status : "draft", createdAt: String(item.createdAt || item.created_at || ""), updatedAt: String(item.updatedAt || item.updated_at || "") } as Exhibit;
+    return { ...item, id: String(item.id || ""), exhibitionId: String(item.exhibitionId || item.exhibition_id || ""), exhibitorId: String(item.exhibitorId || item.exhibitor_id || ""), name: String(item.name || item.modelNo || item.model_no || item.id || "未命名展品"), category: String(item.category || ""), modelNo: String(item.modelNo || item.model_no || ""), description: String(item.description || ""), imageUrls: stringArray(item.imageUrls || item.image_urls || item.images), status: item.status === "published" || item.status === "offline" ? item.status : "draft", createdAt: String(item.createdAt || item.created_at || ""), updatedAt: String(item.updatedAt || item.updated_at || "") } as Exhibit;
   }
 
   private route(item: JsonRecord): ExhibitionRoute {
@@ -854,6 +866,13 @@ export class FetchAdminApiClient implements AdminApiClient {
   async saveExhibition(item: Exhibition) { return this.exhibition(await this.saveCollection<JsonRecord>("event", "exhibitions", item as JsonRecord)); }
   async deleteExhibition(id: string) { await this.request(`/admin/event/exhibitions/${encodeURIComponent(id)}`, { method: "DELETE" }); }
   async transitionExhibition(id: string, status: ExhibitionStatus) { return this.exhibition(await this.request<JsonRecord>(`/admin/event/exhibitions/${encodeURIComponent(id)}/lifecycle`, { method: "POST", body: JSON.stringify({ status }) })); }
+  async uploadEventImages(files: File[], resource: EventImageResource) {
+    const form = new FormData();
+    form.set("resource", resource);
+    files.forEach((file) => form.append("files", file, file.name));
+    const payload = await this.request<{ urls?: unknown }>("/admin/event/images/upload", { method: "POST", body: form });
+    return stringArray(payload.urls);
+  }
   async listVenues() { return (await this.collection<JsonRecord>("event", "venues")).map((item) => this.venue(item)); }
   async saveVenue(item: EventVenue) { return this.saveCollection<EventVenue>("event", "venues", item as JsonRecord); }
   async deleteVenue(id: string) { await this.request(`/admin/event/venues/${encodeURIComponent(id)}`, { method: "DELETE" }); }

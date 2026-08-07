@@ -251,6 +251,7 @@ export type Exhibitor = {
   phone: string;
   status: ExhibitorStatus;
   description: string;
+  imageUrls?: string[];
   createdAt: string;
   updatedAt: string;
 };
@@ -265,6 +266,7 @@ export type Exhibit = {
   category: string;
   modelNo: string;
   description: string;
+  imageUrls?: string[];
   status: ExhibitStatus;
   createdAt: string;
   updatedAt: string;
@@ -278,6 +280,7 @@ export type EventVenue = {
   name: string;
   address: string;
   description: string;
+  imageUrls?: string[];
   status: VenueStatus;
   createdAt: string;
   updatedAt: string;
@@ -298,6 +301,7 @@ export type EventPoint = {
   exhibitorId: string | null;
   exhibitId: string | null;
   description: string;
+  imageUrls?: string[];
   status: PointStatus;
   createdAt: string;
   updatedAt: string;

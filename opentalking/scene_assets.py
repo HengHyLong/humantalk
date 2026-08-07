@@ -13,6 +13,7 @@ from typing import Any
 SUPPORTED_IMAGE_TYPES = {"image/png", "image/jpeg", "image/webp"}
 SUPPORTED_VIDEO_TYPES = {"video/mp4", "video/webm", "video/quicktime"}
 SUPPORTED_BACKGROUND_TYPES = SUPPORTED_IMAGE_TYPES | SUPPORTED_VIDEO_TYPES
+SUPPORTED_FILE_TYPES = {"image/png", "image/jpeg", "image/webp", "image/gif", "image/svg+xml"}
 EXT_BY_MIME = {
     "image/png": ".png",
     "image/jpeg": ".jpg",
@@ -20,6 +21,8 @@ EXT_BY_MIME = {
     "video/mp4": ".mp4",
     "video/webm": ".webm",
     "video/quicktime": ".mov",
+    "image/gif": ".gif",
+    "image/svg+xml": ".svg",
 }
 VALID_AVATAR_FITS = {"contain", "cover"}
 VALID_AVATAR_ANCHORS = {"center", "bottom", "left", "right"}
@@ -83,6 +86,8 @@ class SceneAssetStore:
         self.backgrounds_dir = self.root / "backgrounds"
         self.compositions_dir = self.root / "compositions"
         self.background_index_path = self.backgrounds_dir / "index.json"
+        self.files_dir = self.root / "files"
+        self.file_index_path = self.files_dir / "index.json"
         self.composition_index_path = self.compositions_dir / "index.json"
         self.seed_defaults = seed_defaults
         self.background_seed_marker_path = self.backgrounds_dir / ".defaults_seeded"
@@ -192,6 +197,61 @@ class SceneAssetStore:
         ]
         _write_json(self.composition_index_path, compositions)
         return True
+
+    def create_file(self, *, content: bytes, filename: str, mime_type: str, name: str, category: str = "") -> dict[str, object]:
+        normalized_mime = (mime_type or "").split(";", 1)[0].strip().lower()
+        if normalized_mime not in SUPPORTED_FILE_TYPES:
+            raise ValueError("unsupported service file type")
+        if not content:
+            raise ValueError("empty service file")
+        if normalized_mime == "image/png" and not content.startswith(b"\x89PNG\r\n\x1a\n"):
+            raise ValueError("invalid PNG file")
+        if normalized_mime == "image/jpeg" and not content.startswith(b"\xff\xd8\xff"):
+            raise ValueError("invalid JPEG file")
+        if normalized_mime == "image/webp" and not (len(content) >= 12 and content[:4] == b"RIFF" and content[8:12] == b"WEBP"):
+            raise ValueError("invalid WebP file")
+        if normalized_mime == "image/gif" and not content.startswith((b"GIF87a", b"GIF89a")):
+            raise ValueError("invalid GIF file")
+        if normalized_mime == "image/svg+xml" and b"<svg" not in content[:4096].lower():
+            raise ValueError("invalid SVG file")
+        file_id = f"file-{_slug(category or name or Path(filename).stem, 'asset')}-{uuid.uuid4().hex[:12]}"
+        ext = EXT_BY_MIME[normalized_mime]
+        media_path = self.files_dir / file_id / f"source{ext}"
+        media_path.parent.mkdir(parents=True, exist_ok=True)
+        media_path.write_bytes(content)
+        item: dict[str, object] = {
+            "id": file_id,
+            "name": (name or Path(filename).stem or file_id).strip(),
+            "category": category,
+            "kind": "image",
+            "mime_type": normalized_mime,
+            "filename": filename or f"source{ext}",
+            "size_bytes": len(content),
+            "url": f"/scene-assets/files/{file_id}/file",
+            "created_at": _now(),
+        }
+        items = _read_json(self.file_index_path, [])
+        items = [entry for entry in items if isinstance(entry, dict) and entry.get("id") != file_id]
+        items.insert(0, item)
+        _write_json(self.file_index_path, items)
+        return item
+
+    def file_path(self, file_id: str) -> Path | None:
+        if not re.fullmatch(r"file-[\w\u4e00-\u9fff-]+", file_id or ""):
+            return None
+        items = _read_json(self.file_index_path, [])
+        item = next((entry for entry in items if isinstance(entry, dict) and entry.get("id") == file_id), None)
+        if not item:
+            return None
+        ext = EXT_BY_MIME.get(str(item.get("mime_type") or ""))
+        if not ext:
+            return None
+        path = (self.files_dir / file_id / f"source{ext}").resolve()
+        try:
+            path.relative_to(self.files_dir.resolve())
+        except ValueError:
+            return None
+        return path if path.is_file() else None
 
     def list_compositions(self) -> list[dict[str, object]]:
         items = _read_json(self.composition_index_path, [])

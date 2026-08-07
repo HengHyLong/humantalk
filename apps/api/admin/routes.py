@@ -8,13 +8,14 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, model_validator
 
 from .security import current_user, decode_token, get_store, issue_tokens, password_hasher, verify_password
 from .monitoring import collect_runtime_monitor
 from .store import AdminStore, utc_now
+from opentalking.scene_assets import SceneAssetStore
 
 router = APIRouter(prefix="/api/v1", tags=["admin"])
 public_router = APIRouter(tags=["exhibition-public"])
@@ -177,6 +178,8 @@ RESOURCE_PERMISSIONS = {
     "documents": "knowledge:document", "knowledge_bases": "knowledge:document", "qa": "knowledge:qa", "scripts": "knowledge:script", "packages": "knowledge:publish", "miss_pool": "knowledge:miss",
 }
 
+EVENT_IMAGE_RESOURCES = {"exhibitors", "exhibits", "venues", "points"}
+
 COLLECTION_RESOURCES = {
     "assets": {"avatars": "avatars", "gifs": "gifs", "voice-configs": "voice_configs", "scene-bindings": "scene_bindings", "idle-contents": "idle_contents"},
     "knowledge": {"documents": "documents", "bases": "knowledge_bases", "qa": "qa", "scripts": "scripts", "packages": "packages", "miss-pool": "miss_pool"},
@@ -252,6 +255,50 @@ def get_gif_file(record_id: str, request: Request, auth: dict[str, Any] = Depend
     if not matches:
         raise HTTPException(status_code=404, detail={"code": "FILE_NOT_FOUND", "detail": "资源文件不存在"})
     return FileResponse(matches[0], media_type=item.get("mimeType", "application/octet-stream"))
+
+
+@router.post("/admin/event/images/upload")
+async def upload_event_images(
+    request: Request,
+    resource: str = Form(...),
+    files: list[UploadFile] = File(...),
+    auth: dict[str, Any] = Depends(current_user),
+) -> dict[str, Any]:
+    if resource not in EVENT_IMAGE_RESOURCES:
+        raise HTTPException(status_code=400, detail={"code": "UNSUPPORTED_RESOURCE", "detail": "不支持该展会图片资源类型"})
+    store = get_store(request)
+    _require(store, auth, RESOURCE_PERMISSIONS[resource])
+    if not files:
+        raise HTTPException(status_code=400, detail={"code": "FILES_REQUIRED", "detail": "至少选择一张图片"})
+    if len(files) > 20:
+        raise HTTPException(status_code=400, detail={"code": "TOO_MANY_FILES", "detail": "一次最多上传 20 张图片"})
+    settings = getattr(request.app.state, "settings", None)
+    service_store = SceneAssetStore(Path(getattr(settings, "scene_assets_dir", "./data/scene-assets")), seed_defaults=True)
+    allowed_extensions = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".svg"}
+    uploaded: list[dict[str, Any]] = []
+    for file in files:
+        content_type = (file.content_type or "").lower()
+        extension = Path(file.filename or "image.jpg").suffix.lower()
+        if not content_type.startswith("image/") or extension not in allowed_extensions:
+            raise HTTPException(status_code=400, detail={"code": "UNSUPPORTED_FILE", "detail": "仅支持 JPG、PNG、WebP、GIF 或 SVG 图片"})
+        content = await file.read()
+        if not content:
+            raise HTTPException(status_code=400, detail={"code": "EMPTY_FILE", "detail": "不能上传空文件"})
+        if len(content) > 10 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail={"code": "FILE_TOO_LARGE", "detail": "单张图片不能超过 10MB"})
+        try:
+            saved = service_store.create_file(
+                content=content,
+                filename=file.filename or "image",
+                mime_type=content_type,
+                name=Path(file.filename or "image").stem,
+                category=f"event:{resource}",
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail={"code": "UNSUPPORTED_FILE", "detail": str(exc)}) from exc
+        uploaded.append(saved)
+    _audit(request, auth, action="upload", resource_type="service_file", resource_id=str(uploaded[0]["id"]), before=None, after={"resource": resource, "items": uploaded})
+    return {"urls": [item["url"] for item in uploaded], "items": uploaded}
 
 
 @router.get("/admin/assets/{resource}/{record_id}")

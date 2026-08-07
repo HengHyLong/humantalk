@@ -26,6 +26,15 @@ async def list_backgrounds(request: Request) -> dict[str, object]:
     return {"items": _store(request).list_backgrounds()}
 
 
+@router.get("/files/{file_id}/file", response_model=None)
+async def download_service_file(file_id: str, request: Request) -> FileResponse:
+    store = _store(request)
+    path = store.file_path(file_id)
+    if path is None:
+        raise HTTPException(status_code=404, detail="service file not found")
+    return FileResponse(path)
+
+
 @router.post("/backgrounds", response_model=None)
 async def upload_background(
     request: Request,

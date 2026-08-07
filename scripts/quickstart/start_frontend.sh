@@ -102,7 +102,6 @@ fi
 
 echo "Starting OpenTalking frontend"
 echo "  web:  $web_dir"
-echo "  url:  http://127.0.0.1:$web_port"
 echo "  log:  $log_file"
 echo "  api:  http://127.0.0.1:$backend_port"
 
@@ -123,6 +122,7 @@ if [[ -z "$pid" ]]; then
   exit 1
 fi
 
+web_url="http://127.0.0.1:$web_port"
 for _ in {1..60}; do
   if ! kill -0 "$pid" >/dev/null 2>&1; then
     echo "OpenTalking frontend exited during startup. Last log lines:" >&2
@@ -130,8 +130,13 @@ for _ in {1..60}; do
     rm -f "$pid_file"
     exit 1
   fi
-  if curl --max-time 2 -fsS "http://127.0.0.1:$web_port" >/dev/null 2>&1; then
-    echo "OpenTalking frontend is up: http://127.0.0.1:$web_port"
+  if curl --max-time 2 -fsS "$web_url" >/dev/null 2>&1; then
+    echo "OpenTalking frontend is up: $web_url"
+    exit 0
+  fi
+  if curl --max-time 2 -k -fsS "https://127.0.0.1:$web_port" >/dev/null 2>&1; then
+    web_url="https://127.0.0.1:$web_port"
+    echo "OpenTalking frontend is up: $web_url"
     exit 0
   fi
   sleep 1

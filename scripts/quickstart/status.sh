@@ -89,6 +89,20 @@ check_url() {
   fi
 }
 
+check_web_url() {
+  local label="$1"
+  local port="$2"
+  local http_url="http://127.0.0.1:$port"
+  local https_url="https://127.0.0.1:$port"
+  if curl --max-time 2 -fsS "$http_url" >/dev/null 2>&1; then
+    echo "$label: ok ($http_url)"
+  elif curl --max-time 2 -k -fsS "$https_url" >/dev/null 2>&1; then
+    echo "$label: ok ($https_url)"
+  else
+    echo "$label: unavailable ($http_url)"
+  fi
+}
+
 echo "DIGITAL_HUMAN_HOME=$DIGITAL_HUMAN_HOME"
 
 pid_port() {
@@ -124,7 +138,7 @@ show_web_glob() {
     local discovered_port
     discovered_port="$(pid_port "$pid_file" "opentalking-web")"
     show_pid "OpenTalking frontend ($(basename "$pid_file"))" "$pid_file"
-    check_url "OpenTalking frontend" "http://127.0.0.1:$discovered_port"
+    check_web_url "OpenTalking frontend" "$discovered_port"
   done
   shopt -u nullglob
   if [[ "$found" == "0" ]]; then
@@ -144,7 +158,7 @@ fi
 
 if [[ "$web_port_explicit" == "1" ]]; then
   show_pid "OpenTalking frontend" "$web_pid_file"
-  check_url "OpenTalking frontend" "http://127.0.0.1:$web_port"
+  check_web_url "OpenTalking frontend" "$web_port"
 else
   show_web_glob
 fi

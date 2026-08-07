@@ -84,6 +84,13 @@ if [[ -f "$pid_file" ]]; then
   old_pid="$(cat "$pid_file" 2>/dev/null || true)"
   if [[ -n "$old_pid" ]] && kill -0 "$old_pid" >/dev/null 2>&1; then
     if curl --max-time 2 -fsS "http://127.0.0.1:$api_port/models" >/dev/null 2>&1; then
+      if ! curl --max-time 2 -fsS "http://127.0.0.1:$api_port/openapi.json" | grep -Fq '"/api/v1/admin/event/images/upload"'; then
+        echo "OpenTalking API is running but does not include the current admin image-upload route: pid=$old_pid port=$api_port" >&2
+        echo "Restart the API service before starting the admin, otherwise image uploads will return 405." >&2
+        echo "  bash scripts/quickstart/stop_all.sh" >&2
+        echo "  bash scripts/start_unified.sh --mock" >&2
+        exit 1
+      fi
       echo "OpenTalking API is already running: pid=$old_pid port=$api_port"
       if current_quicktalk_device="${OPENTALKING_QUICKTALK_DEVICE:-}"; [[ -n "$current_quicktalk_device" ]]; then
         existing_quicktalk_device="$(quickstart_pid_env_value "$old_pid" OPENTALKING_QUICKTALK_DEVICE || true)"

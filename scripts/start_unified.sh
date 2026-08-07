@@ -173,6 +173,11 @@ start_admin() {
   fi
 
   if quickstart_port_in_use "$admin_port"; then
+    if curl --max-time 2 -fsS "http://127.0.0.1:$admin_port/" 2>/dev/null | grep -Fq '<title>四川博览集团数字人项目</title>'; then
+      echo "OpenTalking admin is already running: port=$admin_port"
+      echo "  url:  http://127.0.0.1:$admin_port"
+      return 0
+    fi
     echo "OpenTalking admin port $admin_port is already in use." >&2
     echo "Stop the existing service first, or choose another OPENTALKING_ADMIN_PORT." >&2
     quickstart_describe_port "$admin_port" >&2 || true
@@ -232,8 +237,16 @@ start_admin() {
 }
 
 if [[ "$backend" == "mock" ]]; then
-  bash "$quickstart_dir/start_opentalking.sh" --mock "${start_args[@]}"
-  bash "$quickstart_dir/start_frontend.sh" "${web_args[@]}"
+  if ((${#start_args[@]})); then
+    bash "$quickstart_dir/start_opentalking.sh" --mock "${start_args[@]}"
+  else
+    bash "$quickstart_dir/start_opentalking.sh" --mock
+  fi
+  if ((${#web_args[@]})); then
+    bash "$quickstart_dir/start_frontend.sh" "${web_args[@]}"
+  else
+    bash "$quickstart_dir/start_frontend.sh"
+  fi
   start_admin
   echo ""
   echo "Open the app:"
