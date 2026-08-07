@@ -36,6 +36,7 @@ async def lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     settings = get_settings()
     app = FastAPI(title="OpenTalking API", lifespan=lifespan)
+    app.add_middleware(AdminTraceMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origin_list,
@@ -43,7 +44,6 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    app.add_middleware(AdminTraceMiddleware)
     app.include_router(health.router)
     app.include_router(models.router)
     app.include_router(avatars.router)

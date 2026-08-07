@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { AvatarSelectionStage, type AgentConfig } from "./components/AvatarSelectionStage";
 import { BailianVoiceClone } from "./components/BailianVoiceClone";
 import { ChatInput } from "./components/ChatInput";
@@ -62,8 +62,6 @@ import {
   type RuntimeConfigResponse,
   type SceneBackgroundAsset,
   type SceneComposition,
-  type SessionKnowledgeBasesRequest,
-  type SessionKnowledgeBasesResponse,
   type VoiceCatalogItem,
 } from "./lib/api";
 import { modelConnectionBadge, type ModelStatus } from "./lib/modelStatus";
@@ -81,6 +79,41 @@ import {
 } from "./lib/ttsPreview";
 import type { VoiceCloneApplication } from "./lib/voiceCloneApply";
 import { startPlayback } from "./lib/webrtc";
+import {
+  bufferSubtitleChunk,
+  classifyMediaFailure,
+  classifyPlaybackError,
+  compatibleSubtitleChunkKey,
+  compatibleSubtitleChunkOrder,
+  compatibleSubtitleText,
+  compatibleSubtitleTurnKey,
+  createInitialMediaPlaybackState,
+  createSubtitleTurnBuffer,
+  decideMediaReconnect,
+  endSubtitleTurn,
+  getSubtitlePresentation,
+  markSubtitleMediaStarted,
+  mediaPlaybackReducer,
+  type MediaFailureCategory,
+} from "./lib/mediaPlayback";
+import {
+  conversationStateReducer,
+  createInitialConversationState,
+} from "./lib/sessionStateMachine";
+import {
+  DEFAULT_WELCOME_OVERVIEW,
+  canReplayWelcome,
+  canStartWelcome,
+  createInitialWelcomeState,
+  welcomeStateReducer,
+} from "./lib/welcomeExperience";
+import type { NavigationStep } from "./lib/navigationPresentation";
+import {
+  createInputCaptureEvent,
+  INPUT_SCAN_EVENT_NAME,
+  parseScanInputDetail,
+  type InputCaptureEvent,
+} from "./lib/inputCapture";
 import {
   DEFAULT_EDGE_VOICE_ID,
   EDGE_VOICE_STORAGE_KEY,
@@ -118,6 +151,11 @@ import {
 } from "./light2d/avatarSelection";
 
 const MEMORY_PROFILE_ID = "default";
+
+function configuredTerminalId(): string {
+  const value = import.meta.env.VITE_TERMINAL_ID;
+  return typeof value === "string" && value.trim() ? value.trim().slice(0, 128) : "web-terminal";
+}
 
 function bailianModelOptions(provider: TtsProviderExtended): { id: string; label: string }[] {
   switch (provider) {
@@ -453,7 +491,7 @@ function placeholderKnowledgeBaseSummary(id: string): KnowledgeBaseSummary {
   };
 }
 
-function normalizeKnowledgeBaseSummaries(response: KnowledgeBasesResponse): KnowledgeBaseSummary[] {
+export function normalizeKnowledgeBaseSummaries(response: KnowledgeBasesResponse): KnowledgeBaseSummary[] {
   const summaries = Array.isArray(response.knowledge_base_summaries)
     ? response.knowledge_base_summaries
     : [];
@@ -477,7 +515,7 @@ function normalizeKnowledgeBaseSummaries(response: KnowledgeBasesResponse): Know
   return Array.from(byId.values());
 }
 
-function normalizeSelectedKnowledgeBaseIds(
+export function normalizeSelectedKnowledgeBaseIds(
   response: AvatarKnowledgeBasesResponse,
   fallback: string[] = [],
 ): string[] {
@@ -560,6 +598,8 @@ function validateAudioProviderConfigBeforeStart({
   ttsProvider: TtsProviderExtended;
   runtimeStatus: HealthResponse | null;
 }): string | null {
+  // API deployments configure OPENTALKING_STT_DASHSCOPE_API_KEY and
+  // OPENTALKING_TTS_DASHSCOPE_API_KEY on the backend; health only exposes key_set.
   const missing: string[] = [];
   const sttStatus = runtimeStatus?.stt_providers?.[normalizeAsrProvider(sttProvider, "dashscope")];
   const ttsStatus = runtimeStatus?.tts_providers?.[ttsProvider];
@@ -901,19 +941,27 @@ export default function App() {
   const realtimeRecordMicStreamRef = useRef<MediaStream | null>(null);
   const pendingRealtimeExportRef = useRef<PendingRealtimeExport | null>(null);
   const sessionIdRef = useRef<string | null>(null);
-  const knowledgeSyncChainRef = useRef<Promise<void>>(Promise.resolve());
   const speakAudioAbortRef = useRef<AbortController | null>(null);
   const ttsPreviewAudioRef = useRef<HTMLAudioElement | null>(null);
   const ttsPreviewUrlRef = useRef<string | null>(null);
-  /** Cumulative assistant text for the current speech turn (subtitle.chunk segments). */
-  const subtitleAccRef = useRef("");
   /** `messages` id of the in-progress assistant bubble for this turn; cleared on speech.ended. */
   const streamingAssistantMsgIdRef = useRef<string | null>(null);
   /** Local placeholder shown immediately after the user sends text, before worker SSE arrives. */
   const pendingAssistantMsgIdRef = useRef<string | null>(null);
   /** 首帧已进入 WebRTC 后再叠字幕（与口型对齐）；旧版 Worker 无 speech.media_started 时用定时回退 */
   const subtitleMediaReadyRef = useRef(false);
-  const subtitleFallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const subtitleAccRef = useRef("");
+  const subtitleFallbackTimerRef = useRef<number | null>(null);
+  const subtitleBufferRef = useRef(createSubtitleTurnBuffer());
+  const subtitleTurnCounterRef = useRef(0);
+  const activeSubtitleTurnRef = useRef<{ scopeKey: string; turnKey: string; nextChunkOrder: number } | null>(null);
+  const reconnectAttemptRef = useRef(0);
+  const reconnectTimerRef = useRef<number | null>(null);
+  const reconnectSessionIdRef = useRef<string | null>(null);
+  const scheduleReconnectRef = useRef<(category?: MediaFailureCategory) => void>(() => {});
+  const welcomeTimerRef = useRef<number | null>(null);
+  const welcomeSpeechSessionRef = useRef<string | null>(null);
+  const inputEventLogRef = useRef<InputCaptureEvent[]>([]);
 
   // Data
   const [avatars, setAvatars] = useState<AvatarSummary[]>([]);
@@ -950,10 +998,24 @@ export default function App() {
 
   // Connection
   const [connection, setConnection] = useState<ConnectionStatus>("idle");
+  const [conversationState, dispatchConversation] = useReducer(
+    conversationStateReducer,
+    undefined,
+    createInitialConversationState,
+  );
+  const [welcomeState, dispatchWelcome] = useReducer(
+    welcomeStateReducer,
+    undefined,
+    createInitialWelcomeState,
+  );
+  const welcomeStateRef = useRef(welcomeState);
+  welcomeStateRef.current = welcomeState;
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
+  const [mediaPlayback, dispatchMediaPlayback] = useReducer(mediaPlaybackReducer, undefined, createInitialMediaPlaybackState);
   const [queueInfo, setQueueInfo] = useState<QueueInfo | null>(null);
   const [expiringCountdown, setExpiringCountdown] = useState<number | null>(null);
+  const terminalId = useMemo(configuredTerminalId, []);
 
   // Chat
   const [messages, setMessages] = useState<Message[]>([]);
@@ -977,29 +1039,98 @@ export default function App() {
     }
   }, []);
 
-  const flushSubtitleDisplay = useCallback(() => {
-    const t = subtitleAccRef.current;
-    if (t) setCurrentSubtitle(t);
+  const refreshSubtitlePresentation = useCallback((nowMs = Date.now()) => {
+    const active = activeSubtitleTurnRef.current;
+    if (!active) {
+      subtitleAccRef.current = "";
+      setCurrentSubtitle("");
+      return "";
+    }
+    const presentation = getSubtitlePresentation(
+      subtitleBufferRef.current,
+      active.scopeKey,
+      active.turnKey,
+      nowMs,
+    );
+    if (presentation.visible) {
+      subtitleAccRef.current = presentation.text;
+      setCurrentSubtitle(presentation.text);
+      const msgId = streamingAssistantMsgIdRef.current;
+      if (msgId) {
+        setMessages((prev) => prev.map((message) => message.id === msgId ? { ...message, text: presentation.text } : message));
+      }
+    }
+    return presentation.text;
   }, []);
 
+  const scheduleSubtitleFallback = useCallback(() => {
+    if (subtitleFallbackTimerRef.current !== null) return;
+    subtitleFallbackTimerRef.current = window.setTimeout(() => {
+      subtitleFallbackTimerRef.current = null;
+      refreshSubtitlePresentation(Date.now());
+    }, subtitleBufferRef.current.fallbackDelayMs);
+  }, [refreshSubtitlePresentation]);
+
+  const flushSubtitleDisplay = useCallback(() => {
+    refreshSubtitlePresentation(Date.now());
+  }, [refreshSubtitlePresentation]);
+
   const flushSubtitleMessage = useCallback(() => {
-    const msgId = streamingAssistantMsgIdRef.current;
-    const t = subtitleAccRef.current;
-    if (!msgId || !t) return;
-    setMessages((prev) =>
-      prev.map((m) => (m.id === msgId ? { ...m, text: t } : m)),
-    );
+    refreshSubtitlePresentation(Date.now());
+  }, [refreshSubtitlePresentation]);
+
+  const beginSubtitleTurn = useCallback((data: unknown) => {
+    const scopeKey = sessionIdRef.current ?? "session-unknown";
+    const fallbackTurnKey = `speech-${++subtitleTurnCounterRef.current}`;
+    const turnKey = compatibleSubtitleTurnKey(data, fallbackTurnKey);
+    activeSubtitleTurnRef.current = { scopeKey, turnKey, nextChunkOrder: 0 };
+    subtitleMediaReadyRef.current = false;
+    subtitleAccRef.current = "";
   }, []);
 
   const clearSubtitleState = useCallback(() => {
-    setCurrentSubtitle("");
     subtitleAccRef.current = "";
+    setCurrentSubtitle("");
+    subtitleBufferRef.current = createSubtitleTurnBuffer();
+    activeSubtitleTurnRef.current = null;
     subtitleMediaReadyRef.current = false;
     clearSubtitleFallbackTimer();
     streamingAssistantMsgIdRef.current = null;
     pendingAssistantMsgIdRef.current = null;
     setIsSpeaking(false);
   }, [clearSubtitleFallbackTimer]);
+
+  const clearWelcomeTimer = useCallback(() => {
+    if (welcomeTimerRef.current !== null) {
+      window.clearTimeout(welcomeTimerRef.current);
+      welcomeTimerRef.current = null;
+    }
+  }, []);
+
+  const recordInputEvent = useCallback((event: InputCaptureEvent) => {
+    inputEventLogRef.current = [...inputEventLogRef.current, event].slice(-64);
+  }, []);
+
+  useEffect(() => {
+    const handleScan = (event: Event) => {
+      const detail = parseScanInputDetail((event as CustomEvent<unknown>).detail);
+      if (!detail) return;
+      recordInputEvent(createInputCaptureEvent({
+        sessionId: sessionIdRef.current,
+        terminalId,
+        source: "scan",
+        kind: "scan",
+        correlationId: detail.correlationId,
+        payload: {
+          targetId: detail.targetId,
+          routeId: detail.routeId ?? null,
+          assetId: detail.assetId ?? null,
+        },
+      }));
+    };
+    window.addEventListener(INPUT_SCAN_EVENT_NAME, handleScan);
+    return () => window.removeEventListener(INPUT_SCAN_EVENT_NAME, handleScan);
+  }, [recordInputEvent, terminalId]);
 
   const appendAssistantError = useCallback((message: string) => {
     const normalized = message.startsWith("出错了：") ? message : `出错了：${message}`;
@@ -1039,7 +1170,7 @@ export default function App() {
     }
   });
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
-  const toastTimersRef = useRef<Map<string, ReturnType<typeof window.setTimeout>>>(new Map());
+  const toastTimersRef = useRef<Map<string, number>>(new Map());
   const [recordingSaving, setRecordingSaving] = useState(false);
   const [ftRecordPhase, setFtRecordPhase] = useState<"idle" | "recording" | "stopped">("idle");
   const [ftRecordBusy, setFtRecordBusy] = useState(false);
@@ -1067,7 +1198,6 @@ export default function App() {
   const [selectedSceneIdsByAvatar, setSelectedSceneIdsByAvatar] = useState<Record<string, string>>(readStoredSceneIdsByAvatar);
   const avatarKnowledgeBasesSyncReadyRef = useRef(false);
   const lastPersistedAvatarKnowledgeBasesRef = useRef<Map<string, string[]>>(new Map());
-  const avatarKnowledgeBasesLoadSeqRef = useRef(0);
   const [assetLibraryTab, setAssetLibraryTab] = useState<AssetLibraryTab>("exports");
   const selectedModelStatus = modelStatuses.find((item) => item.id === model);
   const selectedModelBadge = modelConnectionBadge(selectedModelStatus, models.includes(model));
@@ -1242,7 +1372,9 @@ export default function App() {
     }
   }, [notify, syncRuntimeConfigSelection]);
 
-  const syncSessionKnowledgeBases = useCallback((knowledgeBaseIds: string[]) => {
+  const syncSessionKnowledgeBases = useCallback((_knowledgeBaseIds: string[]) => {
+    return;
+    /* Session-level local knowledge base mutation is deprecated.
     const sid = sessionIdRef.current;
     if (!sid) return;
     const selectedIds = normalizeKnowledgeBaseIds(knowledgeBaseIds);
@@ -1262,6 +1394,7 @@ export default function App() {
         const detail = error instanceof ApiError ? error.detail : null;
         notify(detail ? `会话知识库切换失败：${detail}` : "会话知识库切换失败，请查看后端日志。", "error");
       });
+    */
   }, [notify]);
 
   const setAgentConfig = useCallback((next: AgentConfig) => {
@@ -1277,8 +1410,8 @@ export default function App() {
 
   const refreshKnowledgeBases = useCallback(async () => {
     try {
-      const response = await apiGet<KnowledgeBasesResponse>("/agent/knowledge-bases");
-      setKnowledgeBaseSummaries(normalizeKnowledgeBaseSummaries(response));
+      const response = await apiGet<{ data?: Array<Record<string, unknown>> }>("/v1/admin/knowledge/dify/datasets?page=1&limit=100");
+      setKnowledgeBaseSummaries((response.data ?? []).map((item) => ({ id: String(item.id ?? ""), name: String(item.name ?? item.id ?? ""), document_count: Number(item.document_count ?? 0), ready_document_count: Number(item.ready_document_count ?? item.document_count ?? 0), error_document_count: Number(item.error_document_count ?? 0), created_at: String(item.created_at ?? ""), updated_at: String(item.updated_at ?? "") })).filter((item) => item.id));
     } catch (error) {
       console.warn("load knowledge bases failed", error);
       const detail = error instanceof ApiError ? error.detail : null;
@@ -1383,6 +1516,8 @@ export default function App() {
 
   const refreshAvatarKnowledgeBases = useCallback(async (targetAvatarId: string) => {
     if (!targetAvatarId) return;
+    return;
+    /* Legacy avatar-local knowledge linkage intentionally disabled. Dify is selected by exhibition.
     const seq = ++avatarKnowledgeBasesLoadSeqRef.current;
     avatarKnowledgeBasesSyncReadyRef.current = false;
     try {
@@ -1415,6 +1550,7 @@ export default function App() {
         avatarKnowledgeBasesSyncReadyRef.current = true;
       }
     }
+    */
   }, [notify]);
 
   const handleManageKnowledgeBases = useCallback(() => {
@@ -1508,7 +1644,7 @@ export default function App() {
   }, [conversationViewMode, workflow]);
 
   useEffect(() => {
-    if (selectedPersonaId) return;
+    if (selectedPersonaId || avatarId) return;
     void refreshAvatarKnowledgeBases(avatarId);
   }, [avatarId, refreshAvatarKnowledgeBases, selectedPersonaId]);
 
@@ -1938,6 +2074,96 @@ export default function App() {
     setRemoteStream(null);
   }, []);
 
+  const clearReconnectTimer = useCallback(() => {
+    if (reconnectTimerRef.current !== null) {
+      window.clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+  }, []);
+
+  const attemptPlaybackReconnect = useCallback(async () => {
+    const sid = reconnectSessionIdRef.current ?? sessionIdRef.current;
+    const video = videoRef.current;
+    if (!sid || !video) {
+      dispatchConversation({ type: "failed", message: "无法恢复当前会话" });
+      setConnection("error");
+      return;
+    }
+    try {
+      closePeerConnection();
+      dispatchMediaPlayback({ type: "negotiate" });
+      const playback = await startPlayback(sid, video, {
+        onRemoteStream: (stream) => {
+          remoteStreamRef.current = stream;
+          setRemoteStream(stream);
+          dispatchMediaPlayback({ type: "remote-stream" });
+        },
+        onFirstFrame: () => {
+          dispatchMediaPlayback({ type: "first-frame" });
+        },
+        onConnectionStateChange: (state) => {
+          if (state === "connected") dispatchMediaPlayback({ type: "connected" });
+          if (state === "failed" || state === "disconnected") {
+            dispatchMediaPlayback({ type: "stalled" });
+            scheduleReconnectRef.current("connection-lost");
+          }
+        },
+        onIceConnectionStateChange: (state) => {
+          if (state === "failed" || state === "disconnected") {
+            dispatchMediaPlayback({ type: "stalled" });
+            scheduleReconnectRef.current("connection-lost");
+          }
+        },
+      });
+      if (sessionIdRef.current !== sid) {
+        playback.pc.close();
+        return;
+      }
+      pcRef.current = playback.pc;
+      remoteStreamRef.current = playback.remoteStream;
+      setRemoteStream(playback.remoteStream);
+      dispatchMediaPlayback({ type: "remote-stream" });
+      video.muted = false;
+      reconnectAttemptRef.current = 0;
+      reconnectSessionIdRef.current = sid;
+      setConnection("live");
+      dispatchMediaPlayback({ type: "reconnected" });
+      dispatchConversation({ type: "reconnected", sessionId: sid });
+    } catch (error) {
+      console.warn("Failed to reconnect WebRTC playback", error);
+      if (sessionIdRef.current === sid) {
+        scheduleReconnectRef.current(classifyPlaybackError(error));
+      }
+    }
+  }, [closePeerConnection]);
+
+  const scheduleReconnect = useCallback((category: MediaFailureCategory = "connection-lost") => {
+    const sid = sessionIdRef.current;
+    if (!sid || reconnectTimerRef.current !== null) return;
+    const decision = decideMediaReconnect(classifyMediaFailure(category), reconnectAttemptRef.current, 0.5);
+    if (!decision.shouldRetry) {
+      dispatchMediaPlayback({ type: "degraded", category });
+      dispatchConversation({ type: "failed", code: "WEBRTC_RECONNECT_EXHAUSTED", message: "视频通道重连失败" });
+      const requiresNewSession = ["authorization-required", "access-denied", "scope-expired"].includes(category);
+      setConnection(requiresNewSession ? "error" : "live");
+      if (!requiresNewSession) notify("视频通道暂不可用，已切换为文字交互。", "info");
+      return;
+    }
+    const nextAttempt = decision.attempt;
+    reconnectSessionIdRef.current = sid;
+    reconnectAttemptRef.current = nextAttempt;
+    dispatchMediaPlayback({ type: "reconnect-requested", attempt: nextAttempt });
+    dispatchConversation({ type: "transport_lost", message: "视频通道暂时中断" });
+    dispatchConversation({ type: "reconnect_requested", attempt: nextAttempt });
+    setConnection("connecting");
+    const delay = decision.delayMs;
+    reconnectTimerRef.current = window.setTimeout(() => {
+      reconnectTimerRef.current = null;
+      void attemptPlaybackReconnect();
+    }, delay);
+  }, [attemptPlaybackReconnect, notify]);
+  scheduleReconnectRef.current = scheduleReconnect;
+
   const releaseSession = useCallback(async (sid: string, keepalive = false) => {
     try {
       await apiDelete(`/sessions/${sid}`, { keepalive });
@@ -1948,7 +2174,13 @@ export default function App() {
 
   const resetLiveState = useCallback(
     (clearMessages = false) => {
+      clearReconnectTimer();
+      clearWelcomeTimer();
+      welcomeSpeechSessionRef.current = null;
+      reconnectAttemptRef.current = 0;
+      reconnectSessionIdRef.current = null;
       closePeerConnection();
+      dispatchMediaPlayback({ type: "reset" });
       setSessionId(null);
       setActiveAsrProvider("");
       setQueueInfo(null);
@@ -1956,12 +2188,14 @@ export default function App() {
       setNavigationResult(null);
       setLastVoiceIntent(null);
       slotAcquiredRef.current = null;
+      dispatchConversation({ type: "reset" });
+      dispatchWelcome({ type: "session_closed" });
       clearSubtitleState();
       if (clearMessages) {
         setMessages([]);
       }
     },
-    [clearSubtitleState, closePeerConnection],
+    [clearReconnectTimer, clearSubtitleState, clearWelcomeTimer, closePeerConnection],
   );
 
   const prewarmKey = useCallback((targetAvatarId: string, targetModel: string) => {
@@ -2138,6 +2372,14 @@ export default function App() {
       if (ev === "session.expired") {
         // Server force-closed the session, reset to idle
         setConnection("idle");
+        dispatchMediaPlayback({ type: "reset" });
+        dispatchConversation({ type: "session_expired" });
+        clearWelcomeTimer();
+        welcomeSpeechSessionRef.current = null;
+        dispatchWelcome({ type: "session_closed" });
+        clearReconnectTimer();
+        reconnectAttemptRef.current = 0;
+        reconnectSessionIdRef.current = null;
         setExpiringCountdown(null);
         setSessionId(null);
         setActiveAsrProvider("");
@@ -2152,6 +2394,11 @@ export default function App() {
       if (ev === "error") {
         const d = data && typeof data === "object" ? (data as { message?: string; code?: string }) : {};
         const detail = d.message || d.code || "语音合成失败，请切换可用音色后重试。";
+        if (welcomeSpeechSessionRef.current === sessionId) {
+          welcomeSpeechSessionRef.current = null;
+          dispatchWelcome({ type: "failed", message: detail });
+        }
+        dispatchConversation({ type: "failed", code: d.code, message: detail });
         appendAssistantError(detail);
         notify(`对话失败：${detail}`, "error");
       }
@@ -2159,6 +2406,7 @@ export default function App() {
         const staleId = streamingAssistantMsgIdRef.current;
         const pendingId = pendingAssistantMsgIdRef.current;
         clearSubtitleState();
+        beginSubtitleTurn(data);
         setIsSpeaking(true);
         if (staleId) {
           setMessages((prev) => prev.filter((m) => m.id !== staleId));
@@ -2178,22 +2426,66 @@ export default function App() {
       if (ev === "speech.media_started") {
         subtitleMediaReadyRef.current = true;
         clearSubtitleFallbackTimer();
+        const active = activeSubtitleTurnRef.current;
+        if (active) {
+          const turnKey = compatibleSubtitleTurnKey(data, active.turnKey);
+          if (turnKey !== active.turnKey) return;
+          subtitleBufferRef.current = markSubtitleMediaStarted(subtitleBufferRef.current, {
+            scopeKey: active.scopeKey,
+            turnKey,
+            observedAtMs: Date.now(),
+          }).buffer;
+        }
         flushSubtitleDisplay();
         flushSubtitleMessage();
       }
       if (ev === "subtitle.chunk" && data && typeof data === "object") {
-        const t = (data as { text?: string }).text;
+        const t = compatibleSubtitleText(data);
         if (!t) return;
-        subtitleAccRef.current += t;
+        let active = activeSubtitleTurnRef.current;
+        if (!active) {
+          beginSubtitleTurn(data);
+          active = activeSubtitleTurnRef.current;
+        }
+        if (!active) return;
+        const incomingTurnKey = compatibleSubtitleTurnKey(data, active.turnKey);
+        if (incomingTurnKey !== active.turnKey) return;
+        const nextOrder = ++active.nextChunkOrder;
+        const update = bufferSubtitleChunk(subtitleBufferRef.current, {
+          scopeKey: active.scopeKey,
+          turnKey: active.turnKey,
+          chunkKey: compatibleSubtitleChunkKey(data, `${active.turnKey}:chunk:${nextOrder}`),
+          order: compatibleSubtitleChunkOrder(data, nextOrder),
+          text: t,
+          observedAtMs: Date.now(),
+        });
+        if (!update.accepted) return;
+        subtitleBufferRef.current = update.buffer;
         if (subtitleMediaReadyRef.current) {
           flushSubtitleDisplay();
           flushSubtitleMessage();
+        } else {
+          scheduleSubtitleFallback();
         }
       }
       if (ev === "speech.ended") {
-        const d = data && typeof data === "object" ? (data as { text?: string }) : {};
-        const fromEvent = typeof d.text === "string" ? d.text.trim() : "";
-        const streamed = subtitleAccRef.current.trim();
+        dispatchConversation({ type: "assistant_finished" });
+        if (welcomeSpeechSessionRef.current === sessionId) {
+          welcomeSpeechSessionRef.current = null;
+          dispatchWelcome({ type: "finished" });
+        }
+        const fromEvent = compatibleSubtitleText(data);
+        const active = activeSubtitleTurnRef.current;
+        const streamed = active
+          ? getSubtitlePresentation(subtitleBufferRef.current, active.scopeKey, active.turnKey, Date.now()).text.trim()
+          : "";
+        if (active) {
+          subtitleBufferRef.current = endSubtitleTurn(subtitleBufferRef.current, {
+            scopeKey: active.scopeKey,
+            turnKey: active.turnKey,
+            observedAtMs: Date.now(),
+          }).buffer;
+        }
         const finalText = fromEvent || streamed;
         const msgId = streamingAssistantMsgIdRef.current;
         clearSubtitleState();
@@ -2224,7 +2516,7 @@ export default function App() {
       }
     });
     return stop;
-  }, [appendAssistantError, clearSubtitleFallbackTimer, clearSubtitleState, flushSubtitleDisplay, flushSubtitleMessage, notify, sessionId]);
+  }, [appendAssistantError, beginSubtitleTurn, clearReconnectTimer, clearSubtitleFallbackTimer, clearSubtitleState, clearWelcomeTimer, flushSubtitleDisplay, flushSubtitleMessage, notify, scheduleSubtitleFallback, sessionId]);
 
   // Resolves when FlashTalk slot is acquired (session.queued position=0)
   const slotAcquiredRef = useRef<(() => void) | null>(null);
@@ -2286,7 +2578,6 @@ export default function App() {
     setQueueInfo(null);
     let createdSessionId: string | null = null;
     try {
-      const knowledgeBaseIds = normalizeKnowledgeBaseIds(agentConfig.knowledgeBaseIds);
       const selectedTtsVoice = resolveSelectableTtsVoice(ttsProvider, qwenVoice, bailianVoices);
       const created = await apiPost<CreateSessionResponse>("/sessions", {
         persona_id: selectedPersonaId || undefined,
@@ -2306,14 +2597,13 @@ export default function App() {
         fasterliveportrait_config:
           model === "fasterliveportrait" ? fasterliveportraitConfig : undefined,
         user_id: clientUserId,
-        agent_enabled: agentConfig.memoryEnabled || agentConfig.knowledgeEnabled || (memoryEnabled && Boolean(memoryLibraryId)),
+        exhibition_id: configuredExhibitionId || "current",
+        agent_enabled: true,
         memory_enabled: agentConfig.memoryEnabled || (memoryEnabled && Boolean(memoryLibraryId)),
         memory_profile_id: MEMORY_PROFILE_ID,
         character_id: avatarId,
         memory_library_id: memoryEnabled && memoryLibraryId ? memoryLibraryId : undefined,
-        knowledge_enabled: agentConfig.knowledgeEnabled,
-        knowledge_base_id: knowledgeBaseIds[0],
-        knowledge_base_ids: knowledgeBaseIds,
+        knowledge_enabled: true,
       } satisfies CreateSessionRequest);
       createdSessionId = created.session_id;
       setSessionId(created.session_id);
@@ -2350,18 +2640,39 @@ export default function App() {
       }
 
       closePeerConnection();
+      dispatchMediaPlayback({ type: "negotiate" });
       const playback = await startPlayback(created.session_id, videoRef.current!, {
         onRemoteStream: (remoteStream) => {
           remoteStreamRef.current = remoteStream;
           setRemoteStream(remoteStream);
+          dispatchMediaPlayback({ type: "remote-stream" });
+        },
+        onFirstFrame: () => {
+          dispatchMediaPlayback({ type: "first-frame" });
+        },
+        onConnectionStateChange: (state) => {
+          if (state === "connected") dispatchMediaPlayback({ type: "connected" });
+          if (state === "failed" || state === "disconnected") {
+            dispatchMediaPlayback({ type: "stalled" });
+            scheduleReconnectRef.current("connection-lost");
+          }
+        },
+        onIceConnectionStateChange: (state) => {
+          if (state === "failed" || state === "disconnected") {
+            dispatchMediaPlayback({ type: "stalled" });
+            scheduleReconnectRef.current("connection-lost");
+          }
         },
       });
       pcRef.current = playback.pc;
       remoteStreamRef.current = playback.remoteStream;
       setRemoteStream(playback.remoteStream);
+      dispatchMediaPlayback({ type: "remote-stream" });
       setActiveAsrProvider(lockedAsrProvider);
       videoRef.current!.muted = false;
       setConnection("live");
+      dispatchMediaPlayback({ type: "connected" });
+      dispatchConversation({ type: "transport_connected", sessionId: created.session_id });
       await apiPost(`/sessions/${created.session_id}/start`, {});
       notify("会话已连接，可以开始文本、语音或音频驱动。", "success");
     } catch (error) {
@@ -2370,6 +2681,7 @@ export default function App() {
       }
       resetLiveState();
       console.warn("Failed to start session", error);
+      dispatchMediaPlayback({ type: "failed", category: classifyPlaybackError(error) });
       setConnection("error");
       const detail = error instanceof ApiError ? error.detail : null;
       const msg = detail
@@ -2385,6 +2697,7 @@ export default function App() {
     clientUserId,
     clearSubtitleState,
     closePeerConnection,
+    dispatchMediaPlayback,
     edgeVoice,
     llmSystemPrompt,
     memoryEnabled,
@@ -2565,7 +2878,11 @@ export default function App() {
   }, [bailianVoices, edgeVoice, notify, qwenModel, qwenVoice, ttsPreviewText, ttsProvider]);
 
   const enqueueSpeech = useCallback(
-    (speechText: string, userText: string) => {
+    (
+      speechText: string,
+      userText: string,
+      options: { source?: "user" | "welcome" } = {},
+    ) => {
       const text = speechText.trim();
       const user = userText.trim();
       if (!sessionId || !text) return;
@@ -2597,6 +2914,13 @@ export default function App() {
       };
       void apiPost(`/sessions/${sessionId}/${endpoint}`, payload).catch((err) => {
         console.warn(`${endpoint} failed`, err);
+        if (options.source === "welcome" && welcomeSpeechSessionRef.current === sessionId) {
+          welcomeSpeechSessionRef.current = null;
+          dispatchWelcome({
+            type: "failed",
+            message: apiErrorMessage(err, "请确认会话仍处于已连接状态。"),
+          });
+        }
         const detail = apiErrorMessage(err, "请确认会话仍处于已连接状态。");
         appendAssistantError(`发送失败：${detail}`);
         notify(`发送失败：${detail}`, "error");
@@ -2605,9 +2929,74 @@ export default function App() {
     [appendAssistantError, bailianVoices, edgeVoice, isSpeaking, notify, qwenModel, qwenVoice, sessionId, ttsProvider],
   );
 
+  const cancelWelcomeForUserInput = useCallback(() => {
+    clearWelcomeTimer();
+    welcomeSpeechSessionRef.current = null;
+    dispatchWelcome({ type: "user_input" });
+  }, [clearWelcomeTimer]);
+
+  const requestWelcomeReplay = useCallback(() => {
+    const now = Date.now();
+    if (!canReplayWelcome(welcomeStateRef.current, now)) return;
+    dispatchWelcome({ type: "retry_requested", now });
+  }, []);
+
+  const speakNavigationStep = useCallback((step: NavigationStep) => {
+    cancelWelcomeForUserInput();
+    enqueueSpeech(step.spokenText || step.instruction, "");
+  }, [cancelWelcomeForUserInput, enqueueSpeech]);
+
+  useEffect(() => {
+    if (!sessionId || (connection !== "live" && connection !== "expiring")) return;
+    dispatchWelcome({
+      type: "session_connected",
+      sessionId,
+      exhibitionId: configuredExhibitionId,
+      now: Date.now(),
+    });
+  }, [configuredExhibitionId, connection, sessionId]);
+
+  useEffect(() => {
+    if (!sessionId || (connection !== "live" && connection !== "expiring")) return;
+    const current = welcomeStateRef.current;
+    if (current.sessionId !== sessionId) return;
+
+    const now = Date.now();
+    if (current.phase === "cooldown" && current.cooldownUntil !== null && current.cooldownUntil > now) {
+      const timer = window.setTimeout(() => {
+        welcomeTimerRef.current = null;
+        dispatchWelcome({ type: "cooldown_elapsed", now: Date.now() });
+      }, current.cooldownUntil - now);
+      welcomeTimerRef.current = timer;
+      return () => {
+        window.clearTimeout(timer);
+        if (welcomeTimerRef.current === timer) welcomeTimerRef.current = null;
+      };
+    }
+
+    if (!current.autoStart || !canStartWelcome(current, now)) return;
+    const timer = window.setTimeout(() => {
+      welcomeTimerRef.current = null;
+      const latest = welcomeStateRef.current;
+      const startedAt = Date.now();
+      if (latest.sessionId !== sessionId || !canStartWelcome(latest, startedAt)) return;
+      dispatchWelcome({ type: "scheduled" });
+      dispatchWelcome({ type: "started", now: startedAt });
+      welcomeSpeechSessionRef.current = sessionId;
+      enqueueSpeech(DEFAULT_WELCOME_OVERVIEW.speechText, "", { source: "welcome" });
+    }, 500);
+    welcomeTimerRef.current = timer;
+    return () => {
+      window.clearTimeout(timer);
+      if (welcomeTimerRef.current === timer) welcomeTimerRef.current = null;
+    };
+  }, [connection, enqueueSpeech, sessionId, welcomeState.autoStart, welcomeState.cooldownUntil, welcomeState.phase]);
+
   const routeRecognizedText = useCallback(async (rawText: string) => {
     const text = rawText.trim();
     if (!text || !sessionId) return;
+    cancelWelcomeForUserInput();
+    dispatchConversation({ type: "input_submitted" });
     const match = matchVoiceIntent(
       text,
       exhibitionVoiceConfig ?? {
@@ -2651,7 +3040,7 @@ export default function App() {
       setGuideItems([]);
     }
     enqueueSpeech(text, text);
-  }, [configuredExhibitionId, enqueueSpeech, exhibitionVoiceConfig, notify, sessionId]);
+  }, [cancelWelcomeForUserInput, configuredExhibitionId, enqueueSpeech, exhibitionVoiceConfig, notify, sessionId]);
 
   const handleSend = useCallback((text: string) => {
     void routeRecognizedText(text);
@@ -2683,6 +3072,7 @@ export default function App() {
 
   const handleRealtimeVoiceAudio = useCallback(async (blob: Blob) => {
     if (!sessionId) return;
+    cancelWelcomeForUserInput();
     try {
       const result = await transcribeSessionAudio(sessionId, blob, activeAsrProvider || undefined);
       await routeRecognizedText(result.text);
@@ -2692,15 +3082,21 @@ export default function App() {
       appendAssistantError(`语音识别失败：${detail}`);
       notify(`语音识别失败：${detail}`, "error");
     }
-  }, [activeAsrProvider, appendAssistantError, notify, routeRecognizedText, sessionId]);
+  }, [activeAsrProvider, appendAssistantError, cancelWelcomeForUserInput, notify, routeRecognizedText, sessionId]);
 
   /** 流式 STT（WebSocket PCM）成功后仅追加本地消息（speak 已由后端入队） */
   const handleSpeakAudioStreamResult = useCallback(({ text }: { text: string }) => {
+    cancelWelcomeForUserInput();
+    dispatchConversation({ type: "input_submitted" });
+    if (exhibitionVoiceConfig?.supports_deferred_speak === true) {
+      void routeRecognizedText(text);
+      return;
+    }
     setMessages((prev) => [
       ...prev,
       { id: makeId(), role: "user", text, timestamp: Date.now() },
     ]);
-  }, []);
+  }, [cancelWelcomeForUserInput, exhibitionVoiceConfig?.supports_deferred_speak, routeRecognizedText]);
 
   const handleSpeakAudioStreamError = useCallback((message: string) => {
     const detail = message || "语音识别失败，请检查 STT 配置。";
@@ -2711,6 +3107,8 @@ export default function App() {
   const handleSpeakAudio = useCallback(
     async (blob: Blob) => {
       if (!sessionId) return;
+      cancelWelcomeForUserInput();
+      dispatchConversation({ type: "input_submitted" });
       speakAudioAbortRef.current?.abort();
       const ac = new AbortController();
       speakAudioAbortRef.current = ac;
@@ -2750,14 +3148,15 @@ export default function App() {
         }
       }
     },
-    [activeAsrProvider, appendAssistantError, asrProvider, bailianVoices, edgeVoice, notify, qwenModel, qwenVoice, sessionId, ttsProvider],
+    [activeAsrProvider, appendAssistantError, asrProvider, bailianVoices, cancelWelcomeForUserInput, edgeVoice, notify, qwenModel, qwenVoice, sessionId, ttsProvider],
   );
 
   const handleInterrupt = useCallback(() => {
+    cancelWelcomeForUserInput();
     speakAudioAbortRef.current?.abort();
     if (!sessionId) return;
     void apiPost(`/sessions/${sessionId}/interrupt`, {}).catch(() => {});
-  }, [sessionId]);
+  }, [cancelWelcomeForUserInput, sessionId]);
 
   const handleSpeakFlashtalkAudioFile = useCallback(
     async (file: File) => {
@@ -3190,6 +3589,8 @@ export default function App() {
           avatarMaskUrl={selectedAvatarMaskUrl}
           clientRenderer={model === "mock" ? currentAvatar?.client_renderer ?? null : null}
           connection={connection}
+          mediaPlayback={mediaPlayback}
+          conversationPhase={conversationState.phase}
           isSpeaking={isSpeaking}
           avatar={currentAvatar}
           modelLabel={selectedModelLabel}
@@ -3207,6 +3608,12 @@ export default function App() {
           onRequestMaterial={handleRequestMaterial}
           onSubmitLead={handleSubmitLead}
           exhibitionConfigNotice={exhibitionConfigNotice}
+          welcomePhase={welcomeState.phase}
+          welcomeReplayDisabled={!canReplayWelcome(welcomeState)}
+          onReplayWelcome={requestWelcomeReplay}
+          onSpeakNavigationStep={speakNavigationStep}
+          onInputEvent={recordInputEvent}
+          terminalId={terminalId}
           onNotify={notify}
           ttsProvider={ttsProvider}
           sttProvider={activeAsrProvider}
@@ -3469,6 +3876,8 @@ export default function App() {
                 streamingAsrSessionId={sessionId}
                 onSpeakAudioStreamResult={handleSpeakAudioStreamResult}
                 onSpeakAudioStreamError={handleSpeakAudioStreamError}
+                onInputEvent={recordInputEvent}
+                terminalId={terminalId}
                 onInterrupt={handleInterrupt}
                 isSpeaking={isSpeaking}
                 disabled={connection !== "live" && connection !== "expiring"}

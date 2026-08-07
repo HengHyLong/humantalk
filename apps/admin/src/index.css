@@ -16,4 +16,32 @@ body {
     -webkit-backdrop-filter: blur(16px);
     border: 1px solid rgba(255, 255, 255, 0.1);
   }
+
+  /* Scoped list pages share one aligned toolbar.  The search wrapper is kept
+     as a sibling for backwards-compatible page markup, but is visually
+     anchored to the right side of the toolbar on desktop. */
+  .scope-toolbar + .flex.justify-end.border-b.border-slate-100.p-4.pt-0 {
+    position: absolute;
+    top: 1rem;
+    right: 1rem;
+    z-index: 1;
+    border-bottom: 0;
+    padding: 0;
+  }
+
+  .scope-toolbar + .flex.justify-end.border-b.border-slate-100.p-4.pt-0 input {
+    width: 18rem;
+  }
+
+  @media (max-width: 767px) {
+    .scope-toolbar + .flex.justify-end.border-b.border-slate-100.p-4.pt-0 {
+      position: static;
+      padding: 0.75rem 1rem 1rem;
+      border-bottom: 1px solid rgb(241 245 249);
+    }
+
+    .scope-toolbar + .flex.justify-end.border-b.border-slate-100.p-4.pt-0 input {
+      width: 100%;
+    }
+  }
 }

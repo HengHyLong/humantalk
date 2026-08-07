@@ -38,8 +38,10 @@ import type {
   ReportFilters,
   ReportOperations,
 } from "./types";
+import type { KnowledgeBaseSummary as ApiKnowledgeBaseSummary, KnowledgeDocument as ApiKnowledgeDocument } from "../lib/api";
 
 const STORAGE_PREFIX = "opentalking-admin-";
+const REFRESH_TOKEN_KEY = `${STORAGE_PREFIX}refresh-token`;
 const now = () => new Date().toISOString();
 export type DownloadData = string | Blob;
 export type GifCreateInput = Omit<GifAssetMeta, "id" | "createdAt"> & { file?: File };
@@ -73,8 +75,22 @@ function writeStore<T>(key: string, value: T): void {
 function readStoredSessionToken(): string {
   try {
     const raw = window.localStorage.getItem("opentalking-admin-session");
-    const session = raw ? JSON.parse(raw) as { token?: unknown } : null;
-    return typeof session?.token === "string" ? session.token : "";
+    const session = raw ? JSON.parse(raw) as { token?: unknown; accessToken?: unknown; access_token?: unknown } : null;
+    const token = session?.token ?? session?.accessToken ?? session?.access_token;
+    return typeof token === "string" ? token : "";
+  } catch {
+    return "";
+  }
+}
+
+function readStoredRefreshToken(): string {
+  try {
+    const stored = window.localStorage.getItem(REFRESH_TOKEN_KEY);
+    if (stored) return stored;
+    const raw = window.localStorage.getItem("opentalking-admin-session");
+    const session = raw ? JSON.parse(raw) as { refreshToken?: unknown; refresh_token?: unknown } : null;
+    const token = session?.refreshToken ?? session?.refresh_token;
+    return typeof token === "string" ? token : "";
   } catch {
     return "";
   }
@@ -138,9 +154,9 @@ const DEFAULT_VENUES: EventVenue[] = [
 ];
 
 const DEFAULT_POINTS: EventPoint[] = [
-  { id: "point-entrance", venueId: "venue-1", code: "ENT-01", name: "1号入口", type: "entrance", floor: "1F", x: 12, y: 48, exhibitorId: null, exhibitId: null, description: "主入口和签到服务台。", status: "active", createdAt: "2026-07-21 10:00", updatedAt: "2026-08-01 10:00" },
-  { id: "point-booth-a1", venueId: "venue-1", code: "BOOTH-A1-08", name: "A1馆智能制造展区", type: "booth", floor: "1F", x: 62, y: 36, exhibitorId: "exhibitor-1", exhibitId: "exhibit-1", description: "四川智造科技有限公司展位。", status: "active", createdAt: "2026-07-22 10:00", updatedAt: "2026-08-01 10:00" },
-  { id: "point-rest", venueId: "venue-1", code: "SERVICE-REST", name: "中央休息区", type: "facility", floor: "1F", x: 45, y: 70, exhibitorId: null, exhibitId: null, description: "观众休息和饮水区域。", status: "active", createdAt: "2026-07-22 10:10", updatedAt: "2026-08-01 10:00" },
+  { id: "point-entrance", exhibitionId: "exhibition-1", venueId: "venue-1", code: "ENT-01", name: "1号入口", type: "entrance", floor: "1F", x: 12, y: 48, exhibitorId: null, exhibitId: null, description: "主入口和签到服务台。", status: "active", createdAt: "2026-07-21 10:00", updatedAt: "2026-08-01 10:00" },
+  { id: "point-booth-a1", exhibitionId: "exhibition-1", venueId: "venue-1", code: "BOOTH-A1-08", name: "A1馆智能制造展区", type: "booth", floor: "1F", x: 62, y: 36, exhibitorId: "exhibitor-1", exhibitId: "exhibit-1", description: "四川智造科技有限公司展位。", status: "active", createdAt: "2026-07-22 10:00", updatedAt: "2026-08-01 10:00" },
+  { id: "point-rest", exhibitionId: "exhibition-1", venueId: "venue-1", code: "SERVICE-REST", name: "中央休息区", type: "facility", floor: "1F", x: 45, y: 70, exhibitorId: null, exhibitId: null, description: "观众休息和饮水区域。", status: "active", createdAt: "2026-07-22 10:10", updatedAt: "2026-08-01 10:00" },
 ];
 
 const DEFAULT_EXHIBITORS: Exhibitor[] = [
@@ -154,8 +170,8 @@ const DEFAULT_EXHIBITS: Exhibit[] = [
 ];
 
 const DEFAULT_ROUTES: ExhibitionRoute[] = [
-  { id: "route-1", venueId: "venue-1", name: "主入口到智能制造展区", type: "navigation", pointIds: ["point-entrance", "point-booth-a1"], directions: ["从1号入口沿中央通道向东直行。", "经过服务台后右转进入A1馆。"], estimatedMinutes: 4, description: "适合现场导航和数字人讲解。", status: "published", createdAt: "2026-07-28 09:00", updatedAt: "2026-08-01 17:20" },
-  { id: "route-2", venueId: "venue-1", name: "主入口到休息区", type: "navigation", pointIds: ["point-entrance", "point-rest"], directions: ["沿中央通道直行至服务设施区域。"], estimatedMinutes: 2, description: "适合现场导航和数字人讲解。", status: "published", createdAt: "2026-07-28 09:20", updatedAt: "2026-07-28 09:20" },
+  { id: "route-1", exhibitionId: "exhibition-1", venueId: "venue-1", name: "主入口到智能制造展区", type: "navigation", pointIds: ["point-entrance", "point-booth-a1"], directions: ["从1号入口沿中央通道向东直行。", "经过服务台后右转进入A1馆。"], estimatedMinutes: 4, description: "适合现场导航和数字人讲解。", status: "published", createdAt: "2026-07-28 09:00", updatedAt: "2026-08-01 17:20" },
+  { id: "route-2", exhibitionId: "exhibition-1", venueId: "venue-1", name: "主入口到休息区", type: "navigation", pointIds: ["point-entrance", "point-rest"], directions: ["沿中央通道直行至服务设施区域。"], estimatedMinutes: 2, description: "适合现场导航和数字人讲解。", status: "published", createdAt: "2026-07-28 09:20", updatedAt: "2026-07-28 09:20" },
 ];
 
 const DEFAULT_SCHEDULES: EventSchedule[] = [
@@ -221,7 +237,7 @@ const DEFAULT_ALERTS: AlertEvent[] = [
 ];
 
 export interface AdminApiClient {
-  login(username: string, password: string): Promise<{ token: string; user: AdminUser }>;
+  login(username: string, password: string): Promise<{ token: string; refreshToken?: string; user: AdminUser }>;
   getDashboard(): Promise<DashboardData>;
   getReport(filters?: ReportFilters): Promise<ReportOperations>;
   getOperationsReport(filters?: { exhibitionId?: string; from?: string; to?: string; groupBy?: "day" | "terminal" | "scene" | "intent" }): Promise<OperationsReport>;
@@ -238,10 +254,18 @@ export interface AdminApiClient {
   saveSceneBindings(bindings: SceneBinding[]): Promise<SceneBinding[]>;
   getSceneBinding(scene: string): Promise<SceneBinding>;
   saveSceneBinding(binding: SceneBinding): Promise<SceneBinding>;
+  deleteSceneBinding(scene: string): Promise<void>;
   listIdle(): Promise<IdleContent[]>;
   saveIdle(item: IdleContent): Promise<IdleContent>;
   deleteIdle(id: string): Promise<void>;
   listDocuments(): Promise<KnowledgeDocument[]>;
+  listKnowledgeBases(): Promise<ApiKnowledgeBaseSummary[]>;
+  listKnowledgeBaseDocuments(baseId: string): Promise<ApiKnowledgeDocument[]>;
+  createKnowledgeBase(name: string): Promise<ApiKnowledgeBaseSummary>;
+  renameKnowledgeBase(id: string, name: string): Promise<ApiKnowledgeBaseSummary>;
+  deleteKnowledgeBase(id: string): Promise<void>;
+  uploadKnowledgeBaseDocument(baseId: string, file: File): Promise<ApiKnowledgeDocument>;
+  uploadKnowledgeDocument(file: File): Promise<KnowledgeDocument>;
   uploadDocument(input: Pick<KnowledgeDocument, "title" | "fileName" | "type" | "exhibition">): Promise<KnowledgeDocument>;
   updateDocument(id: string, patch: Partial<KnowledgeDocument>): Promise<KnowledgeDocument>;
   deleteDocument(id: string): Promise<void>;
@@ -273,7 +297,9 @@ export interface AdminApiClient {
   resolveMissAction(id: string, action: "ignore" | "handled" | "create_qa", reason?: string, qa?: Record<string, unknown>): Promise<MissPoolItem>;
   listExhibitions(): Promise<Exhibition[]>;
   saveExhibition(item: Exhibition): Promise<Exhibition>;
+  getExhibitionRuntimeConfig(id: string): Promise<Exhibition>;
   saveExhibitionRuntimeConfig(item: Exhibition): Promise<Exhibition>;
+  validateExhibitionRuntimeConfig(item: Exhibition): Promise<{ valid?: boolean; [key: string]: unknown }>;
   deleteExhibition(id: string): Promise<void>;
   transitionExhibition(id: string, status: ExhibitionStatus): Promise<Exhibition>;
   listVenues(): Promise<EventVenue[]>;
@@ -455,10 +481,18 @@ export class MockAdminApiClient implements AdminApiClient {
   async saveSceneBindings(bindings: SceneBinding[]) { writeStore("scene-bindings", bindings); return bindings; }
   async getSceneBinding(scene: string) { return (await this.listSceneBindings()).find((item) => item.scene === scene) ?? { scene, assets: [] }; }
   async saveSceneBinding(binding: SceneBinding) { await this.saveSceneBindings([...(await this.listSceneBindings()).filter((item) => item.scene !== binding.scene), binding]); return binding; }
+  async deleteSceneBinding(scene: string) { writeStore("scene-bindings", (await this.listSceneBindings()).filter((item) => item.scene !== scene)); }
   async listIdle() { return readStore<IdleContent[]>("idle", [{ id: "idle-1", type: "标语轮播", title: "西博会欢迎语", content: "欢迎来到 2026 西部博览会", interval: 8, exhibition: "2026 西部博览会", enabled: true }]); }
   async saveIdle(item: IdleContent) { const items = (await this.listIdle()).filter((candidate) => candidate.id !== item.id); const next = [item, ...items]; writeStore("idle", next); return item; }
   async deleteIdle(id: string) { writeStore("idle", (await this.listIdle()).filter((item) => item.id !== id)); }
   async listDocuments() { return readStore("documents", DEFAULT_DOCUMENTS); }
+  async listKnowledgeBases(): Promise<ApiKnowledgeBaseSummary[]> { return readStore("dify-knowledge-bases", []); }
+  async listKnowledgeBaseDocuments(_baseId: string): Promise<ApiKnowledgeDocument[]> { return []; }
+  async createKnowledgeBase(name: string): Promise<ApiKnowledgeBaseSummary> { const item: ApiKnowledgeBaseSummary = { id: `kb-${Date.now()}`, name, document_count: 0, ready_document_count: 0, error_document_count: 0, created_at: now(), updated_at: now() }; writeStore("dify-knowledge-bases", [item, ...(await this.listKnowledgeBases())]); return item; }
+  async renameKnowledgeBase(id: string, name: string): Promise<ApiKnowledgeBaseSummary> { const items = await this.listKnowledgeBases(); const next = items.map((item) => item.id === id ? { ...item, name, updated_at: now() } : item); writeStore("dify-knowledge-bases", next); return next.find((item) => item.id === id) ?? items[0]; }
+  async deleteKnowledgeBase(id: string) { writeStore("dify-knowledge-bases", (await this.listKnowledgeBases()).filter((item) => item.id !== id)); }
+  async uploadKnowledgeBaseDocument(baseId: string, file: File): Promise<ApiKnowledgeDocument> { return { id: `dify-doc-${Date.now()}`, kb_id: baseId, filename: file.name, mime_type: file.type || "application/octet-stream", bytes: file.size, sha256: "", status: "ready", error: null, chunk_count: 0, created_at: now(), updated_at: now() }; }
+  async uploadKnowledgeDocument(file: File): Promise<KnowledgeDocument> { return this.uploadDocument({ title: file.name, fileName: file.name, type: file.type || "document", exhibition: "" }); }
   async uploadDocument(input: Pick<KnowledgeDocument, "title" | "fileName" | "type" | "exhibition">) { const item: KnowledgeDocument = { ...input, id: `doc-${Date.now()}`, parseStatus: "parsing", vectorStatus: "pending", chunks: 0, uploader: "当前用户", uploadedAt: now() }; writeStore("documents", [item, ...await this.listDocuments()]); window.setTimeout(() => { void this.patchDocument(item.id, { parseStatus: "parsed", vectorStatus: "indexed", chunks: 32 }); }, 1200); return item; }
   private async patchDocument(id: string, patch: Partial<KnowledgeDocument>) { const next = (await this.listDocuments()).map((item) => item.id === id ? { ...item, ...patch } : item); writeStore("documents", next); }
   async updateDocument(id: string, patch: Partial<KnowledgeDocument>) { await this.patchDocument(id, patch); return (await this.listDocuments()).find((item) => item.id === id) ?? (await this.listDocuments())[0]; }
@@ -505,7 +539,16 @@ export class MockAdminApiClient implements AdminApiClient {
     writeStore("exhibitions", [saved, ...list.filter((candidate) => candidate.id !== item.id)]);
     return saved;
   }
+  async getExhibitionRuntimeConfig(id: string) {
+    const item = (await this.listExhibitions()).find((candidate) => candidate.id === id);
+    if (!item) throw new Error("展会不存在");
+    return item;
+  }
   async saveExhibitionRuntimeConfig(item: Exhibition) { return this.saveExhibition(item); }
+  async validateExhibitionRuntimeConfig(item: Exhibition) {
+    const exhibition = await this.getExhibitionRuntimeConfig(item.id).catch(() => null);
+    return { valid: Boolean(exhibition), exhibitionId: item.id };
+  }
   async transitionExhibition(id: string, status: Exhibition["status"]) {
     const list = await this.listExhibitions();
     const current = list.find((item) => item.id === id);
@@ -567,7 +610,7 @@ export class MockAdminApiClient implements AdminApiClient {
       if (route.pointIds?.length) return route;
       const venueId = route.venueId ?? DEFAULT_VENUES.find((venue) => venue.exhibitionId === route.exhibitionId)?.id ?? route.exhibitionId ?? "";
       const pointIds = [route.from, route.to].map((name) => points.find((point) => point.venueId === venueId && point.name === name)?.id).filter((id): id is string => Boolean(id));
-      return { id: route.id, venueId, name: route.name, type: "navigation" as const, pointIds, directions: route.directions ?? [], estimatedMinutes: route.estimatedMinutes, description: route.description, status: route.status, createdAt: route.createdAt, updatedAt: route.updatedAt };
+      return { id: route.id, exhibitionId: route.exhibitionId ?? DEFAULT_VENUES.find((venue) => venue.id === venueId)?.exhibitionId ?? "", venueId, name: route.name, type: "navigation" as const, pointIds, directions: route.directions ?? [], estimatedMinutes: route.estimatedMinutes, description: route.description, status: route.status, createdAt: route.createdAt, updatedAt: route.updatedAt };
     });
   }
   async saveRoute(item: ExhibitionRoute) { const venue = (await this.listVenues()).find((candidate) => candidate.id === item.venueId); if (!venue) throw new Error("路线所属场地不存在"); const points = await this.listPoints(); if (item.pointIds.length < 2 || item.pointIds.some((id) => points.find((point) => point.id === id)?.venueId !== item.venueId)) throw new Error("路线至少需要两个属于同一场地的点位"); const saved = { ...item, updatedAt: now() }; writeStore("routes", [saved, ...(await this.listRoutes()).filter((candidate) => candidate.id !== item.id)]); return saved; }
@@ -785,7 +828,40 @@ export class FetchAdminApiClient implements AdminApiClient {
     return backend === "assets" ? this.assetToken() : this.token();
   }
 
-  private async request<T>(path: string, init: RequestInit = {}, tokenOverride?: string, backendOverride?: AdminBackend): Promise<T> {
+  private refreshToken(): string {
+    return window.localStorage.getItem(REFRESH_TOKEN_KEY) || readStoredRefreshToken();
+  }
+
+  private storeTokens(accessToken: string, refreshToken?: string): void {
+    if (accessToken) window.localStorage.setItem(`${STORAGE_PREFIX}token`, accessToken);
+    if (refreshToken) window.localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
+  }
+
+  private clearSession(): void {
+    window.localStorage.removeItem(`${STORAGE_PREFIX}token`);
+    window.localStorage.removeItem(REFRESH_TOKEN_KEY);
+    window.localStorage.removeItem("opentalking-admin-session");
+    window.dispatchEvent(new CustomEvent("opentalking-admin-auth-expired"));
+  }
+
+  private async refreshAccessToken(): Promise<string | null> {
+    const refreshToken = this.refreshToken();
+    if (!refreshToken) return null;
+    try {
+      const response = await this.request<JsonRecord>("/auth/refresh", {
+        method: "POST",
+        body: JSON.stringify({ refresh_token: refreshToken }),
+      }, "", "business", false);
+      const accessToken = String(response.access_token || response.token || "");
+      if (!accessToken) return null;
+      this.storeTokens(accessToken, typeof response.refresh_token === "string" ? response.refresh_token : refreshToken);
+      return accessToken;
+    } catch {
+      return null;
+    }
+  }
+
+  private async request<T>(path: string, init: RequestInit = {}, tokenOverride?: string, backendOverride?: AdminBackend, allowRefresh = true): Promise<T> {
     const backend = backendOverride ?? this.backendForPath(path);
     const token = tokenOverride ?? this.tokenForBackend(backend);
     const response = await fetch(buildAdminFetchUrl(`/v1${path}`, backend), {
@@ -796,10 +872,10 @@ export class FetchAdminApiClient implements AdminApiClient {
         ...init.headers,
       },
     });
-    if (response.status === 401 && path !== "/auth/login" && backend === "business") {
-      window.localStorage.removeItem(`${STORAGE_PREFIX}token`);
-      window.localStorage.removeItem("opentalking-admin-session");
-      window.dispatchEvent(new CustomEvent("opentalking-admin-auth-expired"));
+    if (response.status === 401 && backend === "business" && allowRefresh && path !== "/auth/login" && path !== "/auth/refresh") {
+      const accessToken = await this.refreshAccessToken();
+      if (accessToken) return this.request<T>(path, init, accessToken, backend, false);
+      this.clearSession();
     }
     if (!response.ok) {
       let code = `HTTP_${response.status}`;
@@ -904,10 +980,11 @@ export class FetchAdminApiClient implements AdminApiClient {
     };
   }
 
-  async login(username: string, password: string): Promise<{ token: string; user: AdminUser }> {
+  async login(username: string, password: string): Promise<{ token: string; refreshToken?: string; user: AdminUser }> {
     const response = await this.request<JsonRecord>("/auth/login", { method: "POST", body: JSON.stringify({ username, password }) });
     const token = String(response.token || response.access_token || "");
-    window.localStorage.setItem(`${STORAGE_PREFIX}token`, token);
+    const refreshToken = typeof response.refresh_token === "string" ? response.refresh_token : undefined;
+    this.storeTokens(token, refreshToken);
     const permissions = await this.request<JsonRecord>("/auth/permissions", {}, token);
     if (runtimeEnv.VITE_ASSET_BACKEND_URL) {
       try {
@@ -924,6 +1001,7 @@ export class FetchAdminApiClient implements AdminApiClient {
     const role = (ROLE_PERMISSIONS[roleCode] ? roleCode : "readonly") as AdminUser["role"];
     return {
       token,
+      refreshToken,
       user: {
         id: String(response.user?.id || ""),
         username: String(response.user?.username || username),
@@ -1065,17 +1143,50 @@ export class FetchAdminApiClient implements AdminApiClient {
       }),
     }));
   }
+  async deleteSceneBinding(scene: string) { await this.request(`/admin/assets/scene-bindings/${encodeURIComponent(scene)}`, { method: "DELETE" }); }
   async listIdle() { return this.collection<IdleContent>("assets", "idle-contents"); }
   async saveIdle(item: IdleContent) { return this.saveCollection<IdleContent>("assets", "idle-contents", item as JsonRecord); }
   async deleteIdle(id: string) { await this.request(`/admin/assets/idle-contents/${encodeURIComponent(id)}`, { method: "DELETE" }); }
 
   async listDocuments() { return this.collection<KnowledgeDocument>("knowledge", "documents"); }
+  async listKnowledgeBases(): Promise<ApiKnowledgeBaseSummary[]> {
+    const payload = await this.request<{ data?: JsonRecord[]; items?: JsonRecord[] }>("/admin/knowledge/dify/datasets?page=1&limit=100");
+    const items = payload.data ?? payload.items ?? [];
+    return items.map((item) => ({ id: String(item.id), name: String(item.name ?? ""), document_count: Number(item.document_count ?? item.documentCount ?? 0), ready_document_count: Number(item.ready_document_count ?? item.document_count ?? 0), error_document_count: Number(item.error_document_count ?? 0), created_at: String(item.created_at ?? item.createdAt ?? ""), updated_at: String(item.updated_at ?? item.updatedAt ?? "") }));
+  }
+  async listKnowledgeBaseDocuments(baseId: string): Promise<ApiKnowledgeDocument[]> {
+    const payload = await this.request<{ data?: JsonRecord[]; items?: JsonRecord[] }>(`/admin/knowledge/dify/datasets/${encodeURIComponent(baseId)}/documents?page=1&limit=100`);
+    const items = payload.data ?? payload.items ?? [];
+    return items.map((item) => ({ id: String(item.id), kb_id: baseId, filename: String(item.name ?? item.filename ?? ""), mime_type: String(item.mime_type ?? ""), bytes: Number(item.bytes ?? item.size ?? 0), sha256: String(item.sha256 ?? ""), status: String(item.indexing_status ?? item.status ?? "processing"), error: item.error ? String(item.error) : null, chunk_count: Number(item.word_count ?? item.chunk_count ?? 0), created_at: String(item.created_at ?? ""), updated_at: String(item.updated_at ?? "") }));
+  }
+  async createKnowledgeBase(name: string): Promise<ApiKnowledgeBaseSummary> {
+    const item = await this.request<JsonRecord>("/admin/knowledge/dify/datasets", { method: "POST", body: JSON.stringify({ name }) });
+    return { id: String(item.id), name: String(item.name ?? name), document_count: 0, ready_document_count: 0, error_document_count: 0, created_at: String(item.created_at ?? ""), updated_at: String(item.updated_at ?? "") };
+  }
+  async renameKnowledgeBase(id: string, name: string): Promise<ApiKnowledgeBaseSummary> {
+    const item = await this.request<JsonRecord>(`/admin/knowledge/dify/datasets/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ name }) });
+    return { id: String(item.id ?? id), name: String(item.name ?? name), document_count: Number(item.document_count ?? 0), ready_document_count: Number(item.ready_document_count ?? item.document_count ?? 0), error_document_count: Number(item.error_document_count ?? 0), created_at: String(item.created_at ?? ""), updated_at: String(item.updated_at ?? "") };
+  }
+  async deleteKnowledgeBase(id: string) { await this.request(`/admin/knowledge/dify/datasets/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+  async uploadKnowledgeBaseDocument(baseId: string, file: File): Promise<ApiKnowledgeDocument> {
+    const form = new FormData();
+    form.set("file", file);
+    form.set("data", JSON.stringify({ name: file.name, indexing_technique: "high_quality", process_rule: { mode: "automatic" } }));
+    const item = await this.request<JsonRecord>(`/admin/knowledge/dify/datasets/${encodeURIComponent(baseId)}/documents/file`, { method: "POST", body: form });
+    return { id: String(item.document?.id ?? item.id ?? ""), kb_id: baseId, filename: String(item.document?.name ?? item.name ?? file.name), mime_type: file.type || "application/octet-stream", bytes: file.size, sha256: "", status: String(item.document?.indexing_status ?? item.indexing_status ?? "processing"), error: null, chunk_count: 0, created_at: now(), updated_at: now() };
+  }
+  async uploadKnowledgeDocument(file: File): Promise<KnowledgeDocument> {
+    const form = new FormData();
+    form.set("file", file);
+    const item = await this.request<JsonRecord>("/admin/knowledge/documents", { method: "POST", body: form });
+    return item as unknown as KnowledgeDocument;
+  }
   async uploadDocument(input: Pick<KnowledgeDocument, "title" | "fileName" | "type" | "exhibition">) { return this.saveCollection<KnowledgeDocument>("knowledge", "documents", input as JsonRecord); }
   async updateDocument(id: string, patch: Partial<KnowledgeDocument>) { return this.saveCollection<KnowledgeDocument>("knowledge", "documents", { ...patch, id }); }
   async deleteDocument(id: string) { await this.request(`/admin/knowledge/documents/${encodeURIComponent(id)}`, { method: "DELETE" }); }
   async listQa() { return this.collection<KnowledgeQa>("knowledge", "qa"); }
   async saveQa(item: KnowledgeQa) { return this.saveCollection<KnowledgeQa>("knowledge", "qa", item as JsonRecord); }
-  async transitionQa(id: string, status: KnowledgeQa["status"]) { return this.request<KnowledgeQa>(`/admin/knowledge/qa/${encodeURIComponent(id)}/transition`, { method: "POST", body: JSON.stringify({ status }) }); }
+  async transitionQa(id: string, status: KnowledgeQa["status"]) { return this.request<KnowledgeQa>(`/admin/knowledge/qa/${encodeURIComponent(id)}/transition`, { method: "POST", body: JSON.stringify({ status, operator: "admin" }) }); }
   async listQaVersions(id: string) { const response = await this.request<{ items?: Array<Record<string, unknown>> }>(`/admin/knowledge/qa/${encodeURIComponent(id)}/versions`); return response.items ?? []; }
   async rollbackQa(id: string, version: number, reason: string) { return this.request<KnowledgeQa>(`/admin/knowledge/qa/${encodeURIComponent(id)}/rollback`, { method: "POST", body: JSON.stringify({ version, reason }) }); }
   async deleteQa(id: string) { await this.request(`/admin/knowledge/qa/${encodeURIComponent(id)}`, { method: "DELETE" }); }
@@ -1095,7 +1206,7 @@ export class FetchAdminApiClient implements AdminApiClient {
   async rollbackPackage(id: string, targetPackageId?: string, reason?: string) { return this.request<PublishPackage>(`/admin/knowledge/packages/${encodeURIComponent(id)}/rollback`, { method: "POST", body: JSON.stringify({ target_package_id: targetPackageId, reason }) }); }
   async listMissPool() { return this.collection<MissPoolItem>("knowledge", "miss-pool"); }
   async resolveMiss(id: string, status: MissPoolItem["status"]) { return this.resolveMissAction(id, status === "ignored" ? "ignore" : status === "converted_qa" ? "create_qa" : "handled"); }
-  async resolveMissAction(id: string, action: "ignore" | "handled" | "create_qa", reason?: string, qa?: Record<string, unknown>) { return this.request<MissPoolItem>(`/admin/knowledge/miss-pool/${encodeURIComponent(id)}/resolve`, { method: "POST", body: JSON.stringify({ action, reason, qa }) }); }
+  async resolveMissAction(id: string, action: "ignore" | "handled" | "create_qa", reason?: string, qa?: Record<string, unknown>) { const status = action === "ignore" ? "ignored" : action === "create_qa" ? "converted_qa" : "supplemented"; return this.request<MissPoolItem>(`/admin/knowledge/miss-pool/${encodeURIComponent(id)}/resolve`, { method: "POST", body: JSON.stringify({ action, status, reason, qa }) }); }
 
   async listWelcomeConfigs(exhibitionId?: string) {
     const [items, exhibitions] = await Promise.all([this.collection<JsonRecord>("interaction", "welcome-configs", { exhibition_id: exhibitionId }), this.listExhibitions()]);
@@ -1126,14 +1237,19 @@ export class FetchAdminApiClient implements AdminApiClient {
 
   async listExhibitions() { return (await this.collection<JsonRecord>("event", "exhibitions")).map((item) => this.exhibition(item)); }
   async saveExhibition(item: Exhibition) { return this.exhibition(await this.saveCollection<JsonRecord>("event", "exhibitions", item as JsonRecord)); }
+  async getExhibitionRuntimeConfig(id: string) { return this.exhibition(await this.request<JsonRecord>(`/admin/event/exhibitions/${encodeURIComponent(id)}/runtime-config`)); }
   async saveExhibitionRuntimeConfig(item: Exhibition) { return this.exhibition(await this.request<JsonRecord>(`/admin/event/exhibitions/${encodeURIComponent(item.id)}/runtime-config`, { method: "PUT", body: JSON.stringify(item) })); }
+  async validateExhibitionRuntimeConfig(item: Exhibition) { return this.request<{ valid?: boolean; [key: string]: unknown }>(`/admin/event/exhibitions/${encodeURIComponent(item.id)}/runtime-config/validate`, { method: "POST", body: JSON.stringify(item) }); }
   async deleteExhibition(id: string) { await this.request(`/admin/event/exhibitions/${encodeURIComponent(id)}`, { method: "DELETE" }); }
   async transitionExhibition(id: string, status: ExhibitionStatus) { return this.exhibition(await this.request<JsonRecord>(`/admin/event/exhibitions/${encodeURIComponent(id)}/lifecycle`, { method: "POST", body: JSON.stringify({ status }) })); }
   async listVenues() { return this.collection<EventVenue>("event", "venues"); }
   async saveVenue(item: EventVenue) { return this.saveCollection<EventVenue>("event", "venues", item as JsonRecord); }
   async deleteVenue(id: string) { await this.request(`/admin/event/venues/${encodeURIComponent(id)}`, { method: "DELETE" }); }
   async listPoints() { return this.collection<EventPoint>("event", "points"); }
-  async savePoint(item: EventPoint) { return this.saveCollection<EventPoint>("event", "points", item as JsonRecord); }
+  async savePoint(item: EventPoint) {
+    const exhibitionId = item.exhibitionId || (await this.listVenues()).find((venue) => venue.id === item.venueId)?.exhibitionId || "";
+    return this.saveCollection<EventPoint>("event", "points", { ...item, exhibitionId });
+  }
   async deletePoint(id: string) { await this.request(`/admin/event/points/${encodeURIComponent(id)}`, { method: "DELETE" }); }
   async listExhibitors() { return this.collection<Exhibitor>("event", "exhibitors"); }
   async saveExhibitor(item: Exhibitor) { return this.saveCollection<Exhibitor>("event", "exhibitors", item as JsonRecord); }
@@ -1142,11 +1258,20 @@ export class FetchAdminApiClient implements AdminApiClient {
   async saveExhibit(item: Exhibit) { return this.saveCollection<Exhibit>("event", "exhibits", item as JsonRecord); }
   async deleteExhibit(id: string) { await this.request(`/admin/event/exhibits/${encodeURIComponent(id)}`, { method: "DELETE" }); }
   async listRoutes() { return this.collection<ExhibitionRoute>("event", "routes"); }
-  async saveRoute(item: ExhibitionRoute) { return this.saveCollection<ExhibitionRoute>("event", "routes", item as JsonRecord); }
+  async saveRoute(item: ExhibitionRoute) {
+    const exhibitionId = item.exhibitionId || (await this.listVenues()).find((venue) => venue.id === item.venueId)?.exhibitionId || "";
+    return this.saveCollection<ExhibitionRoute>("event", "routes", { ...item, exhibitionId });
+  }
   async deleteRoute(id: string) { await this.request(`/admin/event/routes/${encodeURIComponent(id)}`, { method: "DELETE" }); }
   async listBroadcasts() { return this.collection<EmergencyBroadcast>("event", "broadcasts"); }
   async saveBroadcast(item: EmergencyBroadcast) { return this.saveCollection<EmergencyBroadcast>("event", "broadcasts", item as JsonRecord); }
-  async transitionBroadcast(id: string, status: EmergencyBroadcast["status"]) { return this.saveCollection<EmergencyBroadcast>("event", "broadcasts", { id, status }); }
+  async transitionBroadcast(id: string, status: EmergencyBroadcast["status"]) {
+    if (status === "active" || status === "ended") {
+      const action = status === "active" ? "activate" : "end";
+      return this.request<EmergencyBroadcast>(`/admin/event/broadcasts/${encodeURIComponent(id)}/${action}`, { method: "POST" });
+    }
+    return this.saveCollection<EmergencyBroadcast>("event", "broadcasts", { id, status });
+  }
   async deleteBroadcast(id: string) { await this.request(`/admin/event/broadcasts/${encodeURIComponent(id)}`, { method: "DELETE" }); }
   async listSchedules() { return this.collection<EventSchedule>("event", "schedules"); }
   async saveSchedule(item: EventSchedule) { return this.saveCollection<EventSchedule>("event", "schedules", item as JsonRecord); }

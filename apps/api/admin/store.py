@@ -185,6 +185,10 @@ class AdminStore:
             ("menu-asset-voice", "menu-assets", "asset:voice", "声音配置", "menu", "/asset/voice"),
             ("menu-asset-scene", "menu-assets", "asset:scene", "场景绑定", "menu", "/asset/scene"),
             ("menu-asset-idle", "menu-assets", "asset:idle", "待机内容", "menu", "/asset/idle"),
+            ("button-asset-gif-write", "menu-asset-gif", "asset:gif:write", "GIF 写入", "button", ""),
+            ("button-asset-scene-write", "menu-asset-scene", "asset:scene:write", "场景写入", "button", ""),
+            ("button-asset-voice-write", "menu-asset-voice", "asset:voice:write", "声音配置写入", "button", ""),
+            ("button-asset-idle-write", "menu-asset-idle", "asset:idle:write", "待机内容写入", "button", ""),
             ("menu-knowledge", None, "knowledge", "知识中心", "menu", ""),
             ("menu-knowledge-document", "menu-knowledge", "knowledge:document", "文档资料", "menu", "/knowledge/document"),
             ("menu-knowledge-qa", "menu-knowledge", "knowledge:qa", "问答知识", "menu", "/knowledge/qa"),
@@ -223,15 +227,16 @@ class AdminStore:
                     (role_id, code, name, description, now, now),
                 )
             all_permissions = [row[0] for row in conn.execute("SELECT id FROM admin_permissions")]
-            content_codes = {"dashboard:view", "event", "event:exhibition", "event:exhibitor", "event:exhibit", "event:venue", "event:point", "event:route", "event:schedule", "event:broadcast", "interaction", "interact:welcome", "interact:explain", "interact:shopping", "lead:view", "lead:view_sensitive", "lead:export", "lead:feedback", "asset", "asset:avatar", "asset:gif", "asset:voice", "asset:scene", "asset:idle", "knowledge", "knowledge:document", "knowledge:base", "knowledge:memory", "knowledge:qa", "knowledge:script", "knowledge:publish", "knowledge:miss"}
+            content_codes = {"dashboard:view", "event", "event:exhibition", "event:exhibitor", "event:exhibit", "event:venue", "event:point", "event:route", "event:schedule", "event:broadcast", "interaction", "interact:welcome", "interact:explain", "interact:shopping", "lead:view", "lead:view_sensitive", "lead:export", "lead:feedback", "asset", "asset:avatar", "asset:gif", "asset:gif:write", "asset:voice", "asset:voice:write", "asset:scene", "asset:scene:write", "asset:idle", "asset:idle:write", "knowledge", "knowledge:document", "knowledge:base", "knowledge:memory", "knowledge:qa", "knowledge:script", "knowledge:publish", "knowledge:miss"}
             data_codes = {"dashboard:view", "report:export", "lead:view", "lead:export"}
             audit_codes = {"dashboard:view", "system", "system:audit", "audit:trace"}
-            for role_code, codes in (("sys_admin", set(row[1] for row in permissions)), ("content_ops", content_codes), ("data_viewer", data_codes), ("security_audit", audit_codes), ("readonly", set(row[1] for row in permissions))):
+            readonly_codes = {"dashboard:view", "asset:avatar", "asset:gif", "asset:voice", "asset:scene", "asset:idle", "interact:welcome", "interact:explain", "interact:shopping", "knowledge:script", "report:interaction", "system:ops"}
+            for role_code, codes in (("sys_admin", set(row[1] for row in permissions)), ("content_ops", content_codes), ("data_viewer", data_codes), ("security_audit", audit_codes), ("readonly", readonly_codes)):
                 role = conn.execute("SELECT id FROM admin_roles WHERE code=?", (role_code,)).fetchone()
                 if not role:
                     continue
                 for permission_id, code, *_ in conn.execute("SELECT id,code,name,kind,path FROM admin_permissions"):
-                    if code in codes or permission_id in all_permissions and role_code in {"sys_admin", "readonly"}:
+                    if code in codes or permission_id in all_permissions and role_code == "sys_admin":
                         conn.execute("INSERT OR IGNORE INTO admin_role_permissions(role_id,permission_id) VALUES (?,?)", (role[0], permission_id))
             user = conn.execute("SELECT id FROM admin_users WHERE username='admin'").fetchone()
             if not user:
@@ -279,7 +284,7 @@ class AdminStore:
             ("miss_pool", "miss-001", "expo-2026", {"id": "miss-001", "question": "附近有哪些休息区？", "exhibitionId": "expo-2026", "count": 3, "firstAskedAt": now, "lastAskedAt": now, "status": "pending"}),
             ("services", "service-api", None, {"id": "service-api", "name": "Unified API", "status": "ok", "latencyMs": 12, "checkedAt": now, "description": "OpenTalking API 与 Admin 服务"}),
             ("terminals", "terminal-a01", "expo-2026", {"id": "terminal-a01", "name": "A馆迎宾终端", "exhibitionId": "expo-2026", "location": "A馆入口", "status": "online", "lastHeartbeatAt": now, "version": "dev", "cpuPercent": 8, "memoryPercent": 32}),
-            ("gifs", "gif-welcome", "expo-2026", {"id": "gif-welcome", "name": "迎宾微笑", "filename": "welcome.gif", "status": "active", "scene": "welcome", "url": "", "createdAt": now}),
+            ("gifs", "gif-welcome", "expo-2026", {"id": "gif-welcome", "name": "迎宾微笑", "fileName": "welcome.gif", "status": "active", "scene": "welcome", "url": "", "createdAt": now}),
             ("voice_configs", "voice-default", "expo-2026", {"id": "voice-default", "provider": "edge", "voiceId": "zh-CN-XiaoxiaoNeural", "name": "晓晓", "previewText": "您好，欢迎来到展会。", "status": "active", "source": "system"}),
             ("scene_bindings", "scene-welcome", "expo-2026", {"id": "scene-welcome", "scene": "welcome", "assets": [{"assetId": "gif-welcome", "isPrimary": True, "order": 0}]}),
             ("idle_contents", "idle-welcome", "expo-2026", {"id": "idle-welcome", "type": "标语轮播", "title": "西博会欢迎语", "content": "欢迎来到 2026 西部博览会", "interval": 8, "exhibition": "2026 西部博览会", "exhibitionId": "expo-2026", "enabled": True}),
@@ -332,8 +337,8 @@ class AdminStore:
             ("services", "service-redis", None, {"id": "service-redis", "name": "Session Broker", "status": "ok", "latencyMs": 4, "checkedAt": now, "description": "会话与任务队列"}),
             ("alerts", "alert-002", None, {"id": "alert-002", "type": "terminal", "severity": "critical", "object": "terminal-2027-c01", "content": "智慧城市展台终端超过5分钟未上报心跳。", "status": "open", "createdAt": now}),
             ("alerts", "alert-003", None, {"id": "alert-003", "type": "resource", "severity": "info", "object": "knowledge-index", "content": "知识包 v2 等待审核发布。", "status": "acknowledged", "createdAt": now, "acknowledgedBy": "系统管理员"}),
-            ("gifs", "gif-explain", "expo-2026", {"id": "gif-explain", "name": "讲解手势", "filename": "explain.gif", "status": "active", "scene": "explain", "url": "", "createdAt": now}),
-            ("gifs", "gif-2027-welcome", "expo-2027", {"id": "gif-2027-welcome", "name": "城市迎宾", "filename": "city-welcome.gif", "status": "draft", "scene": "welcome", "url": "", "createdAt": now}),
+            ("gifs", "gif-explain", "expo-2026", {"id": "gif-explain", "name": "讲解手势", "fileName": "explain.gif", "status": "active", "scene": "explain", "url": "", "createdAt": now}),
+            ("gifs", "gif-2027-welcome", "expo-2027", {"id": "gif-2027-welcome", "name": "城市迎宾", "fileName": "city-welcome.gif", "status": "draft", "scene": "welcome", "url": "", "createdAt": now}),
             ("scene_bindings", "scene-explain", "expo-2026", {"id": "scene-explain", "scene": "explain", "assets": [{"assetId": "gif-explain", "isPrimary": True, "order": 0}]}),
             ("scene_bindings", "scene-2027-welcome", "expo-2027", {"id": "scene-2027-welcome", "scene": "welcome", "assets": [{"assetId": "gif-2027-welcome", "isPrimary": True, "order": 0}]}),
             ("idle_contents", "idle-2027", "expo-2027", {"id": "idle-2027", "type": "热点轮播", "title": "智慧城市热点", "content": "城市数字孪生 · 绿色交通 · 公共服务", "interval": 10, "exhibition": "2027 智慧城市展", "exhibitionId": "expo-2027", "enabled": True}),
@@ -364,6 +369,17 @@ class AdminStore:
             if feedback.get("status") == "resolved":
                 feedback["status"] = "handled"
                 conn.execute("UPDATE admin_records SET data_json=?, updated_at=? WHERE kind='feedback' AND id=?", (json.dumps(feedback, ensure_ascii=False), now, row[0]))
+        # Older deployments stored GIF names as ``filename``. Migrate the
+        # persisted records so storage follows the same strict contract as
+        # every GIF API response, including records created before this build.
+        for row in conn.execute("SELECT id, data_json FROM admin_records WHERE kind='gifs'").fetchall():
+            gif = json.loads(row[1])
+            legacy_name = gif.pop("filename", None)
+            if legacy_name is None:
+                continue
+            if not gif.get("fileName"):
+                gif["fileName"] = legacy_name
+            conn.execute("UPDATE admin_records SET data_json=?, updated_at=? WHERE kind='gifs' AND id=?", (json.dumps(gif, ensure_ascii=False), now, row[0]))
         conn.execute("INSERT OR IGNORE INTO admin_record_links(owner_kind,owner_id,link_kind,link_id) VALUES ('interaction_shopping','shopping-001','exhibits','exhibit-001')")
         for strategy_id, exhibit_id in (("shopping-001", "exhibit-002"), ("shopping-2027", "exhibit-2027-001"), ("shopping-2027", "exhibit-2027-002")):
             conn.execute("INSERT OR IGNORE INTO admin_record_links(owner_kind,owner_id,link_kind,link_id) VALUES (?,?,?,?)", ("interaction_shopping", strategy_id, "exhibits", exhibit_id))
