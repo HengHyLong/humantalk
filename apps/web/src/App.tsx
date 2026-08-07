@@ -2674,6 +2674,8 @@ export default function App() {
     await submitRuntimeLead({
       ...input,
       exhibitionId: exhibitionVoiceConfig?.exhibition_id || configuredExhibitionId || "current",
+      sessionId,
+      traceId: `web-${sessionId}`,
       source: "web-guide",
     });
     notify("预约已提交，展会方会尽快与您联系。", "success");

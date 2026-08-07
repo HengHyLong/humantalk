@@ -44,9 +44,13 @@ const now = () => new Date().toISOString();
 export type DownloadData = string | Blob;
 export type GifCreateInput = Omit<GifAssetMeta, "id" | "createdAt"> & { file?: File };
 
-function buildAdminFetchUrl(path: string): string {
+const runtimeEnv = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env ?? {};
+type AdminBackend = "business" | "assets";
+
+function buildAdminFetchUrl(path: string, backend: AdminBackend = "business"): string {
   const base = typeof window === "undefined" ? "http://127.0.0.1:5173/" : window.location.href;
-  return new URL(`/api${path}`, base).toString();
+  const proxyPrefix = backend === "assets" && runtimeEnv.VITE_ASSET_BACKEND_URL ? "/api-assets" : "/api";
+  return new URL(`${proxyPrefix}${path}`, base).toString();
 }
 
 function readStore<T>(key: string, fallback: T): T {
@@ -640,6 +644,18 @@ function queryString(params: Record<string, string | number | undefined>): strin
   return encoded ? `?${encoded}` : "";
 }
 
+export class AdminApiError extends Error {
+  constructor(
+    readonly status: number,
+    readonly code: string,
+    readonly traceId: string,
+    readonly detail: string,
+  ) {
+    super(detail || `Admin API ${status}`);
+    this.name = "AdminApiError";
+  }
+}
+
 function isClientDraftId(value: unknown): boolean {
   const id = String(value || "");
   return /^(?:new|user|role|welcome-config|explain-flow|shopping-strategy|voice-local|idle|doc|qa|script|package|gif|lead)-\d+$/.test(id);
@@ -660,14 +676,119 @@ function normalizeWelcomeTrigger(value: unknown): string[] {
   return trigger ? [trigger] : [];
 }
 
+function normalizeReportBucket(value: unknown): ReportOperations["interaction"]["byScene"][number] {
+  const item = value && typeof value === "object" ? value as JsonRecord : {};
+  return {
+    key: String(item.key ?? item.id ?? item.label ?? ""),
+    count: Number(item.count ?? item.total ?? 0),
+    averageDurationMs: item.averageDurationMs == null ? undefined : Number(item.averageDurationMs),
+    totalDurationMs: item.totalDurationMs == null ? undefined : Number(item.totalDurationMs),
+  };
+}
+
+function normalizeReportBuckets(value: unknown): ReportOperations["interaction"]["byScene"] {
+  if (Array.isArray(value)) return value.map(normalizeReportBucket);
+  if (value && typeof value === "object") {
+    return Object.entries(value as JsonRecord).map(([key, count]) => ({ key, count: Number(count || 0) }));
+  }
+  return [];
+}
+
+function normalizeReportOperations(raw: JsonRecord): ReportOperations {
+  const interaction = raw.interaction && typeof raw.interaction === "object" ? raw.interaction as JsonRecord : {};
+  const hotspot = raw.hotspot && typeof raw.hotspot === "object" ? raw.hotspot as JsonRecord : {};
+  const hit = raw.hit && typeof raw.hit === "object" ? raw.hit as JsonRecord : {};
+  const lead = raw.lead && typeof raw.lead === "object" ? raw.lead as JsonRecord : {};
+  const resource = raw.resource && typeof raw.resource === "object" ? raw.resource as JsonRecord : {};
+  const dimensions = raw.dimensions && typeof raw.dimensions === "object" ? raw.dimensions as JsonRecord : {};
+  const summary = raw.summary && typeof raw.summary === "object" ? raw.summary as JsonRecord : {};
+  const interactionDimension = dimensions.interaction ?? interaction.byScene;
+  const leadDimension = dimensions.lead ?? lead.byStatus;
+  return {
+    generatedAt: String(raw.generatedAt || raw.generated_at || now()),
+    filters: (raw.filters && typeof raw.filters === "object" ? raw.filters : {}) as Record<string, string | null | undefined>,
+    interaction: {
+      total: Number(interaction.total ?? summary.interaction_count ?? 0),
+      averageDurationMs: Number(interaction.averageDurationMs ?? 0),
+      byScene: normalizeReportBuckets(interactionDimension),
+      byTerminal: normalizeReportBuckets(dimensions.terminal ?? interaction.byTerminal),
+      byHour: normalizeReportBuckets(interaction.byHour),
+    },
+    hotspot: { items: normalizeReportBuckets(hotspot.items ?? dimensions.hotspot) },
+    hit: {
+      total: Number(hit.total ?? dimensions.hit?.total ?? 0),
+      hit: Number(hit.hit ?? dimensions.hit?.hit ?? 0),
+      miss: Number(hit.miss ?? dimensions.hit?.miss ?? 0),
+      hitRate: Number(hit.hitRate ?? 0),
+      strongQaHit: Number(hit.strongQaHit ?? 0),
+      ragHit: Number(hit.ragHit ?? 0),
+    },
+    lead: {
+      total: Number(lead.total ?? summary.new_leads ?? 0),
+      converted: Number(lead.converted ?? 0),
+      conversionRate: Number(lead.conversionRate ?? 0),
+      byStatus: normalizeReportBuckets(leadDimension),
+    },
+    resource: { items: normalizeReportBuckets(resource.items ?? dimensions.resource) },
+  };
+}
+
+function normalizeOperationsReport(raw: JsonRecord): OperationsReport {
+  const report = normalizeReportOperations(raw);
+  const rawSummary = raw.summary && typeof raw.summary === "object" ? raw.summary as JsonRecord : {};
+  const rawFilters = raw.filters && typeof raw.filters === "object" ? raw.filters as JsonRecord : {};
+  const summary = {
+    exhibition_id: String(rawSummary.exhibition_id ?? rawFilters.exhibition_id ?? ""),
+    interaction_count: Number(rawSummary.interaction_count ?? report.interaction.total),
+    online_terminals: Number(rawSummary.online_terminals ?? 0),
+    pending_knowledge: Number(rawSummary.pending_knowledge ?? 0),
+    new_leads: Number(rawSummary.new_leads ?? report.lead.total),
+    alerts: Number(rawSummary.alerts ?? 0),
+    todo: Array.isArray(rawSummary.todo) ? rawSummary.todo as DashboardData["todos"] : [],
+  };
+  const rawSeries = Array.isArray(raw.series) ? raw.series : [];
+  const dimensionItems = (items: ReportOperations["interaction"]["byScene"]) => items.map((item) => ({ label: item.key, count: item.count }));
+  return {
+    summary,
+    series: rawSeries.map((item) => {
+      const value = item && typeof item === "object" ? item as JsonRecord : {};
+      return { date: String(value.date || value.key || ""), interactions: Number(value.interactions ?? value.count ?? 0), leads: Number(value.leads ?? 0), misses: Number(value.misses ?? 0) };
+    }),
+    dimensions: {
+      interaction: dimensionItems(report.interaction.byScene),
+      hotspot: dimensionItems(report.hotspot.items),
+      hit: dimensionItems(normalizeReportBuckets((raw.dimensions as JsonRecord | undefined)?.hit)),
+      lead: dimensionItems(report.lead.byStatus),
+      resource: dimensionItems(report.resource.items),
+    },
+  };
+}
+
 export class FetchAdminApiClient implements AdminApiClient {
   private token(): string {
     return window.localStorage.getItem(`${STORAGE_PREFIX}token`) || readStoredSessionToken();
   }
 
-  private async request<T>(path: string, init: RequestInit = {}, tokenOverride?: string): Promise<T> {
-    const token = tokenOverride ?? this.token();
-    const response = await fetch(buildAdminFetchUrl(`/v1${path}`), {
+  private assetToken(): string {
+    return window.localStorage.getItem(`${STORAGE_PREFIX}asset-token`)
+      || runtimeEnv.VITE_ADMIN_ASSET_TOKEN
+      || this.token();
+  }
+
+  private backendForPath(path: string): AdminBackend {
+    return path.startsWith("/admin/report/") || path === "/admin/assets" || path.startsWith("/admin/assets/")
+      ? "assets"
+      : "business";
+  }
+
+  private tokenForBackend(backend: AdminBackend): string {
+    return backend === "assets" ? this.assetToken() : this.token();
+  }
+
+  private async request<T>(path: string, init: RequestInit = {}, tokenOverride?: string, backendOverride?: AdminBackend): Promise<T> {
+    const backend = backendOverride ?? this.backendForPath(path);
+    const token = tokenOverride ?? this.tokenForBackend(backend);
+    const response = await fetch(buildAdminFetchUrl(`/v1${path}`, backend), {
       ...init,
       headers: {
         ...(init.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
@@ -675,32 +796,40 @@ export class FetchAdminApiClient implements AdminApiClient {
         ...init.headers,
       },
     });
-    if (response.status === 401 && path !== "/auth/login") {
+    if (response.status === 401 && path !== "/auth/login" && backend === "business") {
       window.localStorage.removeItem(`${STORAGE_PREFIX}token`);
       window.localStorage.removeItem("opentalking-admin-session");
       window.dispatchEvent(new CustomEvent("opentalking-admin-auth-expired"));
     }
     if (!response.ok) {
+      let code = `HTTP_${response.status}`;
+      let traceId = "";
       let detail = `Admin API ${response.status}`;
       try {
         const payload = await response.json() as JsonRecord;
         const body = payload.detail ?? payload;
-        detail = typeof body === "string" ? body : body.detail || body.code || detail;
+        code = String(payload.code || (typeof body === "object" && body ? body.code : "") || code);
+        traceId = String(payload.trace_id || payload.traceId || (typeof body === "object" && body ? body.trace_id || body.traceId : "") || "");
+        detail = typeof body === "string" ? body : body?.detail || body?.message || code || detail;
       } catch { /* keep status fallback */ }
-      throw new Error(detail);
+      throw new AdminApiError(response.status, code, traceId, detail);
     }
     if (response.status === 204) return undefined as T;
     return response.json() as Promise<T>;
   }
 
   private async download(path: string): Promise<string> {
-    const response = await fetch(buildAdminFetchUrl(`/v1${path}`), { headers: this.token() ? { Authorization: `Bearer ${this.token()}` } : {} });
+    const backend = this.backendForPath(path);
+    const token = this.tokenForBackend(backend);
+    const response = await fetch(buildAdminFetchUrl(`/v1${path}`, backend), { headers: token ? { Authorization: `Bearer ${token}` } : {} });
     if (!response.ok) throw new Error(`Admin API ${response.status}`);
     return response.text();
   }
 
   private async downloadFile(path: string): Promise<Blob> {
-    const response = await fetch(buildAdminFetchUrl(`/v1${path}`), { headers: this.token() ? { Authorization: `Bearer ${this.token()}` } : {} });
+    const backend = this.backendForPath(path);
+    const token = this.tokenForBackend(backend);
+    const response = await fetch(buildAdminFetchUrl(`/v1${path}`, backend), { headers: token ? { Authorization: `Bearer ${token}` } : {} });
     if (!response.ok) throw new Error(`Admin API ${response.status}`);
     return response.blob();
   }
@@ -780,6 +909,17 @@ export class FetchAdminApiClient implements AdminApiClient {
     const token = String(response.token || response.access_token || "");
     window.localStorage.setItem(`${STORAGE_PREFIX}token`, token);
     const permissions = await this.request<JsonRecord>("/auth/permissions", {}, token);
+    if (runtimeEnv.VITE_ASSET_BACKEND_URL) {
+      try {
+        const assetResponse = await this.request<JsonRecord>("/admin/auth/login", { method: "POST", body: JSON.stringify({ username, password }) }, undefined, "assets");
+        const assetToken = String(assetResponse.token || assetResponse.access_token || "");
+        if (assetToken) window.localStorage.setItem(`${STORAGE_PREFIX}asset-token`, assetToken);
+      } catch {
+        // Asset authentication is isolated from the primary session until the
+        // second backend confirms whether it accepts the same credentials.
+        window.localStorage.removeItem(`${STORAGE_PREFIX}asset-token`);
+      }
+    }
     const roleCode = String(response.user?.roles?.[0] || "sys_admin") as AdminUser["role"];
     const role = (ROLE_PERMISSIONS[roleCode] ? roleCode : "readonly") as AdminUser["role"];
     return {
@@ -797,35 +937,46 @@ export class FetchAdminApiClient implements AdminApiClient {
 
   async getDashboard(): Promise<DashboardData> {
     const report = await this.request<JsonRecord>("/admin/report");
+    const summary = report.summary && typeof report.summary === "object" ? report.summary as JsonRecord : report;
     const metric = (id: string, label: string, value: unknown, trend: string, tone: DashboardData["metrics"][number]["tone"]) => ({ id, label, value: String(value ?? 0), trend, tone });
     return {
       metrics: [
-        metric("interactions", "今日交互量", report.interaction_count, "来自审计快照", "cyan"),
-        metric("terminals", "在线终端", report.online_terminals, "当前快照", "green"),
-        metric("pending", "待审知识", report.pending_knowledge, "需要处理", "amber"),
-        metric("leads", "新增线索", report.new_leads, "当前展会", "violet"),
-        metric("alerts", "未确认告警", report.alerts, "当前快照", report.alerts ? "rose" : "green"),
+        metric("interactions", "今日交互量", summary.interaction_count, "来自审计快照", "cyan"),
+        metric("terminals", "在线终端", summary.online_terminals, "当前快照", "green"),
+        metric("pending", "待审知识", summary.pending_knowledge, "需要处理", "amber"),
+        metric("leads", "新增线索", summary.new_leads, "当前展会", "violet"),
+        metric("alerts", "未确认告警", summary.alerts, "当前快照", summary.alerts ? "rose" : "green"),
       ],
-      todos: Array.isArray(report.todo) ? report.todo : [],
+      todos: Array.isArray(summary.todo) ? summary.todo as DashboardData["todos"] : [],
     };
   }
 
   private sceneBinding(item: JsonRecord): SceneBinding {
     const assets = Array.isArray(item.assets) ? item.assets : [];
+    const nullableString = (value: unknown): string | null => value == null ? null : String(value);
     return {
       scene: String(item.scene || ""),
       assets: assets.map((asset) => {
         const value = asset as JsonRecord;
         return { assetId: String(value.assetId || value.asset_id || ""), isPrimary: Boolean(value.isPrimary ?? value.is_primary), order: Number(value.order || 0) };
       }),
+      waitingGifId: nullableString(item.waitingGifId ?? item.waiting_gif_id),
+      speakingGifId: nullableString(item.speakingGifId ?? item.speaking_gif_id),
+      voiceConfigId: nullableString(item.voiceConfigId ?? item.voice_config_id),
+      idleContentId: nullableString(item.idleContentId ?? item.idle_content_id),
+      status: String(item.status || "active"),
     };
   }
 
   async getOperationsReport(filters: { exhibitionId?: string; from?: string; to?: string; groupBy?: "day" | "terminal" | "scene" | "intent" } = {}): Promise<OperationsReport> {
-    return this.request<OperationsReport>(`/admin/report/operations${queryString({ exhibition_id: filters.exhibitionId, from: filters.from, to: filters.to, group_by: filters.groupBy })}`);
+    const raw = await this.request<JsonRecord>(`/admin/report/operations${queryString({ exhibition_id: filters.exhibitionId, from: filters.from, to: filters.to, group_by: filters.groupBy })}`);
+    return normalizeOperationsReport(raw);
   }
 
-  async getReport(filters: ReportFilters = {}) { return this.request<ReportOperations>(`/admin/report/operations${queryString(filters as Record<string, string | undefined>)}`); }
+  async getReport(filters: ReportFilters = {}) {
+    const raw = await this.request<JsonRecord>(`/admin/report/operations${queryString(filters as Record<string, string | undefined>)}`);
+    return normalizeReportOperations(raw);
+  }
 
   async exportReport(exhibitionId?: string, format: "xlsx" | "csv" = "xlsx", filters: { from?: string; to?: string; groupBy?: "day" | "terminal" | "scene" | "intent" } = {}): Promise<DownloadData> {
     const path = `/admin/report/export${queryString({ exhibition_id: exhibitionId, format, from: filters.from, to: filters.to, group_by: filters.groupBy })}`;
@@ -890,8 +1041,30 @@ export class FetchAdminApiClient implements AdminApiClient {
   async deleteVoiceConfig(id: string) { await this.request(`/admin/assets/voice-configs/${encodeURIComponent(id)}`, { method: "DELETE" }); }
   async listSceneBindings() { const items = await this.collection<JsonRecord>("assets", "scene-bindings"); return items.map((item) => this.sceneBinding(item)); }
   async saveSceneBindings(bindings: SceneBinding[]) { await Promise.all(bindings.map((item) => this.saveSceneBinding(item))); return bindings; }
-  async getSceneBinding(scene: string) { return this.sceneBinding(await this.request<JsonRecord>(`/admin/assets/scene-bindings/${encodeURIComponent(scene)}`)); }
-  async saveSceneBinding(binding: SceneBinding) { return this.sceneBinding(await this.request<JsonRecord>(`/admin/assets/scene-bindings/${encodeURIComponent(binding.scene)}`, { method: "PUT", body: JSON.stringify({ scene: binding.scene, assets: binding.assets.map((item) => ({ asset_id: item.assetId, is_primary: item.isPrimary, order: item.order })) }) })); }
+  async getSceneBinding(scene: string) {
+    try {
+      return this.sceneBinding(await this.request<JsonRecord>(`/admin/assets/scene-bindings/${encodeURIComponent(scene)}`));
+    } catch (error) {
+      if (!(error instanceof AdminApiError) || ![404, 405].includes(error.status)) throw error;
+      const items = await this.collection<JsonRecord>("assets", "scene-bindings");
+      const matching = items.find((item) => String(item.scene || "") === scene);
+      return matching ? this.sceneBinding(matching) : { scene, assets: [] };
+    }
+  }
+  async saveSceneBinding(binding: SceneBinding) {
+    return this.sceneBinding(await this.request<JsonRecord>(`/admin/assets/scene-bindings/${encodeURIComponent(binding.scene)}`, {
+      method: "PUT",
+      body: JSON.stringify({
+        scene: binding.scene,
+        assets: binding.assets.map((item) => ({ asset_id: item.assetId, is_primary: item.isPrimary, order: item.order })),
+        waiting_gif_id: binding.waitingGifId ?? null,
+        speaking_gif_id: binding.speakingGifId ?? null,
+        voice_config_id: binding.voiceConfigId ?? null,
+        idle_content_id: binding.idleContentId ?? null,
+        status: binding.status || "active",
+      }),
+    }));
+  }
   async listIdle() { return this.collection<IdleContent>("assets", "idle-contents"); }
   async saveIdle(item: IdleContent) { return this.saveCollection<IdleContent>("assets", "idle-contents", item as JsonRecord); }
   async deleteIdle(id: string) { await this.request(`/admin/assets/idle-contents/${encodeURIComponent(id)}`, { method: "DELETE" }); }
@@ -1063,8 +1236,12 @@ export class FetchAdminApiClient implements AdminApiClient {
   async saveGatewayPolicy(policy: GatewayPolicy) { return this.request<GatewayPolicy>("/admin/ops/gateway-policy", { method: "PUT", body: JSON.stringify(policy) }); }
 }
 
-const runtimeEnv = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env ?? {};
-export const adminApi: AdminApiClient = runtimeEnv.VITE_ADMIN_API_MODE === "real" ? new FetchAdminApiClient() : new MockAdminApiClient();
+export function createAdminApi(mode?: "real" | "mock"): AdminApiClient {
+  const resolved = mode ?? "real";
+  return resolved === "real" ? new FetchAdminApiClient() : new MockAdminApiClient();
+}
+
+export const adminApi: AdminApiClient = createAdminApi(runtimeEnv.VITE_ADMIN_API_MODE === "mock" ? "mock" : "real");
 
 export const DEFAULT_VOICES: VoiceAsset[] = EDGE_ZH_VOICES.map((voice) => ({
   id: `voice-edge-${voice.id}`,

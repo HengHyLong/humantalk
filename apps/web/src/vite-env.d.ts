@@ -2,6 +2,7 @@
 
 interface ImportMetaEnv {
   readonly VITE_API_BASE?: string;
+  readonly VITE_BACKEND_URL?: string;
   readonly VITE_EXHIBITION_ID?: string;
   /** Max chat bubbles to show (most recent). 0 or unset = show all. */
   readonly VITE_CHAT_MAX_VISIBLE?: string;

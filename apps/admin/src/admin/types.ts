@@ -142,6 +142,11 @@ export type GifAssetMeta = AdminAsset & {
 export type SceneBinding = {
   scene: string;
   assets: Array<{ assetId: string; isPrimary: boolean; order: number }>;
+  waitingGifId?: string | null;
+  speakingGifId?: string | null;
+  voiceConfigId?: string | null;
+  idleContentId?: string | null;
+  status?: string;
 };
 
 export type VoiceAsset = {

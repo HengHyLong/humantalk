@@ -402,6 +402,8 @@ export function getMaterialToken(token: string): Promise<MaterialTokenResponse> 
 
 export async function submitRuntimeLead(input: {
   exhibitionId: string;
+  sessionId: string;
+  traceId?: string;
   companyName: string;
   contactName: string;
   phone: string;
@@ -412,7 +414,12 @@ export async function submitRuntimeLead(input: {
   consent: boolean;
   source?: string;
 }): Promise<Record<string, unknown>> {
-  return apiPost<Record<string, unknown>>("/runtime/lead", input);
+  return apiPost<Record<string, unknown>>("/runtime/lead", {
+    ...input,
+    authorized: input.consent,
+    intent: input.intentSummary || "",
+    material_token: input.materialToken,
+  });
 }
 
 export async function transcribeSessionAudio(
