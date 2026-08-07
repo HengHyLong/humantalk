@@ -265,6 +265,7 @@ export interface AdminApiClient {
   listDocuments(): Promise<KnowledgeDocument[]>;
   listKnowledgeBases(): Promise<ApiKnowledgeBaseSummary[]>;
   listKnowledgeBaseDocuments(baseId: string): Promise<ApiKnowledgeDocument[]>;
+  getKnowledgeDocumentIndexingStatus(batchId: string, exhibitionId?: string): Promise<JsonRecord>;
   createKnowledgeBase(name: string): Promise<ApiKnowledgeBaseSummary>;
   renameKnowledgeBase(id: string, name: string): Promise<ApiKnowledgeBaseSummary>;
   deleteKnowledgeBase(id: string): Promise<void>;
@@ -275,7 +276,7 @@ export interface AdminApiClient {
   deleteDocument(id: string): Promise<void>;
   listQa(): Promise<KnowledgeQa[]>;
   saveQa(item: KnowledgeQa): Promise<KnowledgeQa>;
-  transitionQa(id: string, status: KnowledgeQa["status"]): Promise<KnowledgeQa>;
+  transitionQa(id: string, status: KnowledgeQa["status"], reason?: string): Promise<KnowledgeQa>;
   listQaVersions(id: string): Promise<Array<Record<string, unknown>>>;
   rollbackQa(id: string, version: number, reason: string): Promise<KnowledgeQa>;
   deleteQa(id: string): Promise<void>;
@@ -492,6 +493,7 @@ export class MockAdminApiClient implements AdminApiClient {
   async listDocuments() { return readStore("documents", DEFAULT_DOCUMENTS); }
   async listKnowledgeBases(): Promise<ApiKnowledgeBaseSummary[]> { return readStore("dify-knowledge-bases", []); }
   async listKnowledgeBaseDocuments(_baseId: string): Promise<ApiKnowledgeDocument[]> { return []; }
+  async getKnowledgeDocumentIndexingStatus(_batchId: string, _exhibitionId?: string): Promise<JsonRecord> { return { status: "completed" }; }
   async createKnowledgeBase(name: string): Promise<ApiKnowledgeBaseSummary> { const item: ApiKnowledgeBaseSummary = { id: `kb-${Date.now()}`, name, document_count: 0, ready_document_count: 0, error_document_count: 0, created_at: now(), updated_at: now() }; writeStore("dify-knowledge-bases", [item, ...(await this.listKnowledgeBases())]); return item; }
   async renameKnowledgeBase(id: string, name: string): Promise<ApiKnowledgeBaseSummary> { const items = await this.listKnowledgeBases(); const next = items.map((item) => item.id === id ? { ...item, name, updated_at: now() } : item); writeStore("dify-knowledge-bases", next); return next.find((item) => item.id === id) ?? items[0]; }
   async deleteKnowledgeBase(id: string) { writeStore("dify-knowledge-bases", (await this.listKnowledgeBases()).filter((item) => item.id !== id)); }
@@ -503,7 +505,7 @@ export class MockAdminApiClient implements AdminApiClient {
   async deleteDocument(id: string) { writeStore("documents", (await this.listDocuments()).filter((item) => item.id !== id)); }
   async listQa() { return readStore("qa", DEFAULT_QA); }
   async saveQa(item: KnowledgeQa) { const list = await this.listQa(); const next = [item, ...list.filter((candidate) => candidate.id !== item.id)]; writeStore("qa", next); return item; }
-  async transitionQa(id: string, status: KnowledgeQa["status"]) { const list = await this.listQa(); const next = list.map((item) => item.id === id ? { ...item, status, reviewer: status === "published" ? "当前用户" : item.reviewer, updatedAt: now() } : item); writeStore("qa", next); return next.find((item) => item.id === id) ?? list[0]; }
+  async transitionQa(id: string, status: KnowledgeQa["status"], _reason?: string) { const list = await this.listQa(); const next = list.map((item) => item.id === id ? { ...item, status, reviewer: status === "published" ? "当前用户" : item.reviewer, updatedAt: now() } : item); writeStore("qa", next); return next.find((item) => item.id === id) ?? list[0]; }
   async listQaVersions(id: string) { const item = (await this.listQa()).find((candidate) => candidate.id === id); return item ? [...item.history, { version: item.version, question: item.question, answer: item.answer, status: item.status, updatedAt: item.updatedAt }] : []; }
   async rollbackQa(id: string, version: number, reason: string) { const item = (await this.listQa()).find((candidate) => candidate.id === id); const target = item?.history.find((candidate) => candidate.version === version); if (!item || !target) throw new Error("QA 版本不存在"); return this.saveQa({ ...item, version, answer: target.answer, status: "draft", updatedAt: now(), history: [...item.history, { ...target, version: item.version + 1, reason }] }); }
   async deleteQa(id: string) { await this.transitionQa(id, "archived"); }
@@ -741,6 +743,27 @@ function mapDifyDocument(item: JsonRecord, fallbackKnowledgeBaseId = ""): ApiKno
     chunk_count: Number(item.word_count ?? item.chunk_count ?? item.tokens ?? 0),
     created_at: remoteTimestamp(item.created_at ?? upload.created_at),
     updated_at: remoteTimestamp(item.updated_at ?? item.created_at ?? upload.created_at),
+  };
+}
+
+function mapKnowledgeQa(item: JsonRecord): KnowledgeQa {
+  const history = Array.isArray(item.history) ? item.history : [];
+  return {
+    id: String(item.id ?? ""),
+    question: String(item.question ?? ""),
+    keywords: stringArray(item.keywords),
+    answer: String(item.answer ?? ""),
+    category: String(item.category ?? ""),
+    exhibition: String(item.exhibition ?? item.exhibition_id ?? "current"),
+    status: (item.status ?? "draft") as KnowledgeQa["status"],
+    version: Number(item.version ?? 1),
+    creator: String(item.creator ?? item.created_by ?? ""),
+    reviewer: item.reviewer == null ? undefined : String(item.reviewer),
+    updatedAt: remoteTimestamp(item.updatedAt ?? item.updated_at ?? item.created_at),
+    history: history.map((entry) => {
+      const value = entry as JsonRecord;
+      return { version: Number(value.version ?? 1), answer: String(value.answer ?? ""), editor: String(value.editor ?? value.operator ?? ""), time: remoteTimestamp(value.time ?? value.updated_at), reason: String(value.reason ?? "") };
+    }),
   };
 }
 
@@ -1207,6 +1230,9 @@ export class FetchAdminApiClient implements AdminApiClient {
     const items = payload.data ?? payload.items ?? [];
     return items.map((item) => mapDifyDocument(item, baseId));
   }
+  async getKnowledgeDocumentIndexingStatus(batchId: string, exhibitionId = "current") {
+    return this.request<JsonRecord>(`/admin/knowledge/documents/batches/${encodeURIComponent(batchId)}/indexing-status?exhibition_id=${encodeURIComponent(exhibitionId)}`);
+  }
   async createKnowledgeBase(name: string): Promise<ApiKnowledgeBaseSummary> {
     void name;
     throw new Error("当前后端仅提供知识库查询和文档上传，知识库创建接口尚未提供");
@@ -1244,9 +1270,20 @@ export class FetchAdminApiClient implements AdminApiClient {
   async uploadDocument(input: Pick<KnowledgeDocument, "title" | "fileName" | "type" | "exhibition">) { return this.saveCollection<KnowledgeDocument>("knowledge", "documents", input as JsonRecord); }
   async updateDocument(id: string, patch: Partial<KnowledgeDocument>) { return this.saveCollection<KnowledgeDocument>("knowledge", "documents", { ...patch, id }); }
   async deleteDocument(id: string) { await this.request(`/admin/knowledge/documents/${encodeURIComponent(id)}`, { method: "DELETE" }); }
-  async listQa() { return this.collection<KnowledgeQa>("knowledge", "qa"); }
-  async saveQa(item: KnowledgeQa) { return this.saveCollection<KnowledgeQa>("knowledge", "qa", item as JsonRecord); }
-  async transitionQa(id: string, status: KnowledgeQa["status"]) { return this.request<KnowledgeQa>(`/admin/knowledge/qa/${encodeURIComponent(id)}/transition`, { method: "POST", body: JSON.stringify({ status, operator: "admin" }) }); }
+  async listQa() {
+    const items = await this.list<JsonRecord>("/admin/knowledge/qa", { page: 1, page_size: 100 });
+    return items.map(mapKnowledgeQa);
+  }
+  async saveQa(item: KnowledgeQa) {
+    const existing = Boolean(item.id) && !isClientDraftId(item.id);
+    const path = existing ? `/admin/knowledge/qa/${encodeURIComponent(item.id)}` : "/admin/knowledge/qa";
+    const saved = await this.request<JsonRecord>(path, {
+      method: existing ? "PATCH" : "POST",
+      body: JSON.stringify({ question: item.question, keywords: item.keywords, answer: item.answer, category: item.category, status: item.status, exhibition_id: "current", namespace_id: "default", creator: item.creator || "admin" }),
+    });
+    return mapKnowledgeQa(saved);
+  }
+  async transitionQa(id: string, status: KnowledgeQa["status"], reason = "前端状态变更") { return this.request<KnowledgeQa>(`/admin/knowledge/qa/${encodeURIComponent(id)}/transition`, { method: "POST", body: JSON.stringify({ status, operator: "admin", reason }) }); }
   async listQaVersions(id: string) { const response = await this.request<{ items?: Array<Record<string, unknown>> }>(`/admin/knowledge/qa/${encodeURIComponent(id)}/versions`); return response.items ?? []; }
   async rollbackQa(id: string, version: number, reason: string) { return this.request<KnowledgeQa>(`/admin/knowledge/qa/${encodeURIComponent(id)}/rollback`, { method: "POST", body: JSON.stringify({ version, operator: "admin", reason }) }); }
   async deleteQa(id: string) { await this.request(`/admin/knowledge/qa/${encodeURIComponent(id)}`, { method: "DELETE" }); }

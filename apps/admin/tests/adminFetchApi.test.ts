@@ -309,8 +309,10 @@ test("real Admin knowledge workflow maps documents, QA, scripts, packages and mi
    await api.listDocuments(); assert.equal(calls.at(-1)?.url.endsWith("/admin/knowledge/documents"), true);
   await api.uploadDocument({ title: "展会手册", fileName: "manual.pdf", type: "PDF", exhibition: "测试展" }); assert.equal(calls.at(-1)?.method, "POST");
   await api.updateDocument("doc/1", { parseStatus: "failed" }); assert.equal(calls.at(-1)?.url.endsWith("/admin/knowledge/documents/doc%2F1"), true);
-  await api.listQa(); assert.equal(calls.at(-1)?.url.endsWith("/admin/knowledge/qa?page=1&page_size=100"), true);
-  await api.transitionQa("qa/1", "published"); assert.deepEqual(calls.at(-1)?.body, { status: "published", operator: "admin" });
+   await api.listQa(); assert.equal(calls.at(-1)?.url.endsWith("/admin/knowledge/qa?page=1&page_size=100"), true);
+   await api.saveQa({ id: "qa-1722780000000", question: "测试问题", keywords: ["测试"], answer: "测试答案", category: "测试", exhibition: "测试展", status: "draft", version: 1, creator: "frontend-test", updatedAt: "", history: [] });
+   assert.deepEqual(calls.at(-1)?.body, { question: "测试问题", keywords: ["测试"], answer: "测试答案", category: "测试", status: "draft", exhibition_id: "current", namespace_id: "default", creator: "frontend-test" });
+   await api.transitionQa("qa/1", "published"); assert.deepEqual(calls.at(-1)?.body, { status: "published", operator: "admin", reason: "前端状态变更" });
   await api.listScripts(); assert.equal(calls.at(-1)?.url.endsWith("/admin/knowledge/scripts?page=1&page_size=100"), true);
   await api.listPackages(); assert.equal(calls.at(-1)?.url.endsWith("/admin/knowledge/packages?page=1&page_size=100"), true);
   await api.transitionPackage("pkg/1", "published"); assert.equal(calls.at(-1)?.url.endsWith("/admin/knowledge/packages/pkg%2F1/publish"), true);
@@ -346,6 +348,8 @@ test("real Admin uses the Cao Feiyang Dify proxy contract", async () => {
   assert.equal(calls.some(({ url }) => url.endsWith("/api/v1/admin/knowledge/bases?limit=20")), true);
   assert.equal(calls.some(({ url }) => url.endsWith("/api/v1/admin/knowledge/documents")), true);
   assert.equal(calls.some(({ url }) => url.endsWith("/api/v1/admin/knowledge/documents/upload")), true);
+  await api.getKnowledgeDocumentIndexingStatus("batch-1");
+  assert.equal(calls.at(-1)?.url.endsWith("/api/v1/admin/knowledge/documents/batches/batch-1/indexing-status?exhibition_id=current"), true);
 });
 
 test("real Admin leads and feedback map filtering, state, export and trace workflow", async () => {
