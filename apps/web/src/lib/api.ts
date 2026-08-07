@@ -411,27 +411,34 @@ export type ExhibitionVoiceConfig = {
 };
 
 export type NavigationResult = {
+  status?: "matched" | "destination_not_found" | string;
   matched?: boolean;
   fallback?: boolean;
+  message?: string;
   title?: string;
-  spoken_text: string;
+  spoken_text?: string;
   subtitle_text?: string;
   image_url?: string | null;
   route?: {
     id?: string;
+    route_id?: string | null;
     from?: string;
     to?: string;
     directions?: string[];
     estimated_minutes?: number;
+    score?: number;
   };
   alternatives?: Array<{
-    title: string;
+    id?: string;
+    route_id?: string | null;
+    title?: string;
     image_url?: string | null;
-    route: {
+    route?: {
       from?: string;
       to?: string;
       directions?: string[];
       estimated_minutes?: number;
+      score?: number;
     };
   }>;
 };
