@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AvatarSelectionStage, type AgentConfig } from "./components/AvatarSelectionStage";
+import { ExhibitionSelectionStage } from "./components/ExhibitionSelectionStage";
 import { BailianVoiceClone } from "./components/BailianVoiceClone";
 import { ChatInput } from "./components/ChatInput";
 import { ChatMessages } from "./components/ChatMessages";
@@ -34,6 +35,7 @@ import {
   buildApiUrl,
   getMemoryLibraries,
   getExhibitionVoiceConfig,
+  listExhibitions,
   listSceneBackgrounds,
   listSceneCompositions,
   queryExhibitionNavigation,
@@ -45,6 +47,7 @@ import {
   type CreateSessionRequest,
   type CreateSessionResponse,
   type ExhibitionVoiceConfig,
+  type ExhibitionSummary,
   type NavigationResult,
   type KnowledgeBaseSummary,
   type KnowledgeBasesResponse,
@@ -210,6 +213,7 @@ const SESSION_PANEL_COLLAPSED_KEY = "opentalking-session-panel-collapsed";
 const CUSTOM_REFERENCE_NAME_KEY = "opentalking-custom-reference-name";
 const SELECTED_AVATAR_STORAGE_KEY = "opentalking-selected-avatar-id";
 const SELECTED_AVATAR_SOURCE_STORAGE_KEY = "opentalking-selected-avatar-source-v1";
+const SELECTED_EXHIBITION_STORAGE_KEY = "opentalking-selected-exhibition-id-v1";
 const FASTLIVEPORTRAIT_CONFIG_STORAGE_KEY = "opentalking-fasterliveportrait-config-v2";
 const VIDEO_CREATION_FASTLIVEPORTRAIT_CONFIG_STORAGE_KEY = "opentalking-video-creation-fasterliveportrait-config-v4";
 const ASR_PROVIDER_STORAGE_KEY = "opentalking-asr-provider-v1";
@@ -386,6 +390,15 @@ function writeStoredAvatarId(avatarId: string, source: "auto" | "explicit" = "ex
       window.localStorage.removeItem(SELECTED_AVATAR_STORAGE_KEY);
       window.localStorage.removeItem(SELECTED_AVATAR_SOURCE_STORAGE_KEY);
     }
+  } catch {
+    /* ignore */
+  }
+}
+
+function writeStoredExhibitionId(exhibitionId: string): void {
+  try {
+    if (exhibitionId) window.localStorage.setItem(SELECTED_EXHIBITION_STORAGE_KEY, exhibitionId);
+    else window.localStorage.removeItem(SELECTED_EXHIBITION_STORAGE_KEY);
   } catch {
     /* ignore */
   }
@@ -888,6 +901,7 @@ export default function App() {
   const remoteStreamRef = useRef<MediaStream | null>(null);
   const realtimeRecorderRef = useRef<MediaRecorder | null>(null);
   const realtimeRecordChunksRef = useRef<Blob[]>([]);
+  const autoStartTriggeredRef = useRef(false);
   const realtimeRecordStartedAtRef = useRef(0);
   const realtimeRecordStreamRef = useRef<MediaStream | null>(null);
   const realtimeRecordMicStreamRef = useRef<MediaStream | null>(null);
@@ -909,6 +923,11 @@ export default function App() {
 
   // Data
   const [avatars, setAvatars] = useState<AvatarSummary[]>([]);
+  const [exhibitions, setExhibitions] = useState<ExhibitionSummary[]>([]);
+  const [exhibitionsLoading, setExhibitionsLoading] = useState(true);
+  const [exhibitionsError, setExhibitionsError] = useState<string | null>(null);
+  const [selectedExhibitionId, setSelectedExhibitionId] = useState("");
+  const [exhibitionConfirmed, setExhibitionConfirmed] = useState(false);
   const [models, setModels] = useState<string[]>([]);
   const [modelStatuses, setModelStatuses] = useState<ModelStatus[]>([]);
   const [avatarId, setAvatarId] = useState(() => readStoredAvatarId() ?? "singer");
@@ -938,7 +957,8 @@ export default function App() {
   );
   const [fasterliveportraitApplying, setFasterliveportraitApplying] = useState(false);
   const [workflow, setWorkflow] = useState<StudioWorkflow>("realtime");
-  const configuredExhibitionId = getConfiguredExhibitionId();
+  const configuredExhibitionId = selectedExhibitionId || getConfiguredExhibitionId();
+  const selectedExhibition = exhibitions.find((item) => item.id === selectedExhibitionId) ?? null;
 
   // Connection
   const [connection, setConnection] = useState<ConnectionStatus>("idle");
@@ -1404,8 +1424,8 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (workflow === "realtime") void refreshKnowledgeBases();
-  }, [refreshKnowledgeBases, workflow]);
+    if (exhibitionConfirmed && workflow === "realtime") void refreshKnowledgeBases();
+  }, [exhibitionConfirmed, refreshKnowledgeBases, workflow]);
 
   const refreshMemoryLibraries = useCallback(async () => {
     if (!avatarId) {
@@ -1432,20 +1452,20 @@ export default function App() {
   }, [avatarId, notify]);
 
   useEffect(() => {
-    if (workflow === "realtime") void refreshMemoryLibraries();
-  }, [refreshMemoryLibraries, workflow]);
+    if (exhibitionConfirmed && workflow === "realtime") void refreshMemoryLibraries();
+  }, [exhibitionConfirmed, refreshMemoryLibraries, workflow]);
 
   useEffect(() => {
-    if (workflow === "realtime") void refreshPersonas();
-  }, [refreshPersonas, workflow]);
+    if (exhibitionConfirmed && workflow === "realtime") void refreshPersonas();
+  }, [exhibitionConfirmed, refreshPersonas, workflow]);
 
   useEffect(() => {
-    void refreshScenes();
-  }, [refreshScenes]);
+    if (exhibitionConfirmed) void refreshScenes();
+  }, [exhibitionConfirmed, refreshScenes]);
 
   useEffect(() => {
-    if (workflow === "realtime") void refreshExhibitionVoiceConfig();
-  }, [refreshExhibitionVoiceConfig, workflow]);
+    if (exhibitionConfirmed && workflow === "realtime") void refreshExhibitionVoiceConfig();
+  }, [exhibitionConfirmed, refreshExhibitionVoiceConfig, workflow]);
 
   useEffect(() => {
     try {
@@ -2014,6 +2034,24 @@ export default function App() {
   // ---------- Init: fetch avatars & models ----------
   useEffect(() => {
     void (async () => {
+      setExhibitionsLoading(true);
+      setExhibitionsError(null);
+      try {
+        const response = await listExhibitions();
+        setExhibitions(response.items ?? []);
+      } catch (error) {
+        console.warn("load exhibitions failed", error);
+        setExhibitions([]);
+        setExhibitionsError("会展列表读取失败，请检查 API 服务是否已启动。");
+      } finally {
+        setExhibitionsLoading(false);
+      }
+    })();
+  }, []);
+
+  useEffect(() => {
+    if (!exhibitionConfirmed || !selectedExhibitionId) return;
+    void (async () => {
       try {
         const [av, mo, health, , initialRuntimeConfig] = await Promise.all([
           apiGet<AvatarSummary[]>("/avatars"),
@@ -2038,10 +2076,36 @@ export default function App() {
             return next;
           });
         }
+        const boundSttProvider = normalizeAsrProvider(
+          selectedExhibition?.bound_stt_provider,
+          normalizeAsrProvider(health.stt_provider, "dashscope"),
+        );
+        setAsrProvider(boundSttProvider);
+        setAsrModel(selectedExhibition?.bound_stt_model?.trim() || sttModelForProvider(boundSttProvider));
+        const boundTtsProvider = normalizeTtsProvider(
+          selectedExhibition?.bound_voice_provider,
+          normalizeTtsProvider(health.tts_provider, "edge"),
+        );
+        setTtsProvider(boundTtsProvider);
+        if (selectedExhibition?.bound_voice_model?.trim()) {
+          if (boundTtsProvider === "edge") setEdgeVoice(selectedExhibition.bound_voice_id?.trim() || edgeVoice);
+          else setQwenModel(selectedExhibition.bound_voice_model.trim());
+        }
+        if (selectedExhibition?.bound_voice_id?.trim()) {
+          if (boundTtsProvider === "edge") setEdgeVoice(selectedExhibition.bound_voice_id.trim());
+          else setQwenVoice(selectedExhibition.bound_voice_id.trim());
+        }
         const statuses = mo.statuses ?? mo.models.map((id) => ({ id, connected: true }));
         setModelStatuses(statuses);
         const storedAvatarSelection = readStoredAvatarSelection();
-        const initialAvatar = pickInitialAvatar(av, mo.models, storedAvatarSelection, mo.default_model);
+        const boundAvatar = selectedExhibition?.bound_avatar_id
+          ? av.find((item) => item.id === selectedExhibition.bound_avatar_id) ?? null
+          : null;
+        const initialAvatar = boundAvatar ?? pickInitialAvatar(av, mo.models, storedAvatarSelection, mo.default_model);
+        if (selectedExhibition && !boundAvatar) {
+          setAvatarId("");
+          writeStoredAvatarId("");
+        }
         if (initialAvatar) {
           setAvatarId(initialAvatar.id);
           if (initialAvatar.is_custom || storedAvatarSelection?.source === "explicit") {
@@ -2051,7 +2115,7 @@ export default function App() {
             );
           }
           setModel((prev) => {
-            const requestedModel = pickInitialModel(
+            const requestedModel = selectedExhibition?.bound_model?.trim() || pickInitialModel(
               prev,
               mo.models,
               statuses,
@@ -2069,7 +2133,7 @@ export default function App() {
         setConnection("error");
       }
     })();
-  }, [loadVoices, syncRuntimeConfigSelection]);
+  }, [exhibitionConfirmed, loadVoices, selectedExhibition, selectedExhibitionId, syncRuntimeConfigSelection]);
 
   // ---------- SSE ----------
   useEffect(() => {
@@ -2223,6 +2287,19 @@ export default function App() {
   // ---------- Actions ----------
   const handleStart = useCallback(async () => {
     if (!videoRef.current) return;
+    const selectedExhibition = exhibitions.find((item) => item.id === selectedExhibitionId) ?? null;
+    if (!selectedExhibitionId || !selectedExhibition) {
+      notify("请先选择会展，再启动 WebRTC。", "error");
+      return;
+    }
+    if (!selectedExhibition.bound_avatar_id) {
+      notify("当前会展尚未绑定数字人，请先在 Admin 中完成会展配置。", "error");
+      return;
+    }
+    if (!avatarId) {
+      notify("当前会展没有可用的数字人形象，请先完成绑定。", "error");
+      return;
+    }
     clearSubtitleState();
     const lockedAsrProvider = normalizeAsrProvider(asrProvider, "dashscope");
     let latestRuntimeStatus: HealthResponse | null = null;
@@ -2362,6 +2439,7 @@ export default function App() {
     clearSubtitleState,
     closePeerConnection,
     edgeVoice,
+    exhibitions,
     llmSystemPrompt,
     memoryEnabled,
     memoryLibraryId,
@@ -2371,6 +2449,7 @@ export default function App() {
     releaseSession,
     requestAvatarPrewarm,
     resetLiveState,
+    selectedExhibitionId,
     selectedPersonaId,
     selectedModelConnected,
     selectedPrewarmState,
@@ -2379,6 +2458,19 @@ export default function App() {
     fasterliveportraitConfig,
     wav2lipPostprocessMode,
   ]);
+
+  useEffect(() => {
+    if (
+      !exhibitionConfirmed
+      || !selectedExhibition?.bound_avatar_id
+      || !avatarId
+      || avatarId !== selectedExhibition.bound_avatar_id
+      || connection !== "idle"
+      || autoStartTriggeredRef.current
+    ) return;
+    autoStartTriggeredRef.current = true;
+    void handleStart();
+  }, [avatarId, connection, exhibitionConfirmed, handleStart, selectedExhibition]);
 
   const handleFasterLivePortraitConfigChange = useCallback((config: FasterLivePortraitConfig) => {
     setFasterliveportraitConfig(sanitizeFasterLivePortraitConfig(config));
@@ -2753,6 +2845,22 @@ export default function App() {
     await retryPendingRealtimeExport();
   }, [retryPendingRealtimeExport]);
 
+  const handleExhibitionSelectionChange = useCallback((newId: string) => {
+    setSelectedExhibitionId(newId);
+    setExhibitionConfigNotice(null);
+  }, []);
+
+  const handleExhibitionConfirm = useCallback(() => {
+    if (!selectedExhibition?.bound_avatar_id) {
+      notify("当前会展尚未绑定数字人，请先在 Admin 会展配置中完成绑定。", "error");
+      return;
+    }
+    writeStoredExhibitionId(selectedExhibition.id);
+    setExhibitionConfirmed(true);
+    autoStartTriggeredRef.current = false;
+    setConnection("idle");
+  }, [notify, selectedExhibition]);
+
   const handleAvatarChange = useCallback(
     (newId: string) => {
       clearSubtitleState();
@@ -2980,6 +3088,19 @@ export default function App() {
       && runtimeConfig.mem0?.llm.api_key_set
       && runtimeConfig.mem0?.embedder.api_key_set,
   );
+  if (!exhibitionConfirmed) {
+    return (
+      <ExhibitionSelectionStage
+        exhibitions={exhibitions}
+        selectedExhibitionId={selectedExhibitionId}
+        loading={exhibitionsLoading}
+        error={exhibitionsError}
+        onChange={handleExhibitionSelectionChange}
+        onConfirm={handleExhibitionConfirm}
+      />
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-100 text-slate-900 lg:h-screen lg:overflow-hidden">
       <audio ref={audioRef} autoPlay playsInline className="hidden" />

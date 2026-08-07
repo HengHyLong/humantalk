@@ -1000,7 +1000,43 @@ def public_config(exhibition_id: str, request: Request) -> dict[str, Any]:
     config = store.get_record("runtime_configs", exhibition_id)
     if not config:
         raise HTTPException(status_code=404, detail={"code": "EXHIBITION_CONFIG_NOT_FOUND", "detail": "当前展会未配置数字人参数"})
-    return {"exhibition_id": exhibition_id, "keywords": config.get("keywords", {"navigation": [], "exhibition_content": []}), "supports_deferred_speak": bool(config.get("supports_deferred_speak", False))}
+    exhibition = store.get_record("exhibitions", exhibition_id) or {}
+    return {
+        "exhibition_id": exhibition_id,
+        "keywords": config.get("keywords", {"navigation": [], "exhibition_content": []}),
+        "supports_deferred_speak": bool(config.get("supports_deferred_speak", False)),
+        "bound_avatar_id": exhibition.get("boundAvatarId") or exhibition.get("bound_avatar_id"),
+        "bound_model": exhibition.get("boundModel") or exhibition.get("bound_model"),
+        "bound_voice_id": exhibition.get("boundVoiceId") or exhibition.get("bound_voice_id"),
+        "bound_voice_provider": exhibition.get("boundVoiceProvider") or exhibition.get("bound_voice_provider"),
+        "bound_voice_model": exhibition.get("boundVoiceModel") or exhibition.get("bound_voice_model"),
+        "bound_stt_provider": exhibition.get("boundSttProvider") or exhibition.get("bound_stt_provider"),
+        "bound_stt_model": exhibition.get("boundSttModel") or exhibition.get("bound_stt_model"),
+    }
+
+
+@public_router.get("/exhibitions")
+def public_exhibitions(request: Request) -> dict[str, Any]:
+    """Return only the public exhibition/runtime binding needed by the Web client."""
+    store = get_store(request)
+    items: list[dict[str, Any]] = []
+    for item in store.list_records("exhibitions"):
+        items.append({
+            "id": item["id"],
+            "name": item.get("name") or item.get("code") or item["id"],
+            "code": item.get("code", ""),
+            "status": item.get("status", ""),
+            "is_current": bool(item.get("isCurrent") or item.get("is_current")),
+            "bound_avatar_id": item.get("boundAvatarId") or item.get("bound_avatar_id"),
+            "bound_model": item.get("boundModel") or item.get("bound_model"),
+            "bound_voice_id": item.get("boundVoiceId") or item.get("bound_voice_id"),
+            "bound_voice_provider": item.get("boundVoiceProvider") or item.get("bound_voice_provider"),
+            "bound_voice_model": item.get("boundVoiceModel") or item.get("bound_voice_model"),
+            "bound_stt_provider": item.get("boundSttProvider") or item.get("bound_stt_provider"),
+            "bound_stt_model": item.get("boundSttModel") or item.get("bound_stt_model"),
+            "bound_scene": item.get("boundScene") or item.get("bound_scene"),
+        })
+    return {"items": items}
 
 
 @router.post("/exhibitions/{exhibition_id}/navigation/query")

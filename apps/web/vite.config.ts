@@ -1,7 +1,6 @@
 import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath, URL } from "node:url";
-import fs from "fs";
 
 const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
 const allowedHosts = ["ai.oaii.cn"];
@@ -32,12 +31,6 @@ export default defineConfig(({ mode }) => {
     plugins: [react()],
     server: {
       port: 5173,
-      https:{
-        key:fs.readFileSync("./ssl/ai.oaii.cn.key"),
-        cert:fs.readFileSync("./ssl/ai.oaii.cn_bundle.pem")
-      },
-      
-      // 允许通过该域名访问 Vite 开发服务器
       allowedHosts: ["ai.oaii.cn"],
       
       fs: {
@@ -49,12 +42,6 @@ export default defineConfig(({ mode }) => {
     },
     preview: {
       port: 5173,
-      https:{
-        key:fs.readFileSync("./ssl/ai.oaii.cn.key"),
-        cert:fs.readFileSync("./ssl/ai.oaii.cn_bundle.pem")
-      },
-      
-      // 允许通过该域名访问 Vite 开发服务器
       allowedHosts: ["ai.oaii.cn"],
       
       proxy: {

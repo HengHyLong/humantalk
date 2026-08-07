@@ -306,12 +306,39 @@ export type NavigationResult = {
 
 export type ExhibitionVoiceConfigResponse = Partial<ExhibitionVoiceConfig> & {
   exhibitionId?: string;
+  bound_avatar_id?: string | null;
+  bound_model?: string | null;
+  bound_voice_id?: string | null;
+  bound_voice_provider?: string | null;
+  bound_voice_model?: string | null;
+  bound_stt_provider?: string | null;
+  bound_stt_model?: string | null;
   keyword_groups?: {
     navigation?: string[];
     exhibition_content?: string[];
     exhibitionContent?: string[];
   };
 };
+
+export type ExhibitionSummary = {
+  id: string;
+  name: string;
+  code?: string;
+  status?: string;
+  is_current?: boolean;
+  bound_avatar_id?: string | null;
+  bound_model?: string | null;
+  bound_voice_id?: string | null;
+  bound_voice_provider?: string | null;
+  bound_voice_model?: string | null;
+  bound_stt_provider?: string | null;
+  bound_stt_model?: string | null;
+  bound_scene?: string | null;
+};
+
+export async function listExhibitions(): Promise<{ items: ExhibitionSummary[] }> {
+  return apiGet<{ items: ExhibitionSummary[] }>("/exhibitions");
+}
 
 export type NavigationQueryResponse = NavigationResult;
 
