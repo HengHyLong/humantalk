@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from fastapi.middleware.cors import CORSMiddleware
 
 import apps.api.main as api_main
 import apps.unified.main as unified_main
@@ -29,8 +30,23 @@ def test_create_app_accepts_supported_cors_formats(
     api_app = api_main.create_app()
     unified_app = unified_main.create_app()
 
-    assert api_app.user_middleware[0].kwargs["allow_origins"] == expected
-    assert unified_app.user_middleware[0].kwargs["allow_origins"] == expected
+    api_cors = next(item for item in api_app.user_middleware if item.cls is CORSMiddleware)
+    unified_cors = next(item for item in unified_app.user_middleware if item.cls is CORSMiddleware)
+    assert api_cors.kwargs["allow_origins"] == expected
+    assert unified_cors.kwargs["allow_origins"] == expected
+
+
+def test_unified_entrypoint_registers_admin_and_exhibition_routes(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = Settings(admin_initialize_defaults=False)
+    monkeypatch.setattr(unified_main, "get_settings", lambda: settings)
+
+    app = unified_main.create_app()
+    paths = set(app.openapi()["paths"])
+
+    assert "/exhibitions" in paths
+    assert "/exhibitions/{exhibition_id}/entities" in paths
+    assert "/api/v1/admin/event/{resource}" in paths
+    assert "/api/v1/admin/event/images/upload" in paths
 
 
 def test_wav2lip_preload_defaults_on() -> None:

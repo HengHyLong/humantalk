@@ -212,7 +212,7 @@ stop_pid_glob() {
 stop_unified_port() {
   local port="$1"
   local pids
-  pids="$(pgrep -f "$repo_root/.venv/bin/.*opentalking-unified" || true)"
+  pids="$(pgrep -f "opentalking-unified|python.*-m apps\\.unified\\.main" || true)"
   if [[ -z "$pids" ]]; then
     return
   fi
@@ -232,7 +232,7 @@ stop_unified_port() {
 
 stop_unified_all() {
   local pids
-  pids="$(pgrep -f "$repo_root/.venv/bin/.*opentalking-unified" || true)"
+  pids="$(pgrep -f "opentalking-unified|python.*-m apps\\.unified\\.main" || true)"
   if [[ -z "$pids" ]]; then
     return
   fi

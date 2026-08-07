@@ -172,7 +172,11 @@ fi
   export OMNIRT_AUDIO2VIDEO_PATH_TEMPLATE="${OMNIRT_AUDIO2VIDEO_PATH_TEMPLATE:-/v1/audio2video/{model}}"
   export FLASHTALK_PREBUFFER_CHUNKS="${FLASHTALK_PREBUFFER_CHUNKS:-2}"
 
-  quickstart_detach "$log_file" opentalking-unified >"$pid_file"
+  # Launch the module with this checkout's interpreter instead of relying on
+  # a possibly stale console-script wrapper/site-packages installation. The
+  # repository root is the working directory, so imports resolve to the code
+  # that was actually deployed under apps/.
+  quickstart_detach "$log_file" "$repo_root/.venv/bin/python" -m apps.unified.main >"$pid_file"
 )
 
 pid="$(cat "$pid_file" 2>/dev/null || true)"
@@ -188,7 +192,11 @@ for _ in {1..60}; do
     rm -f "$pid_file"
     exit 1
   fi
-  if curl --max-time 2 -fsS "http://127.0.0.1:$api_port/models" >/dev/null 2>&1; then
+  openapi_document="$(curl --max-time 2 -fsS "http://127.0.0.1:$api_port/openapi.json" 2>/dev/null || true)"
+  if curl --max-time 2 -fsS "http://127.0.0.1:$api_port/models" >/dev/null 2>&1 \
+    && grep -Fq '"/exhibitions"' <<<"$openapi_document" \
+    && grep -Fq '"/exhibitions/{exhibition_id}/entities"' <<<"$openapi_document" \
+    && grep -Fq '"/api/v1/admin/event/{resource}"' <<<"$openapi_document"; then
     echo "OpenTalking API is up: http://127.0.0.1:$api_port"
     exit 0
   fi
@@ -197,4 +205,6 @@ done
 
 echo "OpenTalking API did not become ready in 60s. Last log lines:" >&2
 tail -80 "$log_file" >&2 || true
+kill "$pid" >/dev/null 2>&1 || true
+rm -f "$pid_file"
 exit 1
