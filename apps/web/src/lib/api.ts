@@ -1,10 +1,36 @@
 import type { MemoryItem, MemoryLibrary, MemoryTurn, WeChatImportCommitResult, WeChatImportJob } from "../types";
 
 export const API_BASE = import.meta.env.VITE_API_BASE ?? "api";
+export const BUSINESS_API_BASE = import.meta.env.VITE_BUSINESS_API_BASE ?? "/business-api";
+export const KNOWLEDGE_API_BASE = import.meta.env.VITE_KNOWLEDGE_API_BASE ?? "/knowledge-api";
+export const DIFY_EXHIBITION_DATASET_ID = import.meta.env.VITE_DIFY_EXHIBITION_DATASET_ID
+  ?? "7f264c49-557c-414b-9de6-833eb7eede08";
+export const DIFY_NAMESPACE_ID = import.meta.env.VITE_DIFY_NAMESPACE_ID ?? "default";
 
 export function buildApiUrl(path: string): string {
   const p = path.startsWith("/") ? path.slice(1) : path;
   return new URL(p, normalizedApiBase()).toString();
+}
+
+function normalizedServiceBase(base: string): URL {
+  const normalized = base.endsWith("/") ? base : `${base}/`;
+  if (typeof window === "undefined") {
+    return new URL(normalized, "http://127.0.0.1:5173/");
+  }
+  return new URL(normalized, window.location.href);
+}
+
+export function buildServiceUrl(base: string, path: string): string {
+  const p = path.startsWith("/") ? path.slice(1) : path;
+  return new URL(p, normalizedServiceBase(base)).toString();
+}
+
+export function buildBusinessApiUrl(path: string): string {
+  return buildServiceUrl(BUSINESS_API_BASE, path);
+}
+
+export function buildKnowledgeApiUrl(path: string): string {
+  return buildServiceUrl(KNOWLEDGE_API_BASE, path);
 }
 
 export function buildApiDownloadUrl(path: string): string {
@@ -72,6 +98,98 @@ async function throwIfNotOk(r: Response): Promise<void> {
     // body wasn't JSON; leave detail null
   }
   throw new ApiError(r.status, detail, body);
+}
+
+async function serviceGet<T>(base: string, path: string): Promise<T> {
+  const r = await fetch(buildServiceUrl(base, path));
+  await throwIfNotOk(r);
+  return r.json() as Promise<T>;
+}
+
+async function servicePost<T>(base: string, path: string, body?: unknown): Promise<T> {
+  const r = await fetch(buildServiceUrl(base, path), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  await throwIfNotOk(r);
+  return r.json() as Promise<T>;
+}
+
+async function servicePostForm<T>(base: string, path: string, form: FormData, init?: RequestInit): Promise<T> {
+  const r = await fetch(buildServiceUrl(base, path), { method: "POST", body: form, ...init });
+  await throwIfNotOk(r);
+  return r.json() as Promise<T>;
+}
+
+async function servicePatch<T>(base: string, path: string, body: unknown): Promise<T> {
+  const r = await fetch(buildServiceUrl(base, path), {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  await throwIfNotOk(r);
+  return r.json() as Promise<T>;
+}
+
+async function serviceDelete<T>(base: string, path: string, init?: RequestInit): Promise<T> {
+  const r = await fetch(buildServiceUrl(base, path), { ...init, method: "DELETE" });
+  await throwIfNotOk(r);
+  return r.json() as Promise<T>;
+}
+
+export function businessGet<T>(path: string): Promise<T> {
+  return serviceGet<T>(BUSINESS_API_BASE, path);
+}
+
+export function businessPost<T>(path: string, body?: unknown): Promise<T> {
+  return servicePost<T>(BUSINESS_API_BASE, path, body);
+}
+
+export function knowledgeGet<T>(path: string): Promise<T> {
+  return serviceGet<T>(KNOWLEDGE_API_BASE, path);
+}
+
+export function knowledgePost<T>(path: string, body?: unknown): Promise<T> {
+  return servicePost<T>(KNOWLEDGE_API_BASE, path, body);
+}
+
+export function knowledgePostForm<T>(path: string, form: FormData, init?: RequestInit): Promise<T> {
+  return servicePostForm<T>(KNOWLEDGE_API_BASE, path, form, init);
+}
+
+export function knowledgePatch<T>(path: string, body: unknown): Promise<T> {
+  return servicePatch<T>(KNOWLEDGE_API_BASE, path, body);
+}
+
+export function knowledgeDelete<T>(path: string, init?: RequestInit): Promise<T> {
+  return serviceDelete<T>(KNOWLEDGE_API_BASE, path, init);
+}
+
+export type KnowledgeRagResult = {
+  doc_id: string;
+  text: string;
+  score: number;
+};
+
+export type KnowledgeRagResponse = {
+  available: boolean;
+  indexed: boolean;
+  reason: string;
+  results: KnowledgeRagResult[];
+};
+
+export function queryExhibitionKnowledge(
+  query: string,
+  options: { limit?: number; datasetId?: string; namespaceId?: string } = {},
+): Promise<KnowledgeRagResponse> {
+  const datasetId = options.datasetId?.trim() || DIFY_EXHIBITION_DATASET_ID;
+  const namespaceId = options.namespaceId?.trim() || DIFY_NAMESPACE_ID;
+  const queryParams = new URLSearchParams({ namespace_id: namespaceId });
+  return knowledgePost<KnowledgeRagResponse>(
+    `/agent/knowledge-bases/${encodeURIComponent(datasetId)}/rag/query?${queryParams.toString()}`,
+    { query, ...(options.limit != null ? { limit: options.limit } : {}) },
+  );
 }
 
 export async function apiGet<T>(path: string): Promise<T> {
@@ -293,11 +411,14 @@ export type ExhibitionVoiceConfig = {
 };
 
 export type NavigationResult = {
+  matched?: boolean;
+  fallback?: boolean;
   title?: string;
   spoken_text: string;
   subtitle_text?: string;
   image_url?: string | null;
   route?: {
+    id?: string;
     from?: string;
     to?: string;
     directions?: string[];
@@ -338,6 +459,7 @@ export type GuideRecommendation = {
   booth_code: string;
   score: number;
   compare: Record<string, string>;
+  material_token?: string | null;
 };
 
 export type GuideRecommendationResponse = {
@@ -347,26 +469,75 @@ export type GuideRecommendationResponse = {
   items: GuideRecommendation[];
 };
 
+type GuideRecommendationApiItem = {
+  exhibitId: string;
+  name: string;
+  category: string;
+  exhibitorId: string;
+  exhibitorName: string;
+  boothCode: string;
+  imageUrl?: string | null;
+  reason: string;
+  materialToken?: string | null;
+};
+
+type GuideRecommendationApiResponse = {
+  exhibition_id: string;
+  strategy: Record<string, unknown>;
+  recommendations?: GuideRecommendationApiItem[];
+};
+
 export type MaterialQrResponse = {
+  exhibition_id?: string;
+  material_id?: string;
   token: string;
   url: string;
   qr_data_url?: string | null;
-  expires_at: string;
+  expires_at?: string | null;
+  title?: string;
+  type?: string;
+  exhibit_id?: string | null;
+  exhibit_name?: string | null;
+};
+
+type MaterialQrApiItem = {
+  materialId: string;
+  token: string;
+  title: string;
+  type: string;
+  exhibitId: string;
+  exhibitName: string;
+  qrPath: string;
+  qrUrl: string;
+};
+
+type MaterialQrApiResponse = {
+  exhibition_id: string;
+  items: MaterialQrApiItem[];
 };
 
 export type MaterialTokenResponse = {
+  id?: string;
+  material_id?: string;
   token: string;
-  exhibition_id: string;
+  exhibition_id?: string;
   exhibit_id?: string | null;
   exhibit_name?: string | null;
-  expires_at: string;
-  form_url: string;
+  title?: string;
+  type?: string;
+  description?: string;
+  url?: string;
+  status?: string;
+  created_at?: string;
+  qr_path?: string;
+  expires_at?: string | null;
+  form_url?: string;
 };
 
 export async function getExhibitionVoiceConfig(exhibitionId?: string | null): Promise<ExhibitionVoiceConfigResponse> {
   const id = exhibitionId?.trim();
   const path = `/exhibitions/${encodeURIComponent(id || "current")}/digital-human-config`;
-  return apiGet<ExhibitionVoiceConfigResponse>(path);
+  return businessGet<ExhibitionVoiceConfigResponse>(path);
 }
 
 export async function queryExhibitionNavigation(
@@ -375,7 +546,7 @@ export async function queryExhibitionNavigation(
 ): Promise<NavigationQueryResponse> {
   const id = exhibitionId?.trim();
   const path = `/exhibitions/${encodeURIComponent(id || "current")}/navigation/query`;
-  return apiPost<NavigationQueryResponse>(path, input);
+  return businessPost<NavigationQueryResponse>(path, input);
 }
 
 export async function getExhibitionGuide(
@@ -384,7 +555,25 @@ export async function getExhibitionGuide(
 ): Promise<GuideRecommendationResponse> {
   const id = exhibitionId?.trim();
   const path = `/exhibitions/${encodeURIComponent(id || "current")}/guide/recommendations?query=${encodeURIComponent(query)}`;
-  return apiGet<GuideRecommendationResponse>(path);
+  const response = await businessGet<GuideRecommendationApiResponse>(path);
+  return {
+    exhibition_id: response.exhibition_id,
+    query,
+    strategy: response.strategy ?? {},
+    items: (response.recommendations ?? []).map((item) => ({
+      id: item.exhibitId,
+      name: item.name,
+      category: item.category,
+      description: item.reason,
+      tags: [item.category].filter(Boolean),
+      image_url: item.imageUrl ?? null,
+      exhibitor: item.exhibitorName || item.exhibitorId,
+      booth_code: item.boothCode,
+      score: 0,
+      compare: {},
+      material_token: item.materialToken ?? null,
+    })),
+  };
 }
 
 export async function getMaterialQr(
@@ -392,12 +581,35 @@ export async function getMaterialQr(
   itemId?: string,
 ): Promise<MaterialQrResponse> {
   const id = exhibitionId?.trim();
-  const suffix = itemId ? `?item_id=${encodeURIComponent(itemId)}` : "";
-  return apiGet<MaterialQrResponse>(`/exhibitions/${encodeURIComponent(id || "current")}/materials/qr${suffix}`);
+  const response = await businessGet<MaterialQrApiResponse>(
+    `/exhibitions/${encodeURIComponent(id || "current")}/materials/qr`,
+  );
+  const item = response.items.find((candidate) => (
+    !itemId
+      || candidate.materialId === itemId
+      || candidate.exhibitId === itemId
+      || candidate.token === itemId
+  )) ?? response.items[0];
+  if (!item) {
+    throw new ApiError(404, "MATERIAL_NOT_FOUND", JSON.stringify(response));
+  }
+  const materialPath = item.qrUrl || item.qrPath || `/runtime/materials/${encodeURIComponent(item.token)}`;
+  return {
+    exhibition_id: response.exhibition_id,
+    material_id: item.materialId,
+    token: item.token,
+    url: /^https?:\/\//i.test(materialPath) ? materialPath : buildBusinessApiUrl(materialPath),
+    title: item.title,
+    type: item.type,
+    exhibit_id: item.exhibitId,
+    exhibit_name: item.exhibitName,
+    qr_data_url: null,
+    expires_at: null,
+  };
 }
 
 export function getMaterialToken(token: string): Promise<MaterialTokenResponse> {
-  return apiGet<MaterialTokenResponse>(`/runtime/materials/${encodeURIComponent(token)}`);
+  return businessGet<MaterialTokenResponse>(`/runtime/materials/${encodeURIComponent(token)}`);
 }
 
 export async function submitRuntimeLead(input: {
@@ -410,9 +622,29 @@ export async function submitRuntimeLead(input: {
   interestedExhibitIds?: string[];
   materialToken?: string;
   consent: boolean;
+  sessionId: string;
   source?: string;
 }): Promise<Record<string, unknown>> {
-  return apiPost<Record<string, unknown>>("/runtime/lead", input);
+  const intentParts = [
+    input.intentSummary?.trim(),
+    input.interestedExhibitIds?.length
+      ? `interested_exhibit_ids=${input.interestedExhibitIds.join(",")}`
+      : null,
+  ].filter((value): value is string => Boolean(value));
+  // 18302 RuntimeLeadBody currently has no materialToken field; keep it out of
+  // the request until the backend publishes an explicit binding for that token.
+  return businessPost<Record<string, unknown>>("/api/v1/runtime/lead", {
+    exhibitionId: input.exhibitionId,
+    sessionId: input.sessionId,
+    traceId: null,
+    authorized: input.consent,
+    contactName: input.contactName,
+    phone: input.phone || null,
+    email: input.email || null,
+    companyName: input.companyName,
+    intent: intentParts.join("; "),
+    source: input.source ?? "web",
+  });
 }
 
 export async function transcribeSessionAudio(
@@ -660,8 +892,8 @@ export type CreateSessionRequest = {
   character_id?: string;
   memory_library_id?: string;
   knowledge_enabled: boolean;
-  knowledge_base_id: string;
-  knowledge_base_ids: string[];
+  knowledge_base_id?: string;
+  knowledge_base_ids?: string[];
 };
 
 export type PersonaSummary = {

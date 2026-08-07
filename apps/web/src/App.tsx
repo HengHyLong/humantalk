@@ -29,9 +29,9 @@ import {
   apiGet,
   apiPost,
   apiPostForm,
-  apiPut,
   apiUploadFile,
   buildApiUrl,
+  DIFY_EXHIBITION_DATASET_ID,
   getMemoryLibraries,
   getExhibitionVoiceConfig,
   getExhibitionGuide,
@@ -44,7 +44,6 @@ import {
   transcribeSessionAudio,
   loadRuntimeConfig,
   uploadExportVideo,
-  type AvatarKnowledgeBasesResponse,
   type AvatarSummary,
   type CreateSessionRequest,
   type CreateSessionResponse,
@@ -55,15 +54,12 @@ import {
   type NavigationResult,
   type VoiceIntent,
   type KnowledgeBaseSummary,
-  type KnowledgeBasesResponse,
   type PersonaSummary,
   type PersonasResponse,
   type RuntimeConfigApplyInput,
   type RuntimeConfigResponse,
   type SceneBackgroundAsset,
   type SceneComposition,
-  type SessionKnowledgeBasesRequest,
-  type SessionKnowledgeBasesResponse,
   type VoiceCatalogItem,
 } from "./lib/api";
 import { modelConnectionBadge, type ModelStatus } from "./lib/modelStatus";
@@ -481,78 +477,31 @@ function normalizeKnowledgeBaseIds(ids: unknown, fallback: string[] = []): strin
   return deduped.length ? deduped : fallback;
 }
 
-function placeholderKnowledgeBaseSummary(id: string): KnowledgeBaseSummary {
-  return {
-    id,
-    name: id,
-    document_count: 0,
-    ready_document_count: 0,
-    error_document_count: 0,
-    created_at: "",
-    updated_at: "",
-  };
-}
-
-function normalizeKnowledgeBaseSummaries(response: KnowledgeBasesResponse): KnowledgeBaseSummary[] {
-  const summaries = Array.isArray(response.knowledge_base_summaries)
-    ? response.knowledge_base_summaries
-    : [];
-  const knowledgeBases = Array.isArray(response.knowledge_bases)
-    ? response.knowledge_bases
-    : [];
-  const byId = new Map<string, KnowledgeBaseSummary>();
-  for (const summary of summaries) {
-    if (summary.id) byId.set(summary.id, summary);
-  }
-  for (const item of knowledgeBases) {
-    if (typeof item === "string") {
-      const trimmed = item.trim();
-      if (trimmed && !byId.has(trimmed)) {
-        byId.set(trimmed, placeholderKnowledgeBaseSummary(trimmed));
-      }
-    } else if (item?.id && !byId.has(item.id)) {
-      byId.set(item.id, item);
-    }
-  }
-  return Array.from(byId.values());
-}
-
-function normalizeSelectedKnowledgeBaseIds(
-  response: AvatarKnowledgeBasesResponse,
-  fallback: string[] = [],
-): string[] {
-  const directIds = normalizeKnowledgeBaseIds(response.knowledge_base_ids, []);
-  if (directIds.length) return directIds;
-  const summaryIds = Array.isArray(response.knowledge_base_summaries)
-    ? response.knowledge_base_summaries
-        .map((summary) => summary.id?.trim())
-        .filter((id): id is string => Boolean(id))
-    : [];
-  const deduped = Array.from(new Set(summaryIds));
-  return deduped.length ? deduped : fallback;
-}
-
 function readStoredAgentConfig(): AgentConfig {
   try {
     const raw = window.localStorage.getItem(AGENT_CONFIG_STORAGE_KEY);
     if (!raw) {
-      return { memoryEnabled: false, knowledgeEnabled: true, knowledgeBaseIds: [] };
+      return {
+        memoryEnabled: false,
+        knowledgeEnabled: true,
+        knowledgeBaseIds: [DIFY_EXHIBITION_DATASET_ID],
+      };
     }
     const parsed = JSON.parse(raw) as Partial<AgentConfig> & { knowledgeBaseId?: unknown };
-    const knowledgeBaseIds = Array.isArray(parsed.knowledgeBaseIds)
-      ? normalizeKnowledgeBaseIds(parsed.knowledgeBaseIds)
-      : typeof parsed.knowledgeBaseId === "string" && parsed.knowledgeBaseId.trim()
-        ? normalizeKnowledgeBaseIds([parsed.knowledgeBaseId])
-        : [];
+    const knowledgeEnabled = parsed.knowledgeEnabled !== false;
     const migrated = {
       memoryEnabled: false,
-      knowledgeEnabled: parsed.knowledgeEnabled !== false,
-      knowledgeBaseIds,
+      knowledgeEnabled,
+      knowledgeBaseIds: knowledgeEnabled ? [DIFY_EXHIBITION_DATASET_ID] : [],
     };
     writeStoredAgentConfig(migrated);
     return migrated;
   } catch {
-    return { memoryEnabled: false, knowledgeEnabled: true, knowledgeBaseIds: [] };
+    return {
+      memoryEnabled: false,
+      knowledgeEnabled: true,
+      knowledgeBaseIds: [DIFY_EXHIBITION_DATASET_ID],
+    };
   }
 }
 
@@ -941,7 +890,6 @@ export default function App() {
   const realtimeRecordMicStreamRef = useRef<MediaStream | null>(null);
   const pendingRealtimeExportRef = useRef<PendingRealtimeExport | null>(null);
   const sessionIdRef = useRef<string | null>(null);
-  const knowledgeSyncChainRef = useRef<Promise<void>>(Promise.resolve());
   const speakAudioAbortRef = useRef<AbortController | null>(null);
   const ttsPreviewAudioRef = useRef<HTMLAudioElement | null>(null);
   const ttsPreviewUrlRef = useRef<string | null>(null);
@@ -1192,9 +1140,6 @@ export default function App() {
   const [sceneBackgrounds, setSceneBackgrounds] = useState<SceneBackgroundAsset[]>([]);
   const [sceneCompositions, setSceneCompositions] = useState<SceneComposition[]>([]);
   const [selectedSceneIdsByAvatar, setSelectedSceneIdsByAvatar] = useState<Record<string, string>>(readStoredSceneIdsByAvatar);
-  const avatarKnowledgeBasesSyncReadyRef = useRef(false);
-  const lastPersistedAvatarKnowledgeBasesRef = useRef<Map<string, string[]>>(new Map());
-  const avatarKnowledgeBasesLoadSeqRef = useRef(0);
   const [assetLibraryTab, setAssetLibraryTab] = useState<AssetLibraryTab>("exports");
   const selectedModelStatus = modelStatuses.find((item) => item.id === model);
   const selectedModelBadge = modelConnectionBadge(selectedModelStatus, models.includes(model));
@@ -1369,49 +1314,27 @@ export default function App() {
     }
   }, [notify, syncRuntimeConfigSelection]);
 
-  const syncSessionKnowledgeBases = useCallback((knowledgeBaseIds: string[]) => {
-    const sid = sessionIdRef.current;
-    if (!sid) return;
-    const selectedIds = normalizeKnowledgeBaseIds(knowledgeBaseIds);
-    knowledgeSyncChainRef.current = knowledgeSyncChainRef.current
-      .catch(() => undefined)
-      .then(async () => {
-        if (sessionIdRef.current !== sid) return;
-        await apiPost<SessionKnowledgeBasesResponse>(
-          `/sessions/${sid}/knowledge-bases`,
-          {
-            knowledge_base_ids: selectedIds,
-          } satisfies SessionKnowledgeBasesRequest,
-        );
-      })
-      .catch((error) => {
-        console.warn("sync session knowledge bases failed", error);
-        const detail = error instanceof ApiError ? error.detail : null;
-        notify(detail ? `会话知识库切换失败：${detail}` : "会话知识库切换失败，请查看后端日志。", "error");
-      });
-  }, [notify]);
-
   const setAgentConfig = useCallback((next: AgentConfig) => {
     const normalized = {
       memoryEnabled: false,
       knowledgeEnabled: next.knowledgeEnabled !== false,
-      knowledgeBaseIds: normalizeKnowledgeBaseIds(next.knowledgeBaseIds),
+      knowledgeBaseIds: next.knowledgeEnabled !== false ? [DIFY_EXHIBITION_DATASET_ID] : [],
     };
     setAgentConfigState(normalized);
     writeStoredAgentConfig(normalized);
-    void syncSessionKnowledgeBases(normalized.knowledgeBaseIds);
-  }, [syncSessionKnowledgeBases]);
+  }, []);
 
   const refreshKnowledgeBases = useCallback(async () => {
-    try {
-      const response = await apiGet<KnowledgeBasesResponse>("/agent/knowledge-bases");
-      setKnowledgeBaseSummaries(normalizeKnowledgeBaseSummaries(response));
-    } catch (error) {
-      console.warn("load knowledge bases failed", error);
-      const detail = error instanceof ApiError ? error.detail : null;
-      notify(detail ? `知识库列表读取失败：${detail}` : "知识库列表读取失败，请查看后端日志。", "error");
-    }
-  }, [notify]);
+    setKnowledgeBaseSummaries([{
+      id: DIFY_EXHIBITION_DATASET_ID,
+      name: "西博会展会知识库（Dify）",
+      document_count: 1,
+      ready_document_count: 1,
+      error_document_count: 0,
+      created_at: "",
+      updated_at: "",
+    }]);
+  }, []);
 
   const refreshPersonas = useCallback(async () => {
     try {
@@ -1508,42 +1431,6 @@ export default function App() {
     });
   }, []);
 
-  const refreshAvatarKnowledgeBases = useCallback(async (targetAvatarId: string) => {
-    if (!targetAvatarId) return;
-    const seq = ++avatarKnowledgeBasesLoadSeqRef.current;
-    avatarKnowledgeBasesSyncReadyRef.current = false;
-    try {
-      const response = await apiGet<AvatarKnowledgeBasesResponse>(
-        `/agent/avatars/${encodeURIComponent(targetAvatarId)}/knowledge-bases`,
-      );
-      if (seq !== avatarKnowledgeBasesLoadSeqRef.current) return;
-      const selectedIds = normalizeSelectedKnowledgeBaseIds(response);
-      lastPersistedAvatarKnowledgeBasesRef.current.set(targetAvatarId, selectedIds);
-      if (Array.isArray(response.knowledge_base_summaries) && response.knowledge_base_summaries.length) {
-        setKnowledgeBaseSummaries((prev) => {
-          const byId = new Map(prev.map((item) => [item.id, item]));
-          for (const summary of response.knowledge_base_summaries ?? []) {
-            if (summary.id) byId.set(summary.id, summary);
-          }
-          return Array.from(byId.values());
-        });
-      }
-      setAgentConfigState((prev) => {
-        const next = { ...prev, knowledgeBaseIds: selectedIds };
-        writeStoredAgentConfig(next);
-        return next;
-      });
-    } catch (error) {
-      console.warn("load avatar knowledge bases failed", error);
-      const detail = error instanceof ApiError ? error.detail : null;
-      notify(detail ? `形象知识库读取失败：${detail}` : "形象知识库读取失败，请查看后端日志。", "error");
-    } finally {
-      if (seq === avatarKnowledgeBasesLoadSeqRef.current) {
-        avatarKnowledgeBasesSyncReadyRef.current = true;
-      }
-    }
-  }, [notify]);
-
   const handleManageKnowledgeBases = useCallback(() => {
     setAssetLibraryTab("knowledge");
     setWorkflow("assetLibrary");
@@ -1633,43 +1520,6 @@ export default function App() {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [conversationViewMode, workflow]);
-
-  useEffect(() => {
-    if (selectedPersonaId) return;
-    void refreshAvatarKnowledgeBases(avatarId);
-  }, [avatarId, refreshAvatarKnowledgeBases, selectedPersonaId]);
-
-  useEffect(() => {
-    if (selectedPersonaId) return;
-    if (!avatarKnowledgeBasesSyncReadyRef.current || !avatarId) return;
-    const selectedIds = normalizeKnowledgeBaseIds(agentConfig.knowledgeBaseIds);
-    const lastPersisted = lastPersistedAvatarKnowledgeBasesRef.current.get(avatarId) ?? [];
-    if (
-      lastPersisted.length === selectedIds.length &&
-      lastPersisted.every((id, index) => id === selectedIds[index])
-    ) {
-      return;
-    }
-    let cancelled = false;
-    void (async () => {
-      try {
-        await apiPut<AvatarKnowledgeBasesResponse>(
-          `/agent/avatars/${encodeURIComponent(avatarId)}/knowledge-bases`,
-          { knowledge_base_ids: selectedIds },
-        );
-        if (!cancelled) {
-          lastPersistedAvatarKnowledgeBasesRef.current.set(avatarId, selectedIds);
-        }
-      } catch (error) {
-        console.warn("persist avatar knowledge bases failed", error);
-        const detail = error instanceof ApiError ? error.detail : null;
-        notify(detail ? `形象知识库保存失败：${detail}` : "形象知识库保存失败，请查看后端日志。", "error");
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [agentConfig.knowledgeBaseIds, avatarId, notify, selectedPersonaId]);
 
   const cleanupRealtimeRecordStreams = useCallback(() => {
     if (realtimeRecordMicStreamRef.current) {
@@ -2570,7 +2420,8 @@ export default function App() {
     setQueueInfo(null);
     let createdSessionId: string | null = null;
     try {
-      const knowledgeBaseIds = normalizeKnowledgeBaseIds(agentConfig.knowledgeBaseIds);
+      // Dify owns the exhibition dataset. OpenTalking receives only the
+      // knowledge-enabled flag and must not receive a local knowledge_base_id.
       const selectedTtsVoice = resolveSelectableTtsVoice(ttsProvider, qwenVoice, bailianVoices);
       const created = await apiPost<CreateSessionResponse>("/sessions", {
         persona_id: selectedPersonaId || undefined,
@@ -2596,8 +2447,6 @@ export default function App() {
         character_id: avatarId,
         memory_library_id: memoryEnabled && memoryLibraryId ? memoryLibraryId : undefined,
         knowledge_enabled: agentConfig.knowledgeEnabled,
-        knowledge_base_id: knowledgeBaseIds[0],
-        knowledge_base_ids: knowledgeBaseIds,
       } satisfies CreateSessionRequest);
       createdSessionId = created.session_id;
       setSessionId(created.session_id);
@@ -3054,13 +2903,15 @@ export default function App() {
     consent: boolean;
     materialToken?: string;
   }) => {
+    if (!sessionId) throw new Error("缺少有效会话，暂时无法提交线索");
     await submitRuntimeLead({
       ...input,
       exhibitionId: exhibitionVoiceConfig?.exhibition_id || configuredExhibitionId || "current",
+      sessionId,
       source: "web-guide",
     });
     notify("预约已提交，展会方会尽快与您联系。", "success");
-  }, [configuredExhibitionId, exhibitionVoiceConfig, notify]);
+  }, [configuredExhibitionId, exhibitionVoiceConfig, notify, sessionId]);
 
   const handleRealtimeVoiceAudio = useCallback(async (blob: Blob) => {
     if (!sessionId) return;

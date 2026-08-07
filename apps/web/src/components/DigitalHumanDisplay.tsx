@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent, type RefObject } from "react";
+import QRCode from "qrcode";
 import type {
   AvatarSummary,
   ClientRendererDescriptor,
@@ -151,6 +152,7 @@ export function DigitalHumanDisplay({
   const [activeFeatureDrawer, setActiveFeatureDrawer] = useState<FeatureDrawerKey | null>(null);
   const [leadItem, setLeadItem] = useState<GuideRecommendation | null>(null);
   const [materialQr, setMaterialQr] = useState<MaterialQrResponse | null>(null);
+  const [materialQrImage, setMaterialQrImage] = useState<string | null>(null);
   const [leadSaving, setLeadSaving] = useState(false);
   const [leadMessage, setLeadMessage] = useState("");
   const [leadForm, setLeadForm] = useState({ companyName: "", contactName: "", phone: "", email: "", consent: false });
@@ -163,6 +165,29 @@ export function DigitalHumanDisplay({
     subtitle?.trim()
       && !(latestVisibleMessage?.role === "assistant" && latestVisibleMessage.text.trim() === subtitle.trim()),
   );
+
+  useEffect(() => {
+    let cancelled = false;
+    const targetUrl = materialQr?.url?.trim();
+    if (!targetUrl) {
+      setMaterialQrImage(null);
+      return () => {
+        cancelled = true;
+      };
+    }
+    void QRCode.toDataURL(targetUrl, {
+      errorCorrectionLevel: "M",
+      margin: 1,
+      width: 256,
+    }).then((dataUrl) => {
+      if (!cancelled) setMaterialQrImage(dataUrl);
+    }).catch(() => {
+      if (!cancelled) setMaterialQrImage(null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [materialQr?.url]);
 
   const liveInteractionAdapter = useMemo(
     () => createLiveInteractionAdapter({ requestInterrupt: async () => onInterrupt() }),
@@ -407,7 +432,10 @@ export function DigitalHumanDisplay({
               ) : null}
               {materialContext ? (
                 <div className="digital-display-material-context" role="status">
-                  资料表单：{materialContext.exhibit_name || "展会资料"} · 链接有效期至 {new Date(materialContext.expires_at).toLocaleString("zh-CN")}
+                  资料表单：{materialContext.exhibit_name || "展会资料"}
+                  {materialContext.expires_at
+                    ? ` · 链接有效期至 ${new Date(materialContext.expires_at).toLocaleString("zh-CN")}`
+                    : " · 链接有效期由服务端管理"}
                 </div>
               ) : null}
               {guideItems.length ? (
@@ -454,10 +482,14 @@ export function DigitalHumanDisplay({
                     <div className="digital-display-guide-qr">
                       <div>
                         <strong>扫码获取资料</strong>
-                        <p>二维码有效期至 {new Date(materialQr.expires_at).toLocaleString("zh-CN")}</p>
+                        <p>{materialQr.expires_at
+                          ? `二维码有效期至 ${new Date(materialQr.expires_at).toLocaleString("zh-CN")}`
+                          : "二维码链接由 18302 服务端管理"}</p>
                         <a href={materialQr.url} target="_blank" rel="noreferrer">打开资料链接</a>
                       </div>
-                      {materialQr.qr_data_url ? <img src={materialQr.qr_data_url} alt="资料二维码" /> : null}
+                      {(materialQr.qr_data_url || materialQrImage) ? (
+                        <img src={materialQr.qr_data_url || materialQrImage || ""} alt="资料二维码" />
+                      ) : null}
                       <button type="button" onClick={() => setMaterialQr(null)}>关闭</button>
                     </div>
                   ) : null}

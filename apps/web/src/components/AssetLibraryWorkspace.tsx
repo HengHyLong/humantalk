@@ -3,15 +3,18 @@ import {
   ApiError,
   apiDelete,
   apiGet,
-  apiPost,
-  apiPostForm,
   buildApiDownloadUrl,
-  buildApiUrl,
+  buildKnowledgeApiUrl,
   createSceneComposition,
   deleteSceneBackground,
   deleteSceneComposition,
   listSceneBackgrounds,
   listSceneCompositions,
+  knowledgeDelete,
+  knowledgeGet,
+  knowledgePatch,
+  knowledgePost,
+  knowledgePostForm,
   uploadSceneBackground,
   type AvatarSummary,
   type ExportVideoItem,
@@ -138,25 +141,6 @@ function normalizeKnowledgeBases(response: KnowledgeBasesResponse): KnowledgeBas
   return Array.from(byId.values());
 }
 
-async function apiPatchJson<T>(path: string, body: unknown): Promise<T> {
-  const response = await fetch(buildApiUrl(path), {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (response.ok) return response.json() as Promise<T>;
-  const text = await response.text();
-  let detail: string | null = null;
-  try {
-    const parsed = JSON.parse(text) as { detail?: unknown };
-    if (typeof parsed.detail === "string") detail = parsed.detail;
-    else if (parsed.detail != null) detail = JSON.stringify(parsed.detail);
-  } catch {
-    detail = null;
-  }
-  throw new ApiError(response.status, detail, text);
-}
-
 function appendUniqueFiles(current: File[], incoming: File[]): File[] {
   const seen = new Set(current.map((file) => `${file.name}:${file.size}:${file.lastModified}`));
   const next = [...current];
@@ -226,11 +210,11 @@ function mergeKnowledgeDocuments(current: KnowledgeDocument[], incoming: Knowled
 }
 
 function filePoolDocumentViewUrl(document: KnowledgeDocument): string {
-  return buildApiDownloadUrl(`/agent/knowledge-documents/${encodeURIComponent(document.id)}/file`);
+  return buildKnowledgeApiUrl(`/agent/knowledge-documents/${encodeURIComponent(document.id)}/file`);
 }
 
 function knowledgeDocumentViewUrl(document: KnowledgeDocument): string {
-  return buildApiDownloadUrl(
+  return buildKnowledgeApiUrl(
     `/agent/knowledge-bases/${encodeURIComponent(document.kb_id)}/documents/${encodeURIComponent(document.id)}/file`,
   );
 }
@@ -316,7 +300,7 @@ export function AssetLibraryWorkspace({
     setKnowledgeLoading(true);
     setKnowledgeError(null);
     try {
-      const response = await apiGet<KnowledgeBasesResponse>("/agent/knowledge-bases");
+      const response = await knowledgeGet<KnowledgeBasesResponse>("/agent/knowledge-bases");
       const bases = normalizeKnowledgeBases(response);
       setKnowledgeBases(bases);
       setSelectedKnowledgeId((current) => {
@@ -335,7 +319,7 @@ export function AssetLibraryWorkspace({
   const loadKnowledgeDocuments = useCallback(async (kbId: string) => {
     setDocumentLoading(true);
     try {
-      const response = await apiGet<KnowledgeDocumentsResponse>(
+      const response = await knowledgeGet<KnowledgeDocumentsResponse>(
         `/agent/knowledge-bases/${encodeURIComponent(kbId)}/documents`,
       );
       setKnowledgeDocuments(normalizeKnowledgeDocuments(response.documents));
@@ -352,7 +336,7 @@ export function AssetLibraryWorkspace({
   const loadAllKnowledgeDocuments = useCallback(async () => {
     setAllKnowledgeDocumentsLoading(true);
     try {
-      const response = await apiGet<KnowledgeDocumentsResponse>("/agent/knowledge-documents");
+      const response = await knowledgeGet<KnowledgeDocumentsResponse>("/agent/knowledge-documents");
       setAllKnowledgeDocuments(normalizeKnowledgeDocuments(response.documents));
     } catch (err) {
       console.warn("load all knowledge documents failed", err);
@@ -527,7 +511,7 @@ export function AssetLibraryWorkspace({
     for (const file of files) {
       const form = new FormData();
       form.set("file", file);
-      const document = await apiPostForm<KnowledgeDocument>("/agent/knowledge-documents", form);
+      const document = await knowledgePostForm<KnowledgeDocument>("/agent/knowledge-documents", form);
       const normalized = normalizeKnowledgeDocument(document, uploaded.length);
       if (normalized) uploaded.push(normalized);
     }
@@ -568,7 +552,7 @@ export function AssetLibraryWorkspace({
       const form = new FormData();
       form.set("name", newKnowledgeName.trim());
       for (const docId of documentIds) form.append("document_ids", docId);
-      const created = await apiPostForm<KnowledgeBaseSummary>("/agent/knowledge-bases", form);
+      const created = await knowledgePostForm<KnowledgeBaseSummary>("/agent/knowledge-bases", form);
       setKnowledgeBases((prev) => [...prev.filter((base) => base.id !== created.id), created]);
       setSelectedKnowledgeId(created.id);
       setCreateOpen(false);
@@ -603,7 +587,7 @@ export function AssetLibraryWorkspace({
     if (!nextName || nextName === base.name) return;
     setKnowledgeActionId(base.id);
     try {
-      const updated = await apiPatchJson<KnowledgeBaseSummary>(
+      const updated = await knowledgePatch<KnowledgeBaseSummary>(
         `/agent/knowledge-bases/${encodeURIComponent(base.id)}`,
         { name: nextName },
       );
@@ -623,7 +607,7 @@ export function AssetLibraryWorkspace({
     if (!confirmed) return;
     setKnowledgeActionId(base.id);
     try {
-      await apiDelete<{ deleted: boolean }>(`/agent/knowledge-bases/${encodeURIComponent(base.id)}`);
+      await knowledgeDelete<{ deleted: boolean }>(`/agent/knowledge-bases/${encodeURIComponent(base.id)}`);
       setKnowledgeBases((prev) => prev.filter((item) => item.id !== base.id));
       setSelectedKnowledgeId((current) => current === base.id ? null : current);
       setKnowledgeDocuments((prev) => selectedKnowledgeId === base.id ? [] : prev);
@@ -644,7 +628,7 @@ export function AssetLibraryWorkspace({
     if (!confirmed) return;
     setFilePoolActionId(document.id);
     try {
-      await apiDelete(`/agent/knowledge-documents/${encodeURIComponent(document.id)}`);
+      await knowledgeDelete(`/agent/knowledge-documents/${encodeURIComponent(document.id)}`);
       setAllKnowledgeDocuments((prev) => prev.filter((item) => item.id !== document.id));
       onNotify?.("文件池文件已删除。", "success");
     } catch (err) {
@@ -753,7 +737,7 @@ export function AssetLibraryWorkspace({
       for (const file of uploadKnowledgeFiles) {
         const form = new FormData();
         form.set("file", file);
-        const document = await apiPostForm<KnowledgeDocument>(
+        const document = await knowledgePostForm<KnowledgeDocument>(
           `/agent/knowledge-bases/${encodeURIComponent(selectedKnowledgeId)}/documents`,
           form,
         );
@@ -793,7 +777,7 @@ export function AssetLibraryWorkspace({
     if (!confirmed) return;
     setDocumentActionId(document.id);
     try {
-      await apiDelete<{ deleted: boolean }>(
+      await knowledgeDelete<{ deleted: boolean }>(
         `/agent/knowledge-bases/${encodeURIComponent(selectedKnowledgeId)}/documents/${encodeURIComponent(document.id)}`,
       );
       setKnowledgeDocuments((prev) => prev.filter((item) => item.id !== document.id));
@@ -813,7 +797,7 @@ export function AssetLibraryWorkspace({
     if (!selectedKnowledgeId) return;
     setDocumentActionId(document.id);
     try {
-      const updated = await apiPost<KnowledgeDocument>(
+      const updated = await knowledgePost<KnowledgeDocument>(
         `/agent/knowledge-bases/${encodeURIComponent(selectedKnowledgeId)}/documents/${encodeURIComponent(document.id)}/reindex`,
       );
       const normalized = normalizeKnowledgeDocument(updated);
