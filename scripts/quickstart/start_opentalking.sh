@@ -130,6 +130,32 @@ if [[ ! -f "$repo_root/.venv/bin/activate" ]]; then
   exit 1
 fi
 
+python_bin="$repo_root/.venv/bin/python"
+missing_runtime_modules="$("$python_bin" - <<'PY'
+import importlib.util
+
+required = ("argon2", "jwt", "psutil")
+print(" ".join(name for name in required if importlib.util.find_spec(name) is None))
+PY
+)"
+if [[ -n "$missing_runtime_modules" ]]; then
+  echo "Python runtime dependencies are incomplete: $missing_runtime_modules"
+  echo "Synchronizing the current project's base dependencies into $repo_root/.venv ..."
+  if command -v uv >/dev/null 2>&1; then
+    uv pip install --python "$python_bin" -e "$repo_root"
+  elif "$python_bin" -m pip --version >/dev/null 2>&1; then
+    "$python_bin" -m pip install -e "$repo_root"
+  else
+    echo "Cannot install missing Python dependencies because neither uv nor pip is available." >&2
+    echo "Install uv, then run: uv pip install --python \"$python_bin\" -e \"$repo_root\"" >&2
+    exit 1
+  fi
+  if ! "$python_bin" -c 'import argon2, jwt, psutil' >/dev/null 2>&1; then
+    echo "Python runtime dependency synchronization finished, but required Admin modules are still unavailable." >&2
+    exit 1
+  fi
+fi
+
 if [[ ! -f "$repo_root/.env" && -f "$repo_root/.env.example" ]]; then
   cp "$repo_root/.env.example" "$repo_root/.env"
   echo "Created $repo_root/.env from .env.example. Edit it for LLM/STT credentials if needed."
