@@ -188,7 +188,12 @@ body {
 @keyframes digital-display-spin { to { transform: rotate(360deg); } }
 @keyframes digital-display-loading-progress { 0% { transform: translateX(-120%); } 55%, 100% { transform: translateX(280%); } }
 
-.digital-display-chat-panel { position: absolute; z-index: 20; top: 43%; right: 3%; bottom: 8%; left: 3%; display: flex; min-height: 0; flex-direction: column; gap: 10px; border: 1px solid rgba(159, 228, 255, .4); border-radius: 18px; padding: 15px; background: rgba(7, 111, 188, .16); box-shadow: 0 16px 32px rgba(0, 22, 72, .12); }
+.digital-display-chat-panel { position: absolute; z-index: 20; top: 62%; right: 3%; bottom: 7%; left: 3%; display: flex; min-height: 0; flex-direction: column; gap: 10px; border: 1px solid rgba(159, 228, 255, .4); border-radius: 18px; padding: 15px; background: rgba(7, 111, 188, .16); box-shadow: 0 16px 32px rgba(0, 22, 72, .12); }
+.digital-display-waist-panel { position: absolute; left: 50%; top: 47%; transform: translateX(-50%); z-index: 24; display: flex; align-items: stretch; gap: 10px; width: min(860px, 92%); max-height: 30vh; padding: 8px; overflow-x: auto; overflow-y: auto; border: 1px solid rgba(168, 235, 255, .35); border-radius: 14px; background: rgba(1, 35, 86, .55); box-shadow: 0 14px 30px rgba(0, 19, 63, .24); backdrop-filter: blur(10px); scrollbar-width: thin; scrollbar-color: rgba(183, 237, 255, .5) transparent; }
+.digital-display-waist-panel .digital-display-navigation-card,
+.digital-display-waist-panel .exhibition-entity-card.is-immersive { flex: 0 0 250px; min-height: 0; max-height: 29vh; }
+.digital-display-waist-panel .digital-display-navigation-card img,
+.digital-display-waist-panel .exhibition-entity-card.is-immersive > img { height: 120px; min-height: 0; max-height: 120px; }
 .digital-display-chat-heading { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; color: rgba(230, 249, 255, .8); font-size: 10px; letter-spacing: .16em; }
 .digital-display-chat-state { color: rgba(185, 240, 255, .88); font-size: 9px; letter-spacing: .08em; }
 .digital-display-chat-feed { display: flex; min-height: 0; flex: 1; flex-direction: column; gap: 8px; overflow-y: auto; padding: 2px 3px; scrollbar-width: thin; scrollbar-color: rgba(183, 237, 255, .5) transparent; }
