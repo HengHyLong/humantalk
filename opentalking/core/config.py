@@ -68,6 +68,7 @@ def _flatten_config(raw: dict[str, Any] | None) -> dict[str, Any]:
         "agent": {
             "memory_sqlite_path": "agent_memory_sqlite_path",
             "knowledge_root": "agent_knowledge_root",
+            "rag_provider": "agent_rag_provider",
             "persona_root": "persona_root",
             "lightrag_root": "agent_lightrag_root",
             "lightrag_query_mode": "agent_lightrag_query_mode",
@@ -81,6 +82,18 @@ def _flatten_config(raw: dict[str, Any] | None) -> dict[str, Any]:
             "lightrag_embedding_max_token_size": "agent_lightrag_embedding_max_token_size",
             "lightrag_language": "agent_lightrag_language",
             "lightrag_chunk_fallback_enabled": "agent_lightrag_chunk_fallback_enabled",
+            "dify_base_url": "agent_dify_base_url",
+            "dify_api_key": "agent_dify_api_key",
+            "dify_dataset_id": "agent_dify_dataset_id",
+            "dify_dataset_map": "agent_dify_dataset_map",
+            "dify_knowledge_base_id": "agent_dify_knowledge_base_id",
+            "dify_knowledge_base_registry": "agent_dify_knowledge_base_registry",
+            "dify_registry_path": "agent_dify_registry_path",
+            "dify_timeout_sec": "agent_dify_timeout_sec",
+            "dify_search_method": "agent_dify_search_method",
+            "dify_score_threshold": "agent_dify_score_threshold",
+            "dify_default_exhibition_id": "agent_dify_default_exhibition_id",
+            "dify_default_namespace_id": "agent_dify_default_namespace_id",
         },
         "memory": {
             "provider": "memory_provider",
@@ -456,6 +469,8 @@ class Settings(BaseSettings):
     agent_memory_sqlite_path: str = Field(default="./data/agent_memory.sqlite")
     #: Agent 默认知识库原始文档目录；默认 ./data/knowledge
     agent_knowledge_root: str = Field(default="./data/knowledge")
+    #: 知识库提供方：lightrag 或 dify。Dify API Key 仅在服务端读取。
+    agent_rag_provider: str = Field(default="lightrag")
     #: Persona Package 本地存储目录；默认 ./data/personas
     persona_root: str = Field(default="./data/personas")
     #: LightRAG 知识库索引目录；留空时使用 agent_knowledge_root/_lightrag
@@ -482,6 +497,19 @@ class Settings(BaseSettings):
     qa_retrieval_top_k: int = Field(default=3)
     qa_retrieval_score_threshold: float = Field(default=0.45)
     qa_human_channel: str = Field(default="请前往现场服务台或咨询工作人员获取帮助。")
+    # ---- Dify knowledge provider ----
+    agent_dify_base_url: str = Field(default="")
+    agent_dify_api_key: str = Field(default="")
+    agent_dify_dataset_id: str = Field(default="")
+    agent_dify_dataset_map: str = Field(default="")
+    agent_dify_knowledge_base_id: str = Field(default="")
+    agent_dify_knowledge_base_registry: str = Field(default="")
+    agent_dify_registry_path: str = Field(default="")
+    agent_dify_timeout_sec: float = Field(default=15.0)
+    agent_dify_search_method: str = Field(default="hybrid_search")
+    agent_dify_score_threshold: float = Field(default=0.0)
+    agent_dify_default_exhibition_id: str = Field(default="current")
+    agent_dify_default_namespace_id: str = Field(default="default")
 
     # ---- Character memory provider ----
     memory_provider: str = "mem0"

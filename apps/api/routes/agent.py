@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import tempfile
+import uuid
 from dataclasses import asdict
 from pathlib import Path
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
+from opentalking.agent.dify_index import DifyKnowledgeError, DifyKnowledgeIndex
 from opentalking.agent.context_builder import default_knowledge_store, default_memory_store
 from opentalking.agent.knowledge_store import (
     MAX_DOCUMENT_BYTES,
@@ -71,6 +73,9 @@ class KnowledgeBaseResponse(BaseModel):
     error_document_count: int
     created_at: str
     updated_at: str
+    exhibition_id: str = ""
+    namespace_id: str = ""
+    status: str = "active"
 
 
 class KnowledgeBasesResponse(BaseModel):
@@ -239,7 +244,47 @@ async def _knowledge_base_response(store: KnowledgeStore, kb_id: str) -> Knowled
 @router.get("/knowledge-bases", response_model=KnowledgeBasesResponse)
 async def list_knowledge_bases() -> KnowledgeBasesResponse:
     try:
-        knowledge_bases = await default_knowledge_store().list_knowledge_bases()
+        store = default_knowledge_store()
+        if isinstance(store.knowledge_index, DifyKnowledgeIndex):
+            summaries: list[KnowledgeBaseResponse] = []
+            for record in store.knowledge_index.knowledge_base_records().values():
+                document_count = 0
+                ready_document_count = 0
+                try:
+                    payload = store.knowledge_index.list_documents(
+                        kb_id=record["knowledge_base_id"], page=1, limit=100
+                    )
+                    documents = payload.get("data", [])
+                    if isinstance(documents, list):
+                        document_count = len(documents)
+                        ready_document_count = sum(
+                            1
+                            for document in documents
+                            if isinstance(document, dict)
+                            and str(document.get("indexing_status", "") or "").lower()
+                            in {"completed", "available", "ready"}
+                        )
+                except DifyKnowledgeError:
+                    pass
+                summaries.append(
+                    KnowledgeBaseResponse(
+                        id=record["knowledge_base_id"],
+                        name=record["name"],
+                        document_count=document_count,
+                        ready_document_count=ready_document_count,
+                        error_document_count=max(0, document_count - ready_document_count),
+                        created_at="",
+                        updated_at="",
+                        exhibition_id=record["exhibition_id"],
+                        namespace_id=record["namespace_id"],
+                        status=record["status"],
+                    )
+                )
+            return KnowledgeBasesResponse(
+                knowledge_bases=[summary.id for summary in summaries],
+                knowledge_base_summaries=summaries,
+            )
+        knowledge_bases = await store.list_knowledge_bases()
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     summaries = [
@@ -257,6 +302,8 @@ async def create_knowledge_base(
     name: str = Form(...),
     document_ids: list[str] | None = Form(default=None),
     files: list[UploadFile] | None = File(default=None),
+    exhibition_id: str | None = Form(default=None),
+    namespace_id: str | None = Form(default=None),
 ) -> KnowledgeBaseResponse:
     clean_name = name.strip()
     if not clean_name:
@@ -267,6 +314,24 @@ async def create_knowledge_base(
     store = default_knowledge_store()
     try:
         knowledge_base = await store.create_knowledge_base(clean_name)
+        if isinstance(store.knowledge_index, DifyKnowledgeIndex):
+            from opentalking.core.config import get_settings
+
+            settings = get_settings()
+            dataset_payload = store.knowledge_index.create_dataset(name=clean_name)
+            dataset_id = DifyKnowledgeIndex.dataset_id_from_response(dataset_payload)
+            if not dataset_id:
+                raise DifyKnowledgeError("Dify 创建知识库响应中缺少 dataset id")
+            store.knowledge_index.set_knowledge_base_record(
+                {
+                    "knowledge_base_id": knowledge_base.id,
+                    "name": clean_name,
+                    "exhibition_id": (exhibition_id or settings.agent_dify_default_exhibition_id).strip(),
+                    "namespace_id": (namespace_id or settings.agent_dify_default_namespace_id).strip(),
+                    "dify_dataset_id": dataset_id,
+                    "status": "active",
+                }
+            )
         for doc_id in selected_document_ids:
             await store.add_existing_document(
                 kb_id=knowledge_base.id,
@@ -302,6 +367,13 @@ async def create_knowledge_base(
             except Exception:
                 pass
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except DifyKnowledgeError as exc:
+        if "knowledge_base" in locals():
+            try:
+                await store.delete_knowledge_base(knowledge_base.id)
+            except Exception:
+                pass
+        raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "detail": str(exc)}) from exc
     return await _knowledge_base_response(store, knowledge_base.id)
 
 
@@ -367,6 +439,60 @@ async def query_lightrag_index(
             for result in results
         ],
     )
+
+
+@router.post("/knowledge-bases/{kb_id}/rag/query", response_model=None)
+async def query_rag_index(
+    kb_id: str,
+    request: LightRAGQueryRequest,
+    namespace_id: str = Query(default=""),
+    exhibition_id: str = Query(default=""),
+) -> dict[str, object] | JSONResponse:
+    trace_id = f"trace_{uuid.uuid4().hex[:12]}"
+    store = default_knowledge_store()
+    try:
+        if isinstance(store.knowledge_index, DifyKnowledgeIndex):
+            record = store.knowledge_index.validate_scope(
+                kb_id=kb_id,
+                exhibition_id=exhibition_id,
+                namespace_id=namespace_id,
+            )
+        else:
+            record = {
+                "knowledge_base_id": kb_id,
+                "exhibition_id": exhibition_id,
+                "namespace_id": namespace_id,
+            }
+        results = store.knowledge_index.query(
+            kb_id=kb_id,
+            query=request.query.strip(),
+            limit=min(max(1, request.limit), 20),
+        )
+    except DifyKnowledgeError as exc:
+        return JSONResponse(
+            status_code=exc.status_code,
+            headers={"X-Trace-Id": trace_id},
+            content={"code": exc.code, "detail": str(exc), "trace_id": trace_id},
+        )
+    status = store.knowledge_index.status(kb_id=kb_id)
+    return {
+        "query": request.query,
+        "available": status.available,
+        "indexed": status.indexed,
+        "reason": status.reason,
+        "exhibition_id": record.get("exhibition_id", exhibition_id),
+        "knowledge_base_id": record.get("knowledge_base_id", kb_id),
+        "namespace_id": record.get("namespace_id", namespace_id),
+        "results": [
+            {
+                "document_id": result.doc_id,
+                "content": result.text,
+                "score": result.score,
+            }
+            for result in results
+        ],
+        "trace_id": trace_id,
+    }
 
 
 @router.get(

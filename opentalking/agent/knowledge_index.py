@@ -426,6 +426,35 @@ def default_knowledge_index(knowledge_root: str | Path) -> KnowledgeIndex:
     from opentalking.core.config import get_settings
 
     settings = get_settings()
+    if str(getattr(settings, "agent_rag_provider", "lightrag") or "").strip().lower() == "dify":
+        from opentalking.agent.dify_index import DifyKnowledgeIndex
+
+        return DifyKnowledgeIndex(
+            root=knowledge_root,
+            base_url=str(getattr(settings, "agent_dify_base_url", "") or "").strip(),
+            api_key=str(getattr(settings, "agent_dify_api_key", "") or "").strip(),
+            dataset_id=str(getattr(settings, "agent_dify_dataset_id", "") or "").strip(),
+            dataset_map=str(getattr(settings, "agent_dify_dataset_map", "") or "").strip(),
+            default_knowledge_base_id=str(
+                getattr(settings, "agent_dify_knowledge_base_id", "") or ""
+            ).strip(),
+            default_exhibition_id=str(
+                getattr(settings, "agent_dify_default_exhibition_id", "current") or "current"
+            ).strip(),
+            default_namespace_id=str(
+                getattr(settings, "agent_dify_default_namespace_id", "default") or "default"
+            ).strip(),
+            registry=str(
+                getattr(settings, "agent_dify_knowledge_base_registry", "") or ""
+            ).strip(),
+            registry_path=str(getattr(settings, "agent_dify_registry_path", "") or "").strip()
+            or None,
+            timeout_sec=float(getattr(settings, "agent_dify_timeout_sec", 15.0) or 15.0),
+            search_method=str(
+                getattr(settings, "agent_dify_search_method", "hybrid_search") or "hybrid_search"
+            ),
+            score_threshold=float(getattr(settings, "agent_dify_score_threshold", 0.0) or 0.0),
+        )
     root = Path(
         str(getattr(settings, "agent_lightrag_root", "") or "").strip()
         or (Path(knowledge_root) / "_lightrag")

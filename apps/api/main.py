@@ -13,7 +13,7 @@ from apps.api.admin import AdminStore
 from apps.api.admin.middleware import AdminTraceMiddleware
 from apps.api.admin.routes import public_router as admin_public_router
 from apps.api.admin.routes import router as admin_router
-from apps.api.routes import agent, avatars, events, exports, health, memory, models, personas, qa, runtime_config, scene_assets, sessions, tts_preview, video_clone, video_creation, voices
+from apps.api.routes import agent, avatars, events, exports, health, knowledge_proxy, memory, models, personas, qa, runtime_config, scene_assets, sessions, tts_preview, video_clone, video_creation, voices
 from opentalking.voice.store import init_voice_store
 
 
@@ -58,6 +58,9 @@ def create_app() -> FastAPI:
     app.include_router(video_clone.router)
     app.include_router(video_creation.router)
     app.include_router(voices.router)
+    # Register specific knowledge proxy routes before the generic Admin
+    # collection routes (which also match /api/v1/admin/knowledge/{resource}).
+    app.include_router(knowledge_proxy.router)
     app.include_router(admin_router)
     app.include_router(admin_public_router)
     return app
