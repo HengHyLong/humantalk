@@ -41,6 +41,7 @@ type DigitalHumanDisplayProps = {
   onSpeakAudioStreamResult?: (payload: { text: string }) => void | Promise<void>;
   onSpeakAudioStreamError?: (message: string) => void;
   streamingAsrSessionId?: string | null;
+  deferSpeak?: boolean;
   onNotify?: (message: string, tone?: "info" | "success" | "error") => void;
   ttsProvider?: TtsProviderExtended;
   sttProvider?: string;
@@ -79,6 +80,7 @@ export function DigitalHumanDisplay({
   onSpeakAudioStreamResult,
   onSpeakAudioStreamError,
   streamingAsrSessionId = null,
+  deferSpeak = false,
   onNotify,
   ttsProvider = "edge",
   sttProvider = "",
@@ -156,7 +158,7 @@ export function DigitalHumanDisplay({
           <div className="digital-display-orbit digital-display-orbit-one" aria-hidden />
           <div className="digital-display-orbit digital-display-orbit-two" aria-hidden />
 
-          <aside className="digital-display-languages" aria-label="语言选择">
+          <aside className="digital-display-languages" aria-label={english ? "Language selection" : "语言选择"}>
             {languages.map((option) => (
               <button
                 key={option.value}
@@ -170,7 +172,7 @@ export function DigitalHumanDisplay({
             ))}
           </aside>
 
-          <section className="digital-display-chat-panel" aria-label="实时对话">
+          <section className="digital-display-chat-panel" aria-label={english ? "Live conversation" : "实时对话"}>
             <div className="digital-display-chat-heading">
               <span>{english ? "LIVE CONVERSATION" : "实时对话"}</span>
               <span className="digital-display-chat-state">
@@ -184,13 +186,13 @@ export function DigitalHumanDisplay({
                 <div className="digital-display-chat-notice" role="status">{exhibitionConfigNotice}</div>
               ) : null}
               {shoppingRegistration ? (
-                <article className="digital-display-registration-card" role="dialog" aria-label="登记二维码">
-                  <button type="button" onClick={onCloseShoppingRegistration} aria-label="关闭登记二维码">×</button>
-                  <img src={shoppingRegistration.qrDataUrl} alt={`${shoppingRegistration.title}登记二维码`} />
+                <article className="digital-display-registration-card" role="dialog" aria-label={english ? "Registration QR code" : "登记二维码"}>
+                  <button type="button" onClick={onCloseShoppingRegistration} aria-label={english ? "Close registration QR code" : "关闭登记二维码"}>×</button>
+                  <img src={shoppingRegistration.qrDataUrl} alt={english ? `${shoppingRegistration.title} registration QR code` : `${shoppingRegistration.title}登记二维码`} />
                   <div>
                     <strong>{shoppingRegistration.title}</strong>
-                    <p>请使用手机扫码登记，提交后信息将同步至线索运营。</p>
-                    <a href={shoppingRegistration.url} target="_blank" rel="noreferrer">无法扫码时打开登记页</a>
+                    <p>{english ? "Scan with your phone to register. Your submission will be added to lead management." : "请使用手机扫码登记，提交后信息将同步至线索运营。"}</p>
+                    <a href={shoppingRegistration.url} target="_blank" rel="noreferrer">{english ? "Open the registration page" : "无法扫码时打开登记页"}</a>
                   </div>
                 </article>
               ) : null}
@@ -199,22 +201,24 @@ export function DigitalHumanDisplay({
                   {navigationResult.image_url ? (
                     <img
                       src={navigationImageUrl(navigationResult.image_url)}
-                      alt={navigationResult.title || "导航示意图"}
+                      alt={navigationResult.title || (english ? "Navigation map" : "导航示意图")}
                       loading="lazy"
                       onError={(event) => { event.currentTarget.style.display = "none"; }}
                     />
                   ) : null}
                   <div className="digital-display-navigation-copy">
-                    <strong>{navigationResult.title || "导航指引"}</strong>
+                    <strong>{navigationResult.title || (english ? "Navigation directions" : "导航指引")}</strong>
                     <p className="digital-display-navigation-summary">
                       {navigationResult.subtitle_text || navigationResult.spoken_text}
                     </p>
                     {navigationResult.route?.from || navigationResult.route?.to ? (
                       <p className="digital-display-navigation-route">
-                        {navigationResult.route.from || "当前位置"}
+                        {navigationResult.route.from || (english ? "Current location" : "当前位置")}
                         {navigationResult.route.to ? ` → ${navigationResult.route.to}` : ""}
                         {navigationResult.route.estimated_minutes != null
-                          ? ` · 约 ${navigationResult.route.estimated_minutes} 分钟`
+                          ? english
+                            ? ` · About ${navigationResult.route.estimated_minutes} min`
+                            : ` · 约 ${navigationResult.route.estimated_minutes} 分钟`
                           : ""}
                       </p>
                     ) : null}
@@ -248,7 +252,7 @@ export function DigitalHumanDisplay({
               </div>
             </div>
 
-            <div className="digital-display-chat-suggestions" aria-label="常见问题">
+            <div className="digital-display-chat-suggestions" aria-label={english ? "Suggested questions" : "常见问题"}>
               {suggestions.map((suggestion) => (
                 <button key={suggestion} type="button" onClick={() => live && onSend(suggestion)} disabled={!live}>
                   {suggestion}
@@ -265,6 +269,7 @@ export function DigitalHumanDisplay({
                   onSpeakAudioStreamResult={onSpeakAudioStreamResult}
                   onSpeakAudioStreamError={onSpeakAudioStreamError}
                   streamingAsrSessionId={streamingAsrSessionId}
+                  deferSpeak={deferSpeak}
                   onInterrupt={onInterrupt}
                   isSpeaking={isSpeaking}
                   disabled={!live}
@@ -307,28 +312,30 @@ export function DigitalHumanDisplay({
           </section>
 
           {navigationResult || visibleMessages.some((message) => message.relatedEntities?.length) ? (
-            <section className="digital-display-waist-panel" aria-label="展会内容展示">
+            <section className="digital-display-waist-panel" aria-label={english ? "Exhibition content" : "展会内容展示"}>
               {navigationResult ? (
                 <article className="digital-display-navigation-card">
                   {navigationResult.image_url ? (
                     <img
-                      src={navigationResult.image_url}
-                      alt={navigationResult.title || "导航示意图"}
+                      src={navigationImageUrl(navigationResult.image_url)}
+                      alt={navigationResult.title || (english ? "Navigation map" : "导航示意图")}
                       loading="lazy"
                       onError={(event) => { event.currentTarget.style.display = "none"; }}
                     />
                   ) : null}
                   <div className="digital-display-navigation-copy">
-                    <strong>{navigationResult.title || "导航指引"}</strong>
+                    <strong>{navigationResult.title || (english ? "Navigation directions" : "导航指引")}</strong>
                     <p className="digital-display-navigation-summary">
                       {navigationResult.subtitle_text || navigationResult.spoken_text}
                     </p>
                     {navigationResult.route?.from || navigationResult.route?.to ? (
                       <p className="digital-display-navigation-route">
-                        {navigationResult.route.from || "当前位置"}
+                        {navigationResult.route.from || (english ? "Current location" : "当前位置")}
                         {navigationResult.route.to ? ` → ${navigationResult.route.to}` : ""}
                         {navigationResult.route.estimated_minutes != null
-                          ? ` · 约 ${navigationResult.route.estimated_minutes} 分钟`
+                          ? english
+                            ? ` · About ${navigationResult.route.estimated_minutes} min`
+                            : ` · 约 ${navigationResult.route.estimated_minutes} 分钟`
                           : ""}
                       </p>
                     ) : null}
@@ -356,20 +363,20 @@ export function DigitalHumanDisplay({
 
           {!live && !busy ? (
             <div className="digital-display-start-card">
-              <p className="digital-display-eyebrow">四川博览集团数字人 · 实时推流</p>
-              <h1>{busy ? "数字人正在准备中" : connection === "error" ? "推流暂时未连接" : "欢迎来到智能展厅"}</h1>
+              <p className="digital-display-eyebrow">{english ? "Sichuan Expo Group Digital Human · Live" : "四川博览集团数字人 · 实时推流"}</p>
+              <h1>{busy ? (english ? "Preparing the digital human" : "数字人正在准备中") : connection === "error" ? (english ? "Live connection unavailable" : "推流暂时未连接") : (english ? "Welcome to the smart exhibition hall" : "欢迎来到智能展厅")}</h1>
               <p>
                 {busy
                   ? queueInfo?.position
-                    ? `当前排队第 ${queueInfo.position} 位，请稍候。`
-                    : "正在建立 WebRTC 低延迟视频通道。"
-                  : "连接四川博览集团数字人视频推流，开始实时问答与展览导览。"}
+                    ? english ? `You are number ${queueInfo.position} in the queue. Please wait.` : `当前排队第 ${queueInfo.position} 位，请稍候。`
+                    : english ? "Establishing a low-latency WebRTC video channel." : "正在建立 WebRTC 低延迟视频通道。"
+                  : english ? "Connect to start real-time Q&A and exhibition navigation." : "连接四川博览集团数字人视频推流，开始实时问答与展览导览。"}
               </p>
               <button type="button" className="digital-display-start-button" onClick={onStart} disabled={busy}>
-                {busy ? "连接中..." : connection === "error" ? "重新连接" : "开始体验"}
+                {busy ? (english ? "Connecting..." : "连接中...") : connection === "error" ? (english ? "Reconnect" : "重新连接") : (english ? "Start" : "开始体验")}
               </button>
               <div className="digital-display-start-meta">
-                <span>{avatar?.name ?? "默认数字人"}</span>
+                <span>{avatar?.name ?? (english ? "Default digital human" : "默认数字人")}</span>
                 <span>{modelLabel}</span>
               </div>
             </div>
@@ -378,8 +385,8 @@ export function DigitalHumanDisplay({
           {busy ? (
             <div className="digital-display-loading" role="status" aria-live="polite">
               <span className="digital-display-loader" aria-hidden />
-              <strong>正在加载数字人</strong>
-              <span>{queueInfo?.position ? `当前排队第 ${queueInfo.position} 位，请稍候` : "正在建立 WebRTC 视频通道"}</span>
+              <strong>{english ? "Loading digital human" : "正在加载数字人"}</strong>
+              <span>{queueInfo?.position ? (english ? `Queue position: ${queueInfo.position}` : `当前排队第 ${queueInfo.position} 位，请稍候`) : (english ? "Establishing WebRTC video channel" : "正在建立 WebRTC 视频通道")}</span>
               <div className="digital-display-loading-track" aria-hidden><i /></div>
             </div>
           ) : null}

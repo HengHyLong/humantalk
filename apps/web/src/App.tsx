@@ -3482,9 +3482,13 @@ export default function App() {
           queueInfo={queueInfo}
           onStart={() => void handleStart()}
           onSend={handleSend}
-          onInterrupt={handleInterrupt}
-          onSpeakAudio={handleRealtimeVoiceAudio}
-          voiceIntent={lastVoiceIntent}
+           onInterrupt={handleInterrupt}
+           onSpeakAudio={handleRealtimeVoiceAudio}
+           onSpeakAudioStreamResult={exhibitionVoiceConfig?.supports_deferred_speak ? handleSpeakAudioStreamResult : undefined}
+           onSpeakAudioStreamError={exhibitionVoiceConfig?.supports_deferred_speak ? handleSpeakAudioStreamError : undefined}
+           streamingAsrSessionId={exhibitionVoiceConfig?.supports_deferred_speak ? sessionId : null}
+           deferSpeak={Boolean(exhibitionVoiceConfig?.supports_deferred_speak)}
+           voiceIntent={lastVoiceIntent}
           navigationResult={navigationResult}
           shoppingRegistration={shoppingRegistration}
           onCloseShoppingRegistration={() => setShoppingRegistration(null)}
