@@ -571,6 +571,7 @@ async def handle_worker_task(
         enqueue_value = (
             float(enqueue_unix) if isinstance(enqueue_unix, (int, float)) else None
         )
+        knowledge_context = str(task.get("knowledge_context") or "").strip() or None
         create_chat_task = getattr(runner, "create_chat_task", None)
         if task.get("direct"):
             runner.create_speak_task(
@@ -581,21 +582,25 @@ async def handle_worker_task(
                 enqueue_unix=enqueue_value,
             )
         elif callable(create_chat_task):
-            create_chat_task(
-                text,
-                tts_voice=tts_voice or None,
-                tts_provider=tts_provider or None,
-                tts_model=tts_model or None,
-                enqueue_unix=enqueue_value,
-            )
+            chat_kwargs = {
+                "tts_voice": tts_voice or None,
+                "tts_provider": tts_provider or None,
+                "tts_model": tts_model or None,
+                "enqueue_unix": enqueue_value,
+            }
+            if knowledge_context:
+                chat_kwargs["knowledge_context"] = knowledge_context
+            create_chat_task(text, **chat_kwargs)
         else:
-            runner.create_speak_task(
-                text,
-                tts_voice=tts_voice or None,
-                tts_provider=tts_provider or None,
-                tts_model=tts_model or None,
-                enqueue_unix=enqueue_value,
-            )
+            speak_kwargs = {
+                "tts_voice": tts_voice or None,
+                "tts_provider": tts_provider or None,
+                "tts_model": tts_model or None,
+                "enqueue_unix": enqueue_value,
+            }
+            if knowledge_context:
+                speak_kwargs["knowledge_context"] = knowledge_context
+            runner.create_speak_task(text, **speak_kwargs)
     elif cmd == "update_agent_knowledge_bases":
         _update_runner_agent_knowledge_bases(runner, _task_knowledge_base_ids(task))
     elif cmd == "speak_flashtalk_audio":

@@ -13,7 +13,7 @@ from apps.api.admin import AdminStore
 from apps.api.admin.middleware import AdminTraceMiddleware
 from apps.api.admin.routes import public_router as admin_public_router
 from apps.api.admin.routes import router as admin_router
-from apps.api.routes import agent, avatars, events, exports, health, memory, models, personas, runtime_config, scene_assets, sessions, tts_preview, video_clone, video_creation, voices
+from apps.api.routes import agent, avatars, events, exports, health, memory, models, personas, qa, runtime_config, scene_assets, sessions, tts_preview, video_clone, video_creation, voices
 from opentalking.voice.store import init_voice_store
 
 
@@ -46,6 +46,7 @@ def create_app() -> FastAPI:
     app.include_router(avatars.router)
     app.include_router(memory.router)
     app.include_router(sessions.router)
+    app.include_router(qa.router)
     app.include_router(agent.router)
     app.include_router(agent.router, prefix="/api")
     app.include_router(personas.router)

@@ -39,6 +39,7 @@ import {
   listExhibitions,
   listSceneBackgrounds,
   listSceneCompositions,
+  queryExhibitionQa,
   queryExhibitionNavigation,
   transcribeSessionAudio,
   loadRuntimeConfig,
@@ -49,6 +50,7 @@ import {
   type CreateSessionResponse,
   type ExhibitionVoiceConfig,
   type ExhibitionSummary,
+  type ExhibitionQaQueryResponse,
   type NavigationResult,
   type KnowledgeBaseSummary,
   type KnowledgeBasesResponse,
@@ -755,7 +757,7 @@ function matchExhibitionEntities(text: string, entities: ExhibitionEntityCard[])
     .map((candidate) => candidate.entity);
 }
 
-function buildEntitySpeech(entities: ExhibitionEntityCard[]): string {
+export function buildEntitySpeech(entities: ExhibitionEntityCard[]): string {
   return entities
     .map((entity) => {
       const details = entity.details
@@ -2747,15 +2749,6 @@ export default function App() {
     });
     setLastVoiceIntent(match.intent);
 
-    if (match.intent !== "navigation" && relatedEntities.length > 0) {
-      const entitySpeech = buildEntitySpeech(relatedEntities);
-      if (entitySpeech) {
-        setNavigationResult(null);
-        enqueueSpeech(entitySpeech, text, relatedEntities, true);
-        return;
-      }
-    }
-
     if (match.intent === "navigation") {
       try {
         const result = await queryExhibitionNavigation(configuredExhibitionId, {
@@ -2774,8 +2767,72 @@ export default function App() {
     } else {
       setNavigationResult(null);
     }
-    enqueueSpeech(text, text, relatedEntities);
-  }, [configuredExhibitionId, enqueueSpeech, exhibitionEntities, exhibitionVoiceConfig, notify, sessionId]);
+
+    const turnId = `turn-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const pendingId = makeId();
+    const activeAssistantId = streamingAssistantMsgIdRef.current;
+    const previousPendingId = pendingAssistantMsgIdRef.current;
+    pendingAssistantMsgIdRef.current = pendingId;
+    setIsSpeaking(true);
+    setMessages((prev) => [
+      ...prev.filter((message) => message.id !== previousPendingId && message.id !== activeAssistantId),
+      { id: makeId(), role: "user", text, timestamp: Date.now() },
+      {
+        id: pendingId,
+        role: "assistant",
+        text: "正在检索展会知识...",
+        timestamp: Date.now(),
+        relatedEntities,
+        qa: { turnId },
+      },
+    ]);
+
+    try {
+      const selectedTtsVoice = resolveSelectableTtsVoice(ttsProvider, qwenVoice, bailianVoices);
+      const result: ExhibitionQaQueryResponse = await queryExhibitionQa(configuredExhibitionId, {
+        session_id: sessionId,
+        turn_id: turnId,
+        question: text,
+        locale: "zh-CN",
+        voice:
+          isEdgeTts(ttsProvider)
+            ? edgeVoice
+            : !hasSelectableTtsVoice(ttsProvider)
+              ? undefined
+              : selectedTtsVoice || undefined,
+        tts_provider: ttsProvider,
+        tts_model: ttsModelSelectable(ttsProvider) ? qwenModel : undefined,
+      });
+      setMessages((prev) => prev.map((message) => (
+        message.id === pendingId
+          ? {
+              ...message,
+              text: result.speak_mode === "agent" ? "正在根据知识库生成答案..." : "正在合成语音和口型...",
+              qa: {
+                turnId: result.turn_id,
+                traceId: result.trace_id,
+                matchType: result.match_type,
+                sources: result.sources,
+              },
+            }
+          : message
+      )));
+      if (result.match_type === "retrieval_error") {
+        notify(`知识检索暂不可用（Trace：${result.trace_id}）`, "error");
+      } else if (result.match_type === "clarification") {
+        notify("问题信息不足，请根据数字人的追问补充具体对象。", "info");
+      }
+    } catch (error) {
+      console.warn("exhibition Q&A query failed", error);
+      const detail = apiErrorMessage(error, "问答服务暂不可用，请稍后重试。");
+      pendingAssistantMsgIdRef.current = null;
+      setIsSpeaking(false);
+      setMessages((prev) => prev.map((message) => (
+        message.id === pendingId ? { ...message, text: `问答失败：${detail}` } : message
+      )));
+      notify(`问答失败：${detail}`, "error");
+    }
+  }, [bailianVoices, configuredExhibitionId, edgeVoice, enqueueSpeech, exhibitionEntities, exhibitionVoiceConfig, notify, qwenModel, qwenVoice, sessionId, ttsProvider]);
 
   const handleSend = useCallback((text: string) => {
     void routeRecognizedText(text);

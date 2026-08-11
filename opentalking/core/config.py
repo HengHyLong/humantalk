@@ -472,6 +472,17 @@ class Settings(BaseSettings):
     agent_lightrag_language: str = Field(default="Chinese")
     agent_lightrag_chunk_fallback_enabled: bool = Field(default=False)
 
+    # Exhibition Q&A: published QA -> Dify/local retrieval -> Agent response.
+    dify_base_url: str = Field(default="https://api.dify.ai/v1")
+    dify_api_key: str = Field(default="")
+    dify_default_dataset_id: str = Field(default="")
+    dify_dataset_map: str = Field(default="{}")
+    dify_timeout_sec: float = Field(default=12.0)
+    qa_fuzzy_threshold: float = Field(default=0.74)
+    qa_retrieval_top_k: int = Field(default=3)
+    qa_retrieval_score_threshold: float = Field(default=0.45)
+    qa_human_channel: str = Field(default="请前往现场服务台或咨询工作人员获取帮助。")
+
     # ---- Character memory provider ----
     memory_provider: str = "mem0"
     memory_enabled: bool = False

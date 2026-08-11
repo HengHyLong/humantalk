@@ -275,6 +275,9 @@ async def speak(
     tts_provider: str | None = None,
     tts_model: str | None = None,
     direct: bool = False,
+    knowledge_context: str | None = None,
+    turn_id: str | None = None,
+    trace_id: str | None = None,
 ) -> None:
     # 新用户输入前先打断，避免上一条仍在推理/播报时排队等到结束才生效
     await interrupt(r, sid)
@@ -294,6 +297,12 @@ async def speak(
         task["tts_model"] = tts_model.strip()
     if direct:
         task["direct"] = True
+    if knowledge_context:
+        task["knowledge_context"] = knowledge_context
+    if turn_id:
+        task["turn_id"] = turn_id
+    if trace_id:
+        task["trace_id"] = trace_id
     await _push_task(r, task)
 
 

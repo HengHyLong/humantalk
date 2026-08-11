@@ -1835,9 +1835,12 @@ class FlashTalkRunner:
         tts_provider: str | None = None,
         tts_model: str | None = None,
         enqueue_unix: float | None = None,
+        knowledge_context: str | None = None,
     ) -> asyncio.Task[None]:
         task = asyncio.create_task(
-            self._run_speak_task(text, tts_voice, tts_provider, tts_model, enqueue_unix)
+            self._run_speak_task(
+                text, tts_voice, tts_provider, tts_model, enqueue_unix, knowledge_context
+            )
         )
         self.speech_tasks.add(task)
         task.add_done_callback(self.speech_tasks.discard)
@@ -1904,6 +1907,7 @@ class FlashTalkRunner:
         tts_provider: str | None = None,
         tts_model: str | None = None,
         enqueue_unix: float | None = None,
+        knowledge_context: str | None = None,
     ) -> None:
         log.info("speak start: %s (session=%s)", text[:30], self.session_id)
         try:
@@ -1913,6 +1917,7 @@ class FlashTalkRunner:
                 tts_provider=tts_provider,
                 tts_model=tts_model,
                 enqueue_unix=enqueue_unix,
+                knowledge_context=knowledge_context,
             )
             log.info("speak done: session=%s", self.session_id)
         except asyncio.CancelledError:
@@ -1944,6 +1949,7 @@ class FlashTalkRunner:
         tts_provider: str | None = None,
         tts_model: str | None = None,
         enqueue_unix: float | None = None,
+        knowledge_context: str | None = None,
     ) -> None:
         """Full pipeline: user text → LLM → TTS → FlashTalk → WebRTC.
 
@@ -1985,6 +1991,10 @@ class FlashTalkRunner:
             )
             self.conversation.add_user(text)
             agent_context = await self._build_agent_context(text)
+            if knowledge_context:
+                agent_context = "\n\n".join(
+                    item for item in (agent_context, knowledge_context.strip()) if item
+                )
 
             full_response = ""
             spoken_prefix = ""

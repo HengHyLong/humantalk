@@ -698,6 +698,7 @@ class SessionRunner:
         tts_provider: str | None = None,
         tts_model: str | None = None,
         enqueue_unix: float | None = None,
+        knowledge_context: str | None = None,
     ) -> asyncio.Task[None]:
         task = asyncio.create_task(
             self._run_chat_task(
@@ -706,6 +707,7 @@ class SessionRunner:
                 tts_provider=tts_provider,
                 tts_model=tts_model,
                 enqueue_unix=enqueue_unix,
+                knowledge_context=knowledge_context,
             )
         )
         self.speech_tasks.add(task)
@@ -719,6 +721,7 @@ class SessionRunner:
         tts_provider: str | None = None,
         tts_model: str | None = None,
         enqueue_unix: float | None = None,
+        knowledge_context: str | None = None,
     ) -> None:
         log.info("chat start: %s (session=%s)", prompt[:30], self.session_id)
         try:
@@ -728,6 +731,7 @@ class SessionRunner:
                 tts_provider=tts_provider,
                 tts_model=tts_model,
                 enqueue_unix=enqueue_unix,
+                knowledge_context=knowledge_context,
             )
             log.info("chat done: session=%s", self.session_id)
         except asyncio.CancelledError:
@@ -1756,6 +1760,7 @@ class SessionRunner:
         tts_provider: str | None = None,
         tts_model: str | None = None,
         enqueue_unix: float | None = None,
+        knowledge_context: str | None = None,
     ) -> None:
         prompt_text = strip_emoji(prompt or "").strip()
         if not prompt_text or self._closed:
@@ -1785,6 +1790,10 @@ class SessionRunner:
                 )
                 conversation.add_user(prompt_text)
                 agent_context = await self._build_agent_context(prompt_text)
+                if knowledge_context:
+                    agent_context = "\n\n".join(
+                        item for item in (agent_context, knowledge_context.strip()) if item
+                    )
                 base_messages = list(conversation.get_messages())
                 if memory_prompt:
                     for idx in range(len(base_messages) - 1, -1, -1):
