@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -14,6 +14,7 @@ class CreateSessionRequest(BaseModel):
     tts_voice: str | None = None
     tts_model: str | None = None
     llm_system_prompt: str | None = None
+    language: Literal["zh-CN", "en-US"] = "zh-CN"
     wav2lip_postprocess_mode: str | None = None
     fasterliveportrait_config: dict[str, Any] | None = None
     user_id: str | None = None
@@ -67,6 +68,7 @@ class SpeakRequest(BaseModel):
         default=False,
         description="直接使用 TTS 播报文本，不经过对话大模型。",
     )
+    language: Literal["zh-CN", "en-US"] = "zh-CN"
     voice: str | None = Field(
         default=None,
         description=(

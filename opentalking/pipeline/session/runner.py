@@ -270,6 +270,7 @@ class SessionRunner:
         llm_api_key: str = "",
         llm_model: str = "qwen-turbo",
         llm_system_prompt: str = "",
+        language: str = "zh-CN",
         wav2lip_postprocess_mode: str | None = None,
         agent_user_id: str | None = None,
         persona_id: str | None = None,
@@ -303,6 +304,7 @@ class SessionRunner:
         self._llm_api_key = llm_api_key
         self._llm_model = llm_model
         self._llm_system_prompt = llm_system_prompt or _SETTINGS.llm_system_prompt
+        self._conversation_language = "en-US" if language == "en-US" else "zh-CN"
         self.agent_config = AgentSessionConfig(
             user_id=agent_user_id,
             agent_enabled=agent_enabled,
@@ -697,6 +699,7 @@ class SessionRunner:
         *,
         tts_provider: str | None = None,
         tts_model: str | None = None,
+        language: str | None = None,
         enqueue_unix: float | None = None,
         knowledge_context: str | None = None,
     ) -> asyncio.Task[None]:
@@ -706,6 +709,7 @@ class SessionRunner:
                 tts_voice=tts_voice,
                 tts_provider=tts_provider,
                 tts_model=tts_model,
+                language=language,
                 enqueue_unix=enqueue_unix,
                 knowledge_context=knowledge_context,
             )
@@ -720,6 +724,7 @@ class SessionRunner:
         tts_voice: str | None = None,
         tts_provider: str | None = None,
         tts_model: str | None = None,
+        language: str | None = None,
         enqueue_unix: float | None = None,
         knowledge_context: str | None = None,
     ) -> None:
@@ -730,6 +735,7 @@ class SessionRunner:
                 tts_voice=tts_voice,
                 tts_provider=tts_provider,
                 tts_model=tts_model,
+                language=language,
                 enqueue_unix=enqueue_unix,
                 knowledge_context=knowledge_context,
             )
@@ -1759,6 +1765,7 @@ class SessionRunner:
         *,
         tts_provider: str | None = None,
         tts_model: str | None = None,
+        language: str | None = None,
         enqueue_unix: float | None = None,
         knowledge_context: str | None = None,
     ) -> None:
@@ -1804,6 +1811,11 @@ class SessionRunner:
                     base_messages,
                     agent_context,
                 )
+                current_language = "en-US" if language == "en-US" else ("zh-CN" if language == "zh-CN" else self._conversation_language)
+                self._conversation_language = current_language
+                language_message = {"role": "system", "content": f"[conversation_language={current_language}]"}
+                insert_at = 1 if llm_messages and llm_messages[0].get("role") == "system" else 0
+                llm_messages.insert(insert_at, language_message)
 
                 self._interrupt.clear()
                 self._speech_video_ready.clear()

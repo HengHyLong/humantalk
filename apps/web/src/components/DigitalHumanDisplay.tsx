@@ -7,11 +7,18 @@ import type {
   SceneComposition,
   VoiceIntent,
 } from "../lib/api";
+import { buildApiUrl } from "../lib/api";
+import { isEnglishConversation, type ConversationLanguage } from "../lib/conversationLanguage";
 import type { TtsProviderExtended } from "../constants/ttsBailian";
 import type { ConnectionStatus, Message } from "../types";
 import { ChatInput } from "./ChatInput";
 import { ExhibitionEntityCard } from "./ExhibitionEntityCard";
 import { SceneStage } from "./SceneStage";
+
+function navigationImageUrl(value: string): string {
+  const url = value.trim();
+  return url.startsWith("/scene-assets/") ? buildApiUrl(url) : url;
+}
 
 type DigitalHumanDisplayProps = {
   videoRef: RefObject<HTMLVideoElement>;
@@ -41,12 +48,15 @@ type DigitalHumanDisplayProps = {
   qwenModel?: string;
   qwenVoice?: string;
   navigationResult?: NavigationResult | null;
+  shoppingRegistration?: { title: string; url: string; qrDataUrl: string } | null;
+  onCloseShoppingRegistration?: () => void;
   voiceIntent?: VoiceIntent | null;
   exhibitionConfigNotice?: string | null;
+  language: ConversationLanguage;
+  onLanguageChange: (language: ConversationLanguage) => void;
 };
 
-const languages = ["中文", "English"];
-const suggestions = ["展馆导航", "预约洽谈", "会议服务", "关于展览"];
+const languages: Array<{ value: ConversationLanguage; label: string }> = [{ value: "zh-CN", label: "中文" }, { value: "en-US", label: "English" }];
 
 export function DigitalHumanDisplay({
   videoRef,
@@ -76,17 +86,22 @@ export function DigitalHumanDisplay({
   qwenModel = "",
   qwenVoice = "",
   navigationResult = null,
+  shoppingRegistration = null,
+  onCloseShoppingRegistration,
   voiceIntent = null,
   exhibitionConfigNotice = null,
+  language,
+  onLanguageChange,
 }: DigitalHumanDisplayProps) {
-  const [activeLanguage, setActiveLanguage] = useState("中文");
   const [draft, setDraft] = useState("");
   const [inputMode, setInputMode] = useState<"voice" | "keyboard">("voice");
   const chatFeedRef = useRef<HTMLDivElement>(null);
   const chatFeedContentRef = useRef<HTMLDivElement>(null);
   const live = connection === "live" || connection === "expiring";
   const busy = connection === "connecting" || connection === "queued";
-  const displaySubtitle = subtitle?.trim() || (messages.length === 0 ? "你可以问我以下问题哦" : "");
+  const english = isEnglishConversation(language);
+  const suggestions = english ? ["Venue navigation", "Book a meeting", "Conference services", "About the exhibition"] : ["展馆导航", "预约洽谈", "会议服务", "关于展览"];
+  const displaySubtitle = subtitle?.trim() || (messages.length === 0 ? (english ? "You can ask me the following questions" : "你可以问我以下问题哦") : "");
   const visibleMessages = messages.slice(-5);
   const latestVisibleMessage = visibleMessages[visibleMessages.length - 1];
   const showLiveSubtitle = Boolean(
@@ -101,7 +116,7 @@ export function DigitalHumanDisplay({
       feed.scrollTo({ top: feed.scrollHeight, behavior: "smooth" });
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [messages, navigationResult, subtitle]);
+  }, [messages, navigationResult, shoppingRegistration, subtitle]);
 
   useEffect(() => {
     const feed = chatFeedRef.current;
@@ -142,24 +157,25 @@ export function DigitalHumanDisplay({
           <div className="digital-display-orbit digital-display-orbit-two" aria-hidden />
 
           <aside className="digital-display-languages" aria-label="语言选择">
-            {languages.map((language) => (
+            {languages.map((option) => (
               <button
-                key={language}
+                key={option.value}
                 type="button"
-                onClick={() => setActiveLanguage(language)}
-                className={activeLanguage === language ? "is-active" : ""}
+                onClick={() => onLanguageChange(option.value)}
+                className={language === option.value ? "is-active" : ""}
+                aria-pressed={language === option.value}
               >
-                {language}
+                {option.label}
               </button>
             ))}
           </aside>
 
           <section className="digital-display-chat-panel" aria-label="实时对话">
             <div className="digital-display-chat-heading">
-              <span>{activeLanguage === "中文" ? "实时对话" : "LIVE CONVERSATION"}</span>
+              <span>{english ? "LIVE CONVERSATION" : "实时对话"}</span>
               <span className="digital-display-chat-state">
-                {voiceIntent === "navigation" ? "导航" : voiceIntent === "exhibition_content" ? "展品问答" : ""}
-                {isSpeaking ? " · 正在播报" : ""}
+                {voiceIntent === "navigation" ? (english ? "Navigation" : "导航") : voiceIntent === "shopping" ? (english ? "Shopping assistant" : "虚拟导购") : voiceIntent === "exhibition_content" ? (english ? "Exhibition Q&A" : "展品问答") : ""}
+                {isSpeaking ? (english ? " · Speaking" : " · 正在播报") : ""}
               </span>
             </div>
             <div ref={chatFeedRef} className="digital-display-chat-feed" aria-live="polite">
@@ -167,20 +183,65 @@ export function DigitalHumanDisplay({
               {exhibitionConfigNotice ? (
                 <div className="digital-display-chat-notice" role="status">{exhibitionConfigNotice}</div>
               ) : null}
+              {shoppingRegistration ? (
+                <article className="digital-display-registration-card" role="dialog" aria-label="登记二维码">
+                  <button type="button" onClick={onCloseShoppingRegistration} aria-label="关闭登记二维码">×</button>
+                  <img src={shoppingRegistration.qrDataUrl} alt={`${shoppingRegistration.title}登记二维码`} />
+                  <div>
+                    <strong>{shoppingRegistration.title}</strong>
+                    <p>请使用手机扫码登记，提交后信息将同步至线索运营。</p>
+                    <a href={shoppingRegistration.url} target="_blank" rel="noreferrer">无法扫码时打开登记页</a>
+                  </div>
+                </article>
+              ) : null}
+              {navigationResult ? (
+                <article className="digital-display-navigation-card">
+                  {navigationResult.image_url ? (
+                    <img
+                      src={navigationImageUrl(navigationResult.image_url)}
+                      alt={navigationResult.title || "导航示意图"}
+                      loading="lazy"
+                      onError={(event) => { event.currentTarget.style.display = "none"; }}
+                    />
+                  ) : null}
+                  <div className="digital-display-navigation-copy">
+                    <strong>{navigationResult.title || "导航指引"}</strong>
+                    <p className="digital-display-navigation-summary">
+                      {navigationResult.subtitle_text || navigationResult.spoken_text}
+                    </p>
+                    {navigationResult.route?.from || navigationResult.route?.to ? (
+                      <p className="digital-display-navigation-route">
+                        {navigationResult.route.from || "当前位置"}
+                        {navigationResult.route.to ? ` → ${navigationResult.route.to}` : ""}
+                        {navigationResult.route.estimated_minutes != null
+                          ? ` · 约 ${navigationResult.route.estimated_minutes} 分钟`
+                          : ""}
+                      </p>
+                    ) : null}
+                    {navigationResult.route?.directions?.length ? (
+                      <ol>
+                        {navigationResult.route.directions.map((direction, index) => (
+                          <li key={`${index}-${direction}`}>{direction}</li>
+                        ))}
+                      </ol>
+                    ) : null}
+                  </div>
+                </article>
+              ) : null}
               {visibleMessages.length === 0 && displaySubtitle ? (
                 <div className="digital-display-chat-empty">{displaySubtitle}</div>
               ) : null}
               {visibleMessages.map((message) => (
                 <div key={message.id} className={`digital-display-chat-line ${message.role === "user" ? "is-user" : "is-assistant"} ${message.relatedEntities?.length ? "has-entities" : ""}`}>
                   <div className="digital-display-chat-line-copy">
-                    <span className="digital-display-chat-role">{message.role === "user" ? "我" : "数字人"}</span>
-                    <p>{message.text || "正在准备回答…"}</p>
+                    <span className="digital-display-chat-role">{message.role === "user" ? (english ? "Me" : "我") : (english ? "Digital Human" : "数字人")}</span>
+                    <p>{message.text || (english ? "Preparing an answer…" : "正在准备回答…")}</p>
                   </div>
                 </div>
               ))}
               {showLiveSubtitle ? (
                 <div className="digital-display-chat-line is-assistant is-live-line">
-                  <span className="digital-display-chat-role">数字人</span>
+                  <span className="digital-display-chat-role">{english ? "Digital Human" : "数字人"}</span>
                   <p>{subtitle}</p>
                 </div>
               ) : null}
@@ -213,6 +274,7 @@ export function DigitalHumanDisplay({
                   edgeVoice={edgeVoice}
                   qwenModel={qwenModel}
                   qwenVoice={qwenVoice}
+                  language={language}
                 />
               ) : (
                 <>
@@ -222,14 +284,14 @@ export function DigitalHumanDisplay({
                     onKeyDown={(event) => {
                       if (event.key === "Enter" && !event.nativeEvent.isComposing) submit();
                     }}
-                    placeholder={live ? "请输入您想了解的内容" : "连接后即可开始提问"}
+                    placeholder={live ? (english ? "Type what you would like to know" : "请输入您想了解的内容") : (english ? "Connect to start asking questions" : "连接后即可开始提问")}
                     disabled={!live}
-                    aria-label="向数字人提问"
+                    aria-label={english ? "Ask the digital human" : "向数字人提问"}
                   />
                   {live && isSpeaking ? (
-                    <button type="button" className="digital-display-stop" onClick={onInterrupt}>打断</button>
+                    <button type="button" className="digital-display-stop" onClick={onInterrupt}>{english ? "Interrupt" : "打断"}</button>
                   ) : (
-                    <button type="button" className="digital-display-send" onClick={submit} disabled={!draft.trim() || !live}>发送</button>
+                    <button type="button" className="digital-display-send" onClick={submit} disabled={!draft.trim() || !live}>{english ? "Send" : "发送"}</button>
                   )}
                 </>
               )}
@@ -237,9 +299,9 @@ export function DigitalHumanDisplay({
                 type="button"
                 className="digital-display-mode-toggle"
                 onClick={() => setInputMode((mode) => mode === "voice" ? "keyboard" : "voice")}
-                aria-label={inputMode === "voice" ? "切换为键盘输入" : "切换为语音输入"}
+                aria-label={inputMode === "voice" ? (english ? "Switch to keyboard input" : "切换为键盘输入") : (english ? "Switch to voice input" : "切换为语音输入")}
               >
-                {inputMode === "voice" ? "键盘输入" : "语音输入"}
+                {inputMode === "voice" ? (english ? "Keyboard" : "键盘输入") : (english ? "Voice" : "语音输入")}
               </button>
             </div>
           </section>

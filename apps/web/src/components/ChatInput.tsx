@@ -10,6 +10,7 @@ import {
 import { getVoiceVadConfig } from "../config/voiceVad";
 import { isEdgeTts, type TtsProviderExtended } from "../constants/ttsBailian";
 import { buildWsUrl } from "../lib/api";
+import type { ConversationLanguage } from "../lib/conversationLanguage";
 
 /** 浏览器 AudioContext 采样率 → 16kHz PCM（与 DashScope 流式 STT 约定一致） */
 const TARGET_SR = 16000;
@@ -135,6 +136,7 @@ interface ChatInputProps {
   compact?: boolean;
   /** 流式 STT 后端是否支持识别完成后由前端决定是否 speak。 */
   deferSpeak?: boolean;
+  language?: ConversationLanguage;
 }
 
 export type ListeningState = "off" | "listening" | "recording" | "transcribing" | "processing" | "error";
@@ -197,6 +199,7 @@ export function ChatInput({
   qwenVoice = "",
   compact = false,
   deferSpeak = false,
+  language = "zh-CN",
 }: ChatInputProps) {
   const voiceCaptureEnabled = !!(
     onSpeakAudio ||
@@ -446,6 +449,7 @@ export function ChatInput({
               tts_model: !isEdgeTts(ttsProvider) ? qwenModel ?? "" : "",
               stt_provider: sttProvider,
               defer_speak: deferSpeak,
+              language,
             }),
           );
           if (PCM_PREROLL_HEAD_SILENCE_SAMPLES > 0) {
@@ -501,6 +505,7 @@ export function ChatInput({
       qwenModel,
       qwenVoice,
       deferSpeak,
+      language,
       sttProvider,
       streamingAsrSessionId,
       ttsProvider,

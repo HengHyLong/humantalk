@@ -1,4 +1,5 @@
 import type { ExhibitionEntityCard, MemoryItem, MemoryLibrary, MemoryTurn, WeChatImportCommitResult, WeChatImportJob } from "../types";
+import type { ConversationLanguage } from "./conversationLanguage";
 
 export const API_BASE = import.meta.env.VITE_API_BASE ?? "/api";
 
@@ -293,28 +294,68 @@ export type SceneComposition = {
   updated_at: string;
 };
 
-export type VoiceIntent = "navigation" | "exhibition_content";
+export type VoiceIntent = "navigation" | "exhibition_content" | "shopping";
+export type { ConversationLanguage } from "./conversationLanguage";
 
 export type ExhibitionVoiceConfig = {
   exhibition_id: string;
+  navigation_fuzzy_keywords?: string[];
   keywords: {
     navigation: string[];
     exhibition_content: string[];
   };
   supports_deferred_speak?: boolean;
+  wake_word: {
+    enabled: boolean;
+    words: string[];
+    active_window_seconds: number;
+  };
+  welcome: {
+    script_id: string;
+    text: string;
+  };
 };
 
 export type NavigationResult = {
+  language?: ConversationLanguage;
+  matched?: boolean;
+  route_id?: string;
+  matched_keyword?: string;
   title?: string;
   spoken_text: string;
   subtitle_text?: string;
   image_url?: string;
+  image_urls?: string[];
   route?: {
     from?: string;
     to?: string;
     directions?: string[];
     estimated_minutes?: number;
   };
+};
+
+export type ShoppingQueryResult = {
+  language?: ConversationLanguage;
+  matched: boolean;
+  strategy_id?: string;
+  matched_keyword?: string;
+  title?: string;
+  spoken_text?: string;
+  registration_prompt?: string;
+  confirmation_retry_prompt?: string;
+  confirm_keywords?: string[];
+  decline_keywords?: string[];
+  exhibit_ids?: string[];
+  related_entity_ids?: string[];
+};
+
+export type ShoppingRegistrationResult = {
+  language?: ConversationLanguage;
+  strategy_id: string;
+  exhibit_id: string;
+  title: string;
+  path: string;
+  spoken_text: string;
 };
 
 export type ExhibitionVoiceConfigResponse = Partial<ExhibitionVoiceConfig> & {
@@ -326,6 +367,11 @@ export type ExhibitionVoiceConfigResponse = Partial<ExhibitionVoiceConfig> & {
   bound_voice_model?: string | null;
   bound_stt_provider?: string | null;
   bound_stt_model?: string | null;
+  wakeWord?: {
+    enabled?: boolean;
+    words?: string[];
+    activeWindowSeconds?: number;
+  };
   keyword_groups?: {
     navigation?: string[];
     exhibition_content?: string[];
@@ -370,7 +416,7 @@ export async function getExhibitionVoiceConfig(exhibitionId?: string | null): Pr
 
 export async function queryExhibitionNavigation(
   exhibitionId: string | null | undefined,
-  input: { text: string; session_id: string },
+  input: { text: string; session_id: string; language: ConversationLanguage },
 ): Promise<NavigationQueryResponse> {
   const id = exhibitionId?.trim();
   const path = `/exhibitions/${encodeURIComponent(id || "current")}/navigation/query`;
@@ -426,6 +472,28 @@ export async function queryExhibitionQa(
   const id = exhibitionId?.trim();
   return apiPost<ExhibitionQaQueryResponse>(
     `/exhibitions/${encodeURIComponent(id || "current")}/qa/query`,
+    input,
+  );
+}
+
+export async function queryExhibitionShopping(
+  exhibitionId: string | null | undefined,
+  input: { text: string; session_id: string; language: ConversationLanguage },
+): Promise<ShoppingQueryResult> {
+  const id = exhibitionId?.trim();
+  return apiPost<ShoppingQueryResult>(
+    `/exhibitions/${encodeURIComponent(id || "current")}/shopping/query`,
+    input,
+  );
+}
+
+export async function createShoppingRegistration(
+  exhibitionId: string | null | undefined,
+  input: { strategy_id: string; session_id: string; confirmation_text: string; language: ConversationLanguage },
+): Promise<ShoppingRegistrationResult> {
+  const id = exhibitionId?.trim();
+  return apiPost<ShoppingRegistrationResult>(
+    `/exhibitions/${encodeURIComponent(id || "current")}/shopping/registration`,
     input,
   );
 }
@@ -667,6 +735,7 @@ export type CreateSessionRequest = {
   avatar_id?: string;
   model?: string;
   llm_system_prompt?: string;
+  language: ConversationLanguage;
   tts_provider: string;
   stt_provider: string;
   tts_voice?: string;

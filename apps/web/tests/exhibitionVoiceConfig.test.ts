@@ -37,3 +37,36 @@ test("unmatched questions default to exhibition content", () => {
     keyword: null,
   });
 });
+
+test("navigation intent tolerates one ASR character error in a configured alias", () => {
+  const config = normalizeExhibitionVoiceConfig({
+    exhibition_id: "demo",
+    keywords: { navigation: ["智造馆"], exhibition_content: [] },
+    navigation_fuzzy_keywords: ["智造馆"],
+  });
+
+  assert.deepEqual(matchVoiceIntent("请问智照馆怎么走？", config), {
+    intent: "navigation",
+    keyword: "智造馆",
+  });
+});
+
+test("generic navigation phrases are not fuzzily expanded", () => {
+  const config = normalizeExhibitionVoiceConfig({
+    exhibition_id: "demo",
+    keywords: { navigation: ["怎么走"], exhibition_content: [] },
+    navigation_fuzzy_keywords: [],
+  });
+
+  assert.equal(matchVoiceIntent("这个流程怎么做？", config).intent, "exhibition_content");
+});
+
+test("wake window uses the configured value", () => {
+  const config = normalizeExhibitionVoiceConfig({
+    exhibition_id: "demo",
+    wake_word: { enabled: true, words: ["你好小展"], active_window_seconds: 60 },
+  });
+
+  assert.equal(config.wake_word.active_window_seconds, 60);
+  assert.equal(normalizeExhibitionVoiceConfig({ wake_word: { enabled: true, words: ["你好小展"], active_window_seconds: 5 } }).wake_word.active_window_seconds, 30);
+});

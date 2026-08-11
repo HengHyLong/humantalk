@@ -253,6 +253,10 @@ export type Exhibitor = {
   phone: string;
   status: ExhibitorStatus;
   description: string;
+  introductionKeywords?: string[];
+  aliases?: string[];
+  fuzzyMatch?: boolean;
+  spokenText?: string;
   imageUrls?: string[];
   createdAt: string;
   updatedAt: string;
@@ -268,6 +272,10 @@ export type Exhibit = {
   category: string;
   modelNo: string;
   description: string;
+  introductionKeywords?: string[];
+  aliases?: string[];
+  fuzzyMatch?: boolean;
+  spokenText?: string;
   imageUrls?: string[];
   status: ExhibitStatus;
   createdAt: string;
@@ -306,6 +314,10 @@ export type EventVenue = {
   name: string;
   address: string;
   description: string;
+  introductionKeywords?: string[];
+  aliases?: string[];
+  fuzzyMatch?: boolean;
+  spokenText?: string;
   imageUrls?: string[];
   status: VenueStatus;
   createdAt: string;
@@ -327,6 +339,10 @@ export type EventPoint = {
   exhibitorId: string | null;
   exhibitId: string | null;
   description: string;
+  introductionKeywords?: string[];
+  aliases?: string[];
+  fuzzyMatch?: boolean;
+  spokenText?: string;
   imageUrls?: string[];
   status: PointStatus;
   createdAt: string;
@@ -338,11 +354,17 @@ export type RouteType = "navigation" | "tour" | "emergency";
 
 export type ExhibitionRoute = {
   id: string;
+  exhibitionId?: string;
   venueId: string;
   name: string;
   type: RouteType;
   pointIds: string[];
+  keywords: string[];
+  aliases: string[];
+  fuzzyMatch: boolean;
   directions: string[];
+  spokenText: string;
+  imageUrls: string[];
   estimatedMinutes: number;
   description: string;
   status: RouteStatus;
@@ -574,6 +596,8 @@ export type WelcomeConfig = {
   exhibitionId: string;
   exhibitionName: string;
   triggers: string[];
+  wakeWords: string[];
+  wakeActiveSeconds: number;
   scriptId: string;
   highlights: string[];
   checkInGuide: string;
@@ -602,6 +626,14 @@ export type ShoppingStrategy = {
   exhibitionName: string;
   name: string;
   tags: string[];
+  aliases: string[];
+  fuzzyMatch: boolean;
+  spokenText: string;
+  registrationPrompt: string;
+  confirmationRetryPrompt: string;
+  registrationSuccessText: string;
+  confirmKeywords: string[];
+  declineKeywords: string[];
   tagWeight: number;
   compareDimensions: string[];
   intentThreshold: number;

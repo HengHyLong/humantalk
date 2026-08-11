@@ -68,7 +68,7 @@ test("Mock Admin API covers event operations CRUD and relationships", async () =
   await api.saveExhibition({ ...exhibition, mainVenueId: venue.id });
   const entrance = await api.savePoint({ id: "event-test-point-entrance", venueId: venue.id, code: "ENT-TEST", name: "测试入口", type: "entrance", floor: "1F", x: 10, y: 20, exhibitorId: null, exhibitId: null, description: "测试", status: "active", createdAt: "", updatedAt: "" });
   const booth = await api.savePoint({ id: "event-test-point-booth", venueId: venue.id, code: "BOOTH-TEST", name: "测试展位", type: "booth", floor: "1F", x: 50, y: 60, exhibitorId: exhibitor.id, exhibitId: exhibit.id, description: "测试", status: "active", createdAt: "", updatedAt: "" });
-  const route = await api.saveRoute({ id: "event-test-route", venueId: venue.id, name: "测试路线", type: "navigation", pointIds: [entrance.id, booth.id], directions: ["沿主通道直行"], estimatedMinutes: 1, description: "测试", status: "draft", createdAt: "", updatedAt: "" });
+  const route = await api.saveRoute({ id: "event-test-route", exhibitionId: exhibition.id, venueId: venue.id, name: "测试路线", type: "navigation", pointIds: [entrance.id, booth.id], keywords: ["怎么去测试区"], aliases: ["测试区"], fuzzyMatch: true, directions: ["沿主通道直行"], spokenText: "请沿主通道直行。", imageUrls: ["data:image/png;base64,test"], estimatedMinutes: 1, description: "测试", status: "draft", createdAt: "", updatedAt: "" });
   const schedule = await api.saveSchedule({ id: "event-test-schedule", exhibitionId: exhibition.id, venueId: venue.id, pointId: booth.id, title: "测试活动", type: "论坛", startAt: "2026-09-01 09:00", endAt: "2026-09-01 10:00", location: "测试厅", speaker: "测试方", description: "测试", status: "draft", createdAt: "", updatedAt: "" });
   const broadcast = await api.saveBroadcast({ id: "event-test-broadcast", exhibitionId: exhibition.id, title: "测试播报", content: "请有序参观", priority: "high", targetTerminals: "全部终端", effectiveAt: "2026-09-01 08:00", status: "draft", createdAt: "", updatedAt: "" });
   assert.equal((await api.transitionBroadcast(broadcast.id, "active")).status, "active");
@@ -79,6 +79,7 @@ test("Mock Admin API covers event operations CRUD and relationships", async () =
   assert.equal((await api.listExhibits()).find((item) => item.id === exhibit.id)?.exhibitorId, exhibitor.id);
   assert.equal((await api.listVenues()).find((item) => item.id === venue.id)?.exhibitionId, exhibition.id);
   assert.equal((await api.listRoutes()).find((item) => item.id === route.id)?.name, "测试路线");
+  assert.deepEqual((await api.listRoutes()).find((item) => item.id === route.id)?.aliases, ["测试区"]);
   assert.deepEqual((await api.listRoutes()).find((item) => item.id === route.id)?.pointIds, [entrance.id, booth.id]);
   assert.equal((await api.listSchedules()).find((item) => item.id === schedule.id)?.title, "测试活动");
   await assert.rejects(() => api.deleteVenue(venue.id), /关联/);
@@ -93,6 +94,20 @@ test("Mock Admin API covers event operations CRUD and relationships", async () =
   assert.equal((await api.listBroadcasts()).some((item) => item.id === broadcast.id), false);
   assert.equal((await api.listExhibits()).some((item) => item.id === exhibit.id), false);
   assert.equal((await api.listExhibitors()).some((item) => item.id === exhibitor.id), false);
+});
+
+test("Mock Admin API accepts cross-venue routes and generates segment directions", async () => {
+  const api = new MockAdminApiClient();
+  const exhibition = await api.saveExhibition({ id: "cross-route-exhibition", name: "跨馆路线展会", code: "CROSS-ROUTE", mainVenueId: null, hostUnit: "", organizerUnit: "", coOrganizerUnits: "", startDate: "2026-09-01", endDate: "2026-09-03", status: "preparing", description: "", boundAvatarId: null, boundModel: "QuickTalk", boundVoiceId: null, boundScene: null, knowledgeBaseIds: [], lifecycleHistory: [], createdAt: "", updatedAt: "" });
+  const venueA = await api.saveVenue({ id: "cross-route-venue-a", exhibitionId: exhibition.id, name: "A馆", address: "", description: "", status: "active", createdAt: "", updatedAt: "" });
+  const venueB = await api.saveVenue({ id: "cross-route-venue-b", exhibitionId: exhibition.id, name: "B馆", address: "", description: "", status: "active", createdAt: "", updatedAt: "" });
+  const pointA = await api.savePoint({ id: "cross-route-point-a", venueId: venueA.id, code: "A-OUT", name: "A馆出口", type: "entrance", floor: "1F", x: 10, y: 20, exhibitorId: null, exhibitId: null, description: "", status: "active", createdAt: "", updatedAt: "" });
+  const pointB = await api.savePoint({ id: "cross-route-point-b", venueId: venueB.id, code: "B-01", name: "机器人展区", type: "booth", floor: "1F", x: 20, y: 30, exhibitorId: null, exhibitId: null, description: "", status: "active", createdAt: "", updatedAt: "" });
+
+  const route = await api.saveRoute({ id: "cross-route", exhibitionId: exhibition.id, venueId: "", name: "A馆到B馆", type: "navigation", pointIds: [pointA.id, pointB.id], keywords: ["机器人展区怎么走"], aliases: ["机器人馆"], fuzzyMatch: true, directions: [], spokenText: "", imageUrls: [], estimatedMinutes: 5, description: "", status: "draft", createdAt: "", updatedAt: "" });
+
+  assert.equal(route.venueId, venueA.id);
+  assert.deepEqual(route.directions, ["从A馆的A馆出口出发，离馆后前往B馆的机器人展区。"]);
 });
 
 test("Mock Admin API covers lead filtering, state flow, role permissions, trace and alerts", async () => {
@@ -125,8 +140,12 @@ test("Mock Admin API covers interaction strategy configuration", async () => {
   assert.ok(scripts.some((item) => item.id === "script-3" && item.scene === "explain"));
   const welcome = (await api.listWelcomeConfigs("exhibition-1"))[0];
   assert.ok(welcome.triggers.includes("终端启动"));
+  assert.deepEqual(welcome.wakeWords, ["你好小展"]);
+  assert.equal(welcome.wakeActiveSeconds, 30);
   assert.equal((await api.listWelcomeConfigs("exhibition-2")).length, 0);
-  assert.equal((await api.saveWelcomeConfig({ ...welcome, notices: "请有序参观" })).notices, "请有序参观");
+  const updatedWelcome = await api.saveWelcomeConfig({ ...welcome, notices: "请有序参观", wakeActiveSeconds: 45 });
+  assert.equal(updatedWelcome.notices, "请有序参观");
+  assert.equal(updatedWelcome.wakeActiveSeconds, 45);
   const flow = (await api.listExplainFlows("exhibition-1"))[0];
   assert.equal(flow.exhibitionId, "exhibition-1");
   assert.equal((await api.saveExplainFlow({ ...flow, status: "inactive" })).status, "inactive");

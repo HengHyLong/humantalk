@@ -62,6 +62,46 @@ def test_exhibition_filter_and_relation_validation(tmp_path) -> None:
         assert invalid.status_code == 404
 
 
+def test_welcome_wake_word_validation_and_public_config(tmp_path) -> None:
+    with _client(tmp_path) as client:
+        headers = _login(client)
+        store = client.app.state.admin_store
+        store.save_record("runtime_configs", {"id": "expo-test", "exhibitionId": "expo-test", "keywords": {"navigation": [], "exhibition_content": []}}, "expo-test")
+        store.save_record("scripts", {"id": "script-welcome-test", "scene": "welcome", "content": "您好，欢迎来到测试展会。", "status": "active"}, "expo-test")
+
+        invalid = client.post(
+            "/api/v1/admin/interaction/welcome-configs",
+            headers=headers,
+            json={"id": "welcome-invalid", "exhibitionId": "expo-test", "triggers": ["唤醒词"], "wakeWords": [], "wakeActiveSeconds": 60, "scriptId": "script-welcome-test", "status": "active"},
+        )
+        assert invalid.status_code == 400
+        assert invalid.json()["detail"]["code"] == "WAKE_WORD_REQUIRED"
+
+        invalid_window = client.post(
+            "/api/v1/admin/interaction/welcome-configs",
+            headers=headers,
+            json={"id": "welcome-invalid-window", "exhibitionId": "expo-test", "triggers": ["唤醒词"], "wakeWords": ["你好小展"], "wakeActiveSeconds": 5, "scriptId": "script-welcome-test", "status": "active"},
+        )
+        assert invalid_window.status_code == 400
+        assert invalid_window.json()["detail"]["code"] == "WAKE_WINDOW_INVALID"
+
+        saved = client.post(
+            "/api/v1/admin/interaction/welcome-configs",
+            headers=headers,
+            json={"id": "welcome-valid", "exhibitionId": "expo-test", "triggers": ["唤醒词：你好小展"], "wakeActiveSeconds": 60, "scriptId": "script-welcome-test", "status": "active"},
+        )
+        assert saved.status_code == 200
+        assert saved.json()["triggers"] == ["唤醒词"]
+        assert saved.json()["wakeWords"] == ["你好小展"]
+        assert saved.json()["wakeActiveSeconds"] == 60
+
+        public = client.get("/exhibitions/expo-test/digital-human-config")
+        assert public.status_code == 200
+        assert public.json()["supports_deferred_speak"] is True
+        assert public.json()["wake_word"] == {"enabled": True, "words": ["你好小展"], "active_window_seconds": 60}
+        assert public.json()["welcome"]["text"] == "您好，欢迎来到测试展会。"
+
+
 def test_lead_masking_navigation_and_trace(tmp_path) -> None:
     with _client(tmp_path) as client:
         store = client.app.state.admin_store
@@ -93,6 +133,96 @@ def test_lead_masking_navigation_and_trace(tmp_path) -> None:
         assert trace.json()["spans"]
 
 
+def test_navigation_matches_route_alias_fuzzily_and_returns_database_content(tmp_path) -> None:
+    with _client(tmp_path) as client:
+        store = client.app.state.admin_store
+        headers = _login(client)
+        store.save_record("runtime_configs", {"id": "expo-test", "exhibitionId": "expo-test", "keywords": {"navigation": ["怎么走"], "exhibition_content": []}}, "expo-test")
+        store.save_record("venues", {"id": "venue-nav", "exhibitionId": "expo-test", "name": "主展馆"}, "expo-test")
+        store.save_record("points", {"id": "point-nav-start", "exhibitionId": "expo-test", "venueId": "venue-nav", "name": "一号入口"}, "expo-test")
+        store.save_record("points", {"id": "point-nav-a", "exhibitionId": "expo-test", "venueId": "venue-nav", "name": "智能制造展区"}, "expo-test")
+        store.save_record("points", {"id": "point-nav-b", "exhibitionId": "expo-test", "venueId": "venue-nav", "name": "中央休息区"}, "expo-test")
+        saved_route = client.post(
+            "/api/v1/admin/event/routes",
+            headers=headers,
+            json={
+                "id": "route-nav-a",
+                "venueId": "venue-nav",
+                "name": "入口到智能制造展区",
+                "type": "navigation",
+                "pointIds": ["point-nav-start", "point-nav-a"],
+                "keywords": ["怎么去智能制造展区"],
+                "aliases": ["智造馆"],
+                "fuzzyMatch": True,
+                "spokenText": "请从一号入口沿中央通道直行，看到蓝色指示牌后右转。",
+                "directions": ["沿中央通道直行", "蓝色指示牌处右转"],
+                "imageUrls": ["/scene-assets/navigation-a.png"],
+                "estimatedMinutes": 3,
+                "status": "published",
+            },
+        )
+        assert saved_route.status_code == 200
+        assert saved_route.json()["exhibitionId"] == "expo-test"
+        assert saved_route.json()["aliases"] == ["智造馆"]
+        store.save_record(
+            "routes",
+            {"id": "route-nav-b", "exhibitionId": "expo-test", "venueId": "venue-nav", "name": "入口到休息区", "type": "navigation", "pointIds": ["point-nav-start", "point-nav-b"], "keywords": ["休息区怎么走"], "aliases": ["休息处"], "fuzzyMatch": True, "spokenText": "请沿中央通道前往休息区。", "status": "published"},
+            "expo-test",
+        )
+
+        config = client.get("/exhibitions/expo-test/digital-human-config")
+        assert config.status_code == 200
+        assert "智造馆" in config.json()["keywords"]["navigation"]
+        assert "智造馆" in config.json()["navigation_fuzzy_keywords"]
+
+        navigation = client.post("/exhibitions/expo-test/navigation/query", json={"text": "请问智照馆怎么走", "session_id": "session-nav"})
+        assert navigation.status_code == 200
+        payload = navigation.json()
+        assert payload["matched"] is True
+        assert payload["route_id"] == "route-nav-a"
+        assert payload["spoken_text"] == "请从一号入口沿中央通道直行，看到蓝色指示牌后右转。"
+        assert payload["subtitle_text"] == payload["spoken_text"]
+        assert payload["image_url"] == "/scene-assets/navigation-a.png"
+        assert payload["route"] == {"from": "一号入口", "to": "智能制造展区", "directions": ["沿中央通道直行", "蓝色指示牌处右转"], "estimated_minutes": 3}
+
+
+def test_cross_venue_route_is_valid_and_directions_are_generated(tmp_path) -> None:
+    with _client(tmp_path) as client:
+        store = client.app.state.admin_store
+        headers = _login(client)
+        store.save_record("venues", {"id": "venue-route-a", "exhibitionId": "expo-test", "name": "A馆"}, "expo-test")
+        store.save_record("venues", {"id": "venue-route-b", "exhibitionId": "expo-test", "name": "B馆"}, "expo-test")
+        store.save_record("points", {"id": "point-route-a", "exhibitionId": "expo-test", "venueId": "venue-route-a", "name": "A馆出口", "floor": "1F"}, "expo-test")
+        store.save_record("points", {"id": "point-route-b", "exhibitionId": "expo-test", "venueId": "venue-route-b", "name": "机器人展区", "floor": "1F"}, "expo-test")
+
+        response = client.post(
+            "/api/v1/admin/event/routes",
+            headers=headers,
+            json={
+                "id": "route-cross-venue",
+                "exhibitionId": "expo-test",
+                "name": "A馆到B馆机器人展区",
+                "type": "navigation",
+                "pointIds": ["point-route-a", "point-route-b"],
+                "keywords": ["机器人展区怎么走"],
+                "aliases": ["机器人馆"],
+                "fuzzyMatch": True,
+                "directions": [],
+                "status": "published",
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json()["venueId"] == "venue-route-a"
+        assert response.json()["directions"] == ["从A馆的A馆出口出发，离馆后前往B馆的机器人展区。"]
+
+        navigation = client.post("/exhibitions/expo-test/navigation/query", json={"text": "机器人馆怎么走", "session_id": "cross-venue"})
+        assert navigation.status_code == 200
+        assert navigation.json()["route"]["from"] == "A馆出口"
+        assert navigation.json()["route"]["to"] == "机器人展区"
+        assert navigation.json()["route"]["directions"] == response.json()["directions"]
+
+
 def test_public_exhibition_entities_include_display_fields_and_image_fallbacks(tmp_path) -> None:
     with _client(tmp_path) as client:
         store = client.app.state.admin_store
@@ -107,6 +237,10 @@ def test_public_exhibition_entities_include_display_fields_and_image_fallbacks(t
                 "contact": "不应公开",
                 "phone": "13800138000",
                 "description": "## 企业简介\n\n![展厅](/scene-assets/exhibitor.jpg)\n\n专注智能制造。",
+                "introductionKeywords": ["介绍星河科技"],
+                "aliases": ["星河"],
+                "fuzzyMatch": True,
+                "spokenText": "星河科技专注智能制造解决方案。",
                 "imageUrls": ["/scene-assets/exhibitor.jpg"],
             },
             "expo-test",
@@ -125,7 +259,10 @@ def test_public_exhibition_entities_include_display_fields_and_image_fallbacks(t
         items = {item["id"]: item for item in response.json()["items"]}
         assert set(items) == {"expo-test", "exhibitor-public", "exhibit-public", "venue-public", "point-public", "schedule-public"}
         assert items["exhibitor-public"]["description"] == "企业简介 专注智能制造。"
-        assert items["exhibitor-public"]["keywords"] == ["星河科技", "A-08"]
+        assert items["exhibitor-public"]["keywords"][:2] == ["星河科技", "A-08"]
+        assert "介绍星河科技" in items["exhibitor-public"]["keywords"]
+        assert "星河" in items["exhibitor-public"]["fuzzy_keywords"]
+        assert items["exhibitor-public"]["spoken_text"] == "星河科技专注智能制造解决方案。"
         assert items["exhibit-public"]["image_urls"] == ["/scene-assets/exhibitor.jpg"]
         assert not any(detail["value"] == "13800138000" for item in items.values() for detail in item["details"])
 
@@ -177,6 +314,88 @@ def test_shopping_strategy_uses_paginated_exhibit_ids(tmp_path) -> None:
         saved = client.put("/api/v1/admin/interaction/shopping-strategies/shopping-test/exhibits", headers=headers, json={"ids": []})
         assert saved.status_code == 200
         assert saved.json()["selected_ids"] == []
+
+
+def test_public_shopping_keyword_match_and_confirmed_registration(tmp_path) -> None:
+    with _client(tmp_path) as client:
+        headers = _login(client)
+        store = client.app.state.admin_store
+        store.save_record(
+            "exhibitors",
+            {"id": "exhibitor-shopping-flow", "exhibitionId": "expo-test", "name": "星河智造", "boothCode": "A-08"},
+            "expo-test",
+        )
+        store.save_record(
+            "exhibits",
+            {
+                "id": "exhibit-shopping-flow",
+                "exhibitionId": "expo-test",
+                "exhibitorId": "exhibitor-shopping-flow",
+                "name": "协作机器人工作站",
+                "modelNo": "CR-2400",
+                "description": "支持柔性生产线快速部署。",
+            },
+            "expo-test",
+        )
+        saved_strategy = client.post(
+            "/api/v1/admin/interaction/shopping-strategies",
+            headers=headers,
+            json={
+                "id": "shopping-flow",
+                "exhibitionId": "expo-test",
+                "name": "协作机器人导购",
+                "tags": ["协作机器人", "柔性产线"],
+                "aliases": ["机器人工作站"],
+                "fuzzyMatch": True,
+                "spokenText": "这款协作机器人适合柔性生产线。",
+                "registrationPrompt": "需要登记获取方案吗？",
+                "confirmKeywords": ["需要", "登记"],
+                "declineKeywords": ["不需要", "暂不"],
+                "status": "active",
+            },
+        )
+        assert saved_strategy.status_code == 200
+        assert saved_strategy.json()["aliases"] == ["机器人工作站"]
+        linked = client.put(
+            "/api/v1/admin/interaction/shopping-strategies/shopping-flow/exhibits",
+            headers=headers,
+            json={"ids": ["exhibit-shopping-flow"]},
+        )
+        assert linked.status_code == 200
+
+        matched = client.post(
+            "/exhibitions/expo-test/shopping/query",
+            json={"text": "我想了解协作机器仁", "session_id": "session-shopping"},
+        )
+        assert matched.status_code == 200
+        payload = matched.json()
+        assert payload["matched"] is True
+        assert payload["strategy_id"] == "shopping-flow"
+        assert payload["spoken_text"] == "这款协作机器人适合柔性生产线。"
+        assert payload["registration_prompt"] == "需要登记获取方案吗？"
+        assert payload["related_entity_ids"] == ["exhibit-shopping-flow"]
+        assert not store.get_record("exhibits", "exhibit-shopping-flow").get("surveyToken")
+
+        rejected = client.post(
+            "/exhibitions/expo-test/shopping/registration",
+            json={"strategy_id": "shopping-flow", "session_id": "session-shopping", "confirmation_text": "我不需要登记"},
+        )
+        assert rejected.status_code == 409
+        assert not store.get_record("exhibits", "exhibit-shopping-flow").get("surveyToken")
+
+        registration = client.post(
+            "/exhibitions/expo-test/shopping/registration",
+            json={"strategy_id": "shopping-flow", "session_id": "session-shopping", "confirmation_text": "好的，需要登记"},
+        )
+        assert registration.status_code == 200
+        assert registration.json()["path"].startswith("/survey/")
+        assert store.get_record("exhibits", "exhibit-shopping-flow").get("surveyToken")
+
+        unmatched = client.post(
+            "/exhibitions/expo-test/shopping/query",
+            json={"text": "卫生间在哪里", "session_id": "session-shopping"},
+        )
+        assert unmatched.json() == {"matched": False}
 
 
 def test_admin_reads_and_failed_requests_are_audited(tmp_path) -> None:

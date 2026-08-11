@@ -679,6 +679,7 @@ async def create_session(body: CreateSessionRequest, request: Request) -> Create
         tts_voice=tts_voice,
         tts_model=tts_model,
         llm_system_prompt=llm_system_prompt,
+        language=body.language,
         custom_ref_image_path=custom_ref_image_path,
         wav2lip_postprocess_mode=body.wav2lip_postprocess_mode,
         fasterliveportrait_config=fasterliveportrait_config or None,
@@ -966,6 +967,7 @@ async def speak(session_id: str, body: SpeakRequest, request: Request) -> dict[s
         r,
         session_id,
         body.text,
+        language=body.language,
         voice=voice,
         tts_provider=eff_prov,
         tts_model=tm,
@@ -1064,8 +1066,10 @@ async def speak_audio(
     tts_provider: str | None = Form(default=None),
     tts_model: str | None = Form(default=None),
     stt_provider: str | None = Form(default=None),
+    defer_speak: bool = Form(default=False),
+    language: str = Form(default="zh-CN", pattern="^(zh-CN|en-US)$"),
 ) -> dict[str, str]:
-    """上传语音 → STT provider → 将识别文本送入与会话相同的 speak 流水线（LLM→TTS→FlashTalk）。"""
+    """上传语音 → STT；默认进入 speak 流水线，defer_speak=true 时仅返回识别文本。"""
     r: redis.Redis = request.app.state.redis
     s = await session_service.get_session(r, session_id)
     if not s:
@@ -1104,15 +1108,17 @@ async def speak_audio(
         tts_provider=tts_provider,
         tts_model=tts_model,
     )
-    await session_service.speak(
-        r,
-        session_id,
-        stripped,
-        voice=v,
-        tts_provider=eff_prov,
-        tts_model=tm,
-    )
-    return {"session_id": session_id, "status": "queued", "text": stripped}
+    if not defer_speak:
+        await session_service.speak(
+            r,
+            session_id,
+            stripped,
+            language=language,
+            voice=v,
+            tts_provider=eff_prov,
+            tts_model=tm,
+        )
+    return {"session_id": session_id, "status": "transcribed" if defer_speak else "queued", "text": stripped}
 
 
 @router.post("/{session_id}/speak_flashtalk_audio")
@@ -1168,7 +1174,7 @@ async def speak_flashtalk_audio(
 
 @router.websocket("/{session_id}/speak_audio_stream")
 async def speak_audio_stream_ws(websocket: WebSocket, session_id: str) -> None:
-    """浏览器经 WebSocket 推送 PCM s16le mono 16kHz 分块 → 流式 STT → speak 流水线。"""
+    """浏览器推送 PCM 分块 → 流式 STT；defer_speak=true 时不自动进入 speak 流水线。"""
     await websocket.accept()
     try:
         r: redis.Redis = websocket.app.state.redis  # type: ignore[attr-defined]
@@ -1204,8 +1210,8 @@ async def speak_audio_stream_ws(websocket: WebSocket, session_id: str) -> None:
         await websocket.send_json({"error": "expected {\"type\":\"meta\", ...}"})
         await websocket.close(code=4400)
         return
-    defer_speak = bool(meta.get("defer_speak"))
-
+    defer_speak = meta.get("defer_speak") is True
+    language = "en-US" if meta.get("language") == "en-US" else "zh-CN"
     try:
         v, eff_prov, tm = _normalize_voice_for_speak(
             voice=meta.get("voice"),
@@ -1305,11 +1311,12 @@ async def speak_audio_stream_ws(websocket: WebSocket, session_id: str) -> None:
             r,
             session_id,
             stripped,
+            language=language,
             voice=v,
             tts_provider=eff_prov,
             tts_model=tm,
         )
-    await websocket.send_json({"session_id": session_id, "status": "queued", "text": stripped})
+    await websocket.send_json({"session_id": session_id, "status": "transcribed" if defer_speak else "queued", "text": stripped})
 
 
 @router.post("/{session_id}/interrupt")

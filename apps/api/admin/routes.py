@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+from difflib import SequenceMatcher
 import io
 import json
 import re
@@ -8,7 +9,7 @@ import secrets
 import time
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
@@ -57,6 +58,20 @@ class LinkBody(BaseModel):
 class NavigationBody(BaseModel):
     text: str = Field(min_length=1, max_length=1000)
     session_id: str = Field(min_length=1, max_length=200)
+    language: Literal["zh-CN", "en-US"] = "zh-CN"
+
+
+class ShoppingQueryBody(BaseModel):
+    text: str = Field(min_length=1, max_length=1000)
+    session_id: str = Field(min_length=1, max_length=200)
+    language: Literal["zh-CN", "en-US"] = "zh-CN"
+
+
+class ShoppingRegistrationBody(BaseModel):
+    strategy_id: str = Field(min_length=1, max_length=200)
+    session_id: str = Field(min_length=1, max_length=200)
+    confirmation_text: str = Field(min_length=1, max_length=1000)
+    language: Literal["zh-CN", "en-US"] = "zh-CN"
 
 
 class ExhibitSurveySubmissionBody(BaseModel):
@@ -482,7 +497,7 @@ async def test_llm_config(record_id: str, request: Request, auth: dict[str, Any]
     _audit(request, auth, action="test", resource_type="llm_config", resource_id=record_id, before=None, after={"success": True, "latencyMs": latency_ms})
     return {"success": True, "latencyMs": latency_ms, "message": "连接成功"}
 
-EVENT_IMAGE_RESOURCES = {"exhibitors", "exhibits", "venues", "points"}
+EVENT_IMAGE_RESOURCES = {"exhibitors", "exhibits", "venues", "points", "routes"}
 
 COLLECTION_RESOURCES = {
     "assets": {"avatars": "avatars", "gifs": "gifs", "voice-configs": "voice_configs", "scene-bindings": "scene_bindings", "idle-contents": "idle_contents"},
@@ -647,28 +662,171 @@ def _event_exhibition_id(item: dict[str, Any] | None) -> str | None:
     return (item or {}).get("exhibitionId") or (item or {}).get("exhibition_id")
 
 
+def _welcome_wake_words(data: dict[str, Any]) -> list[str]:
+    raw = data.get("wakeWords", data.get("wake_words", []))
+    if isinstance(raw, str):
+        values = re.split(r"[,，、\n]", raw)
+    elif isinstance(raw, list):
+        values = [str(value) for value in raw]
+    else:
+        values = []
+    if not values:
+        triggers = data.get("triggers", data.get("trigger", []))
+        if not isinstance(triggers, list):
+            triggers = [triggers]
+        for trigger in triggers:
+            matched = re.match(r"^唤醒词[：:]\s*(.+)$", str(trigger or ""))
+            if matched:
+                values.extend(re.split(r"[,，、\n]", matched.group(1)))
+    return list(dict.fromkeys(value.strip() for value in values if value.strip()))
+
+
+def _welcome_triggers(data: dict[str, Any]) -> list[str]:
+    raw = data.get("triggers", data.get("trigger", []))
+    values = raw if isinstance(raw, list) else [raw]
+    aliases = {"terminal_start": "终端启动", "user_nearby": "用户靠近", "wake_word": "唤醒词"}
+    normalized = ["唤醒词" if str(value).startswith("唤醒词") else aliases.get(str(value), str(value)) for value in values if str(value or "")]
+    return list(dict.fromkeys(normalized))
+
+
+def _welcome_active_seconds(data: dict[str, Any]) -> int:
+    try:
+        seconds = int(data.get("wakeActiveSeconds", data.get("wake_active_seconds", 30)))
+    except (TypeError, ValueError):
+        return 30
+    return seconds if 10 <= seconds <= 600 else 30
+
+
+def _auto_route_directions(store: AdminStore, points: list[dict[str, Any]]) -> list[str]:
+    directions: list[str] = []
+    for start, destination in zip(points, points[1:]):
+        start_name = str(start.get("name") or start.get("code") or "起点").strip()
+        destination_name = str(destination.get("name") or destination.get("code") or "下一点位").strip()
+        start_venue_id = str(start.get("venueId") or "")
+        destination_venue_id = str(destination.get("venueId") or "")
+        if start_venue_id != destination_venue_id:
+            start_venue = store.get_record("venues", start_venue_id) or {}
+            destination_venue = store.get_record("venues", destination_venue_id) or {}
+            start_venue_name = str(start_venue.get("name") or "当前场馆").strip()
+            destination_venue_name = str(destination_venue.get("name") or "目标场馆").strip()
+            directions.append(f"从{start_venue_name}的{start_name}出发，离馆后前往{destination_venue_name}的{destination_name}。")
+            continue
+        start_floor = str(start.get("floor") or "").strip()
+        destination_floor = str(destination.get("floor") or "").strip()
+        if start_floor and destination_floor and start_floor != destination_floor:
+            directions.append(f"从{start_name}出发，由{start_floor}前往{destination_floor}的{destination_name}。")
+        else:
+            directions.append(f"从{start_name}出发，前往{destination_name}。")
+    return directions
+
+
 def _validate_record(store: AdminStore, kind: str, data: dict[str, Any], record_id: str | None = None) -> None:
+    if kind == "routes" and not _event_exhibition_id(data):
+        point_ids = data.get("pointIds", [])
+        first_point = store.get_record("points", str(point_ids[0])) if isinstance(point_ids, list) and point_ids else None
+        venue = store.get_record("venues", str((first_point or {}).get("venueId") or data.get("venueId") or data.get("venue_id") or ""))
+        if venue:
+            data["exhibitionId"] = _event_exhibition_id(venue)
     exhibition_id = _event_exhibition_id(data)
     if kind != "exhibitions" and exhibition_id and not store.get_record("exhibitions", exhibition_id):
         raise HTTPException(status_code=400, detail={"code": "EXHIBITION_NOT_FOUND", "detail": "所属展会不存在"})
     if kind == "venues":
-        return
+        pass
     if kind == "points":
         venue = _record(store, "venues", str(data.get("venueId")))
         if _event_exhibition_id(venue) != exhibition_id:
             raise HTTPException(status_code=400, detail={"code": "RELATION_INVALID", "detail": "点位场地不属于当前展会"})
     if kind == "routes":
         points = [store.get_record("points", str(point_id)) for point_id in data.get("pointIds", [])]
-        if len(points) < 2 or any(not point or point.get("venueId") != data.get("venueId") or _event_exhibition_id(point) != exhibition_id for point in points):
-            raise HTTPException(status_code=400, detail={"code": "RELATION_INVALID", "detail": "路线至少需要两个同场地点位"})
+        if len(points) < 2 or any(not point or _event_exhibition_id(point) != exhibition_id for point in points):
+            raise HTTPException(status_code=400, detail={"code": "RELATION_INVALID", "detail": "路线至少需要两个属于同一展会的有效点位"})
+        route_points = [point for point in points if point]
+        data["venueId"] = str(route_points[0].get("venueId") or "")
+        for field in ("keywords", "aliases", "imageUrls"):
+            raw_values = data.get(field, [])
+            if isinstance(raw_values, str):
+                raw_values = re.split(r"[,，、\n]", raw_values)
+            if not isinstance(raw_values, list):
+                raise HTTPException(status_code=400, detail={"code": "ROUTE_CONFIG_INVALID", "detail": f"{field} 必须是数组"})
+            data[field] = list(dict.fromkeys(str(value).strip() for value in raw_values if str(value).strip()))
+        raw_directions = data.get("directions", [])
+        if isinstance(raw_directions, str):
+            raw_directions = raw_directions.splitlines()
+        if not isinstance(raw_directions, list):
+            raise HTTPException(status_code=400, detail={"code": "ROUTE_CONFIG_INVALID", "detail": "directions 必须是数组"})
+        data["directions"] = [str(value).strip() for value in raw_directions if str(value).strip()]
+        if not data["directions"]:
+            data["directions"] = _auto_route_directions(store, route_points)
+        if len(data["keywords"]) > 30 or len(data["aliases"]) > 30:
+            raise HTTPException(status_code=400, detail={"code": "ROUTE_KEYWORD_LIMIT", "detail": "路线关键词和别名分别最多配置 30 个"})
+        if any(len(value) > 100 for value in [*data["keywords"], *data["aliases"]]):
+            raise HTTPException(status_code=400, detail={"code": "ROUTE_KEYWORD_INVALID", "detail": "单个路线关键词或别名不能超过 100 个字符"})
+        data["spokenText"] = str(data.get("spokenText") or data.get("spoken_text") or "").strip()[:4000]
+        data["fuzzyMatch"] = bool(data.get("fuzzyMatch", data.get("fuzzy_match", True)))
     if kind == "exhibits":
         exhibitor = _record(store, "exhibitors", str(data.get("exhibitorId")))
         if _event_exhibition_id(exhibitor) != exhibition_id:
             raise HTTPException(status_code=400, detail={"code": "RELATION_INVALID", "detail": "展品与展商必须属于同一展会"})
+    if kind in {"venues", "points", "exhibitors", "exhibits"}:
+        for field in ("introductionKeywords", "aliases"):
+            raw_values = data.get(field, [])
+            if isinstance(raw_values, str):
+                raw_values = re.split(r"[,，、\n]", raw_values)
+            if not isinstance(raw_values, list):
+                raise HTTPException(status_code=400, detail={"code": "INTRODUCTION_CONFIG_INVALID", "detail": f"{field} 必须是数组"})
+            data[field] = list(dict.fromkeys(str(value).strip() for value in raw_values if str(value).strip()))
+        if len(data["introductionKeywords"]) > 30 or len(data["aliases"]) > 30:
+            raise HTTPException(status_code=400, detail={"code": "INTRODUCTION_KEYWORD_LIMIT", "detail": "介绍关键词和别名分别最多配置 30 个"})
+        data["spokenText"] = str(data.get("spokenText") or data.get("spoken_text") or "").strip()[:4000]
+        data["fuzzyMatch"] = bool(data.get("fuzzyMatch", data.get("fuzzy_match", True)))
+    if kind == "interaction_shopping":
+        defaults = {
+            "tags": [],
+            "aliases": [],
+            "confirmKeywords": ["需要", "好的", "可以", "同意", "登记", "我要登记"],
+            "declineKeywords": ["不需要", "不用", "不要", "暂不", "取消", "不登记"],
+        }
+        for field, fallback in defaults.items():
+            raw_values = data.get(field, data.get(re.sub(r"(?<!^)(?=[A-Z])", "_", field).lower(), fallback))
+            if isinstance(raw_values, str):
+                raw_values = re.split(r"[,，、\n]", raw_values)
+            if not isinstance(raw_values, list):
+                raise HTTPException(status_code=400, detail={"code": "SHOPPING_CONFIG_INVALID", "detail": f"{field} 必须是数组"})
+            data[field] = list(dict.fromkeys(str(value).strip() for value in raw_values if str(value).strip()))
+        if not data["tags"]:
+            raise HTTPException(status_code=400, detail={"code": "SHOPPING_KEYWORD_REQUIRED", "detail": "导购策略至少配置一个匹配关键词"})
+        if len(data["tags"]) > 30 or len(data["aliases"]) > 30:
+            raise HTTPException(status_code=400, detail={"code": "SHOPPING_KEYWORD_LIMIT", "detail": "导购关键词和别名分别最多配置 30 个"})
+        data["fuzzyMatch"] = bool(data.get("fuzzyMatch", data.get("fuzzy_match", True)))
+        data["spokenText"] = str(data.get("spokenText") or data.get("spoken_text") or "").strip()[:4000]
+        data["registrationPrompt"] = str(data.get("registrationPrompt") or data.get("registration_prompt") or "需要为您弹出登记二维码吗？").strip()[:1000]
+        data["confirmationRetryPrompt"] = str(data.get("confirmationRetryPrompt") or data.get("confirmation_retry_prompt") or "请回答需要或不需要登记。").strip()[:1000]
+        data["registrationSuccessText"] = str(data.get("registrationSuccessText") or data.get("registration_success_text") or "好的，登记二维码已为您打开，请使用手机扫码填写信息。").strip()[:1000]
     if kind == "schedules" and data.get("venueId"):
         venue = _record(store, "venues", str(data.get("venueId")))
         if _event_exhibition_id(venue) != exhibition_id:
             raise HTTPException(status_code=400, detail={"code": "RELATION_INVALID", "detail": "活动场地不属于当前展会"})
+    if kind == "interaction_welcome":
+        triggers = _welcome_triggers(data)
+        wake_words = _welcome_wake_words(data)
+        if "唤醒词" in triggers and not wake_words:
+            raise HTTPException(status_code=400, detail={"code": "WAKE_WORD_REQUIRED", "detail": "启用唤醒词后至少需要配置一个唤醒词"})
+        if len(wake_words) > 5:
+            raise HTTPException(status_code=400, detail={"code": "WAKE_WORD_LIMIT_EXCEEDED", "detail": "唤醒词最多配置 5 个"})
+        if any(len(word) < 2 or len(word) > 12 for word in wake_words):
+            raise HTTPException(status_code=400, detail={"code": "WAKE_WORD_LENGTH_INVALID", "detail": "每个唤醒词应为 2～12 个字符"})
+        try:
+            active_seconds = int(data.get("wakeActiveSeconds", data.get("wake_active_seconds", 30)))
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail={"code": "WAKE_WINDOW_INVALID", "detail": "休眠时间必须为整数"}) from exc
+        if active_seconds < 10 or active_seconds > 600:
+            raise HTTPException(status_code=400, detail={"code": "WAKE_WINDOW_INVALID", "detail": "休眠时间必须在 10～600 秒之间"})
+        script = store.get_record("scripts", str(data.get("scriptId") or data.get("script_id") or ""))
+        if not script or script.get("scene") != "welcome":
+            raise HTTPException(status_code=400, detail={"code": "WELCOME_SCRIPT_INVALID", "detail": "欢迎配置必须关联有效的迎宾话术"})
+        data["triggers"] = triggers
+        data["wakeWords"] = wake_words
+        data["wakeActiveSeconds"] = active_seconds
 
 
 @router.get("/admin/event/{resource}")
@@ -843,6 +1001,10 @@ def save_interaction(resource: str, request: Request, body: RecordBody, auth: di
         raise HTTPException(status_code=400, detail={"code": "EXHIBITION_REQUIRED", "detail": "交互配置必须关联展会"})
     _validate_record(store, kind, body.data)
     before = store.get_record(kind, str(body.data.get("id"))) if body.data.get("id") else None
+    if kind == "interaction_welcome" and body.data.get("status") == "active":
+        for item in store.list_records(kind, exhibition_id=body.data.get("exhibitionId")):
+            if item.get("id") != body.data.get("id") and item.get("status") == "active":
+                store.save_record(kind, {**item, "status": "inactive"}, body.data.get("exhibitionId"))
     saved = store.save_record(kind, body.data, body.data.get("exhibitionId"))
     _audit(request, auth, action="save", resource_type=kind, resource_id=saved["id"], before=before, after=saved)
     return saved
@@ -858,6 +1020,10 @@ def update_interaction(resource: str, record_id: str, request: Request, body: Re
     before = _record(store, kind, record_id) or {}
     data = {**before, **body.data, "id": record_id, "exhibitionId": body.data.get("exhibitionId", before.get("exhibitionId"))}
     _validate_record(store, kind, data, record_id)
+    if kind == "interaction_welcome" and data.get("status") == "active":
+        for item in store.list_records(kind, exhibition_id=data.get("exhibitionId")):
+            if item.get("id") != record_id and item.get("status") == "active":
+                store.save_record(kind, {**item, "status": "inactive"}, data.get("exhibitionId"))
     saved = store.save_record(kind, data, data.get("exhibitionId"))
     _audit(request, auth, action="update", resource_type=kind, resource_id=record_id, before=before, after=saved)
     return saved
@@ -1348,10 +1514,47 @@ def public_config(exhibition_id: str, request: Request) -> dict[str, Any]:
     if not config:
         raise HTTPException(status_code=404, detail={"code": "EXHIBITION_CONFIG_NOT_FOUND", "detail": "当前展会未配置数字人参数"})
     exhibition = store.get_record("exhibitions", exhibition_id) or {}
+    welcome_configs = sorted(
+        (item for item in store.list_records("interaction_welcome", exhibition_id=exhibition_id) if item.get("status") == "active"),
+        key=lambda item: str(item.get("updatedAt") or item.get("updated_at") or ""),
+        reverse=True,
+    )
+    welcome_config = welcome_configs[0] if welcome_configs else {}
+    wake_words = _welcome_wake_words(welcome_config)
+    wake_enabled = "唤醒词" in _welcome_triggers(welcome_config) and bool(wake_words)
+    welcome_script = store.get_record("scripts", str(welcome_config.get("scriptId") or welcome_config.get("script_id") or "")) or {}
+    configured_keywords = config.get("keywords", {"navigation": [], "exhibition_content": []})
+    if not isinstance(configured_keywords, dict):
+        configured_keywords = {"navigation": [], "exhibition_content": []}
+    route_keywords: list[str] = []
+    route_fuzzy_keywords: list[str] = []
+    for route in store.list_records("routes", exhibition_id=exhibition_id):
+        if route.get("status") == "offline" or route.get("type", "navigation") != "navigation":
+            continue
+        for value in [route.get("name"), *route.get("keywords", []), *route.get("aliases", [])]:
+            clean_value = str(value or "").strip()
+            if clean_value:
+                route_keywords.append(clean_value)
+                if route.get("fuzzyMatch", route.get("fuzzy_match", True)):
+                    route_fuzzy_keywords.append(clean_value)
+    keywords = {
+        **configured_keywords,
+        "navigation": list(dict.fromkeys([*configured_keywords.get("navigation", []), *route_keywords])),
+    }
     return {
         "exhibition_id": exhibition_id,
-        "keywords": config.get("keywords", {"navigation": [], "exhibition_content": []}),
-        "supports_deferred_speak": bool(config.get("supports_deferred_speak", False)),
+        "keywords": keywords,
+        "navigation_fuzzy_keywords": list(dict.fromkeys(route_fuzzy_keywords)),
+        "supports_deferred_speak": True,
+        "wake_word": {
+            "enabled": wake_enabled,
+            "words": wake_words if wake_enabled else [],
+            "active_window_seconds": _welcome_active_seconds(welcome_config),
+        },
+        "welcome": {
+            "script_id": str(welcome_script.get("id") or ""),
+            "text": str(welcome_script.get("content") or ""),
+        },
         "bound_avatar_id": exhibition.get("boundAvatarId") or exhibition.get("bound_avatar_id"),
         "bound_model": exhibition.get("boundModel") or exhibition.get("bound_model"),
         "bound_voice_id": exhibition.get("boundVoiceId") or exhibition.get("bound_voice_id"),
@@ -1428,12 +1631,14 @@ def public_exhibition_entities(exhibition_id: str, request: Request) -> dict[str
     schedules = store.list_records("schedules", exhibition_id=exhibition_id)
     items: list[dict[str, Any]] = []
 
-    def append_entity(*, entity_id: str, kind: str, name: str, description: Any, images: list[str], details: list[tuple[str, Any]], keywords: list[Any]) -> None:
+    def append_entity(*, entity_id: str, kind: str, name: str, description: Any, images: list[str], details: list[tuple[str, Any]], keywords: list[Any], source: dict[str, Any]) -> None:
         clean_name = str(name or "").strip()
         if not clean_name:
             return
         clean_details = [{"label": label, "value": str(value).strip()} for label, value in details if str(value or "").strip()]
-        clean_keywords = list(dict.fromkeys(str(value).strip() for value in [clean_name, *keywords] if len(str(value or "").strip()) >= 2))
+        configured_keywords = source.get("introductionKeywords") or source.get("introduction_keywords") or []
+        aliases = source.get("aliases") or []
+        clean_keywords = list(dict.fromkeys(str(value).strip() for value in [clean_name, *keywords, *configured_keywords, *aliases] if len(str(value or "").strip()) >= 2))
         items.append({
             "id": entity_id,
             "kind": kind,
@@ -1442,6 +1647,8 @@ def public_exhibition_entities(exhibition_id: str, request: Request) -> dict[str
             "image_urls": images,
             "details": clean_details,
             "keywords": clean_keywords,
+            "fuzzy_keywords": clean_keywords if source.get("fuzzyMatch", source.get("fuzzy_match", True)) else [],
+            "spoken_text": str(source.get("spokenText") or source.get("spoken_text") or "").strip() or _public_description(description),
         })
 
     append_entity(
@@ -1452,6 +1659,7 @@ def public_exhibition_entities(exhibition_id: str, request: Request) -> dict[str
         images=_public_image_urls(exhibition),
         details=[("展会编码", exhibition.get("code")), ("状态", exhibition.get("status"))],
         keywords=[exhibition.get("code")],
+        source=exhibition,
     )
 
     for item in exhibitors.values():
@@ -1459,7 +1667,7 @@ def public_exhibition_entities(exhibition_id: str, request: Request) -> dict[str
             entity_id=str(item["id"]), kind="exhibitor", name=str(item.get("name", "")), description=item.get("description"),
             images=_public_image_urls(item),
             details=[("展位", item.get("boothCode")), ("类别", item.get("category"))],
-            keywords=[item.get("boothCode")],
+            keywords=[item.get("boothCode")], source=item,
         )
     for item in exhibits.values():
         exhibitor = exhibitors.get(str(item.get("exhibitorId", "")))
@@ -1467,12 +1675,12 @@ def public_exhibition_entities(exhibition_id: str, request: Request) -> dict[str
             entity_id=str(item["id"]), kind="exhibit", name=str(item.get("name", "")), description=item.get("description"),
             images=_public_image_urls(item, exhibitor),
             details=[("展商", (exhibitor or {}).get("name")), ("类别", item.get("category")), ("型号", item.get("modelNo"))],
-            keywords=[item.get("modelNo")],
+            keywords=[item.get("modelNo")], source=item,
         )
     for item in venues.values():
         append_entity(
             entity_id=str(item["id"]), kind="venue", name=str(item.get("name", "")), description=item.get("description"),
-            images=_public_image_urls(item), details=[("地址", item.get("address"))], keywords=[],
+            images=_public_image_urls(item), details=[("地址", item.get("address"))], keywords=[], source=item,
         )
     for item in points.values():
         venue = venues.get(str(item.get("venueId", "")))
@@ -1482,7 +1690,7 @@ def public_exhibition_entities(exhibition_id: str, request: Request) -> dict[str
             entity_id=str(item["id"]), kind="point", name=str(item.get("name", "")), description=item.get("description"),
             images=_public_image_urls(item, exhibit, exhibitor, venue),
             details=[("场地", (venue or {}).get("name")), ("楼层", item.get("floor")), ("点位编码", item.get("code"))],
-            keywords=[item.get("code")],
+            keywords=[item.get("code")], source=item,
         )
     for item in schedules:
         venue = venues.get(str(item.get("venueId", "")))
@@ -1491,7 +1699,7 @@ def public_exhibition_entities(exhibition_id: str, request: Request) -> dict[str
             entity_id=str(item["id"]), kind="schedule", name=str(item.get("title") or item.get("name") or ""), description=item.get("description"),
             images=_public_image_urls(item, point, venue),
             details=[("时间", " 至 ".join(value for value in [str(item.get("startAt", "")).strip(), str(item.get("endAt", "")).strip()] if value)), ("地点", item.get("location") or (point or {}).get("name") or (venue or {}).get("name")), ("主讲方", item.get("speaker")), ("类型", item.get("type"))],
-            keywords=[item.get("location"), item.get("speaker")],
+            keywords=[item.get("location"), item.get("speaker")], source=item,
         )
     return {"exhibition_id": exhibition_id, "items": items}
 
@@ -1540,6 +1748,174 @@ def submit_exhibit_survey(token: str, request: Request, body: ExhibitSurveySubmi
     return {"submitted": True, "leadId": saved["id"]}
 
 
+_NAVIGATION_FILLER_RE = re.compile(r"(请问|麻烦|告诉我|带我去|导航到|导航去|怎么去|怎么走|如何去|如何走|路线|在哪儿|在哪里|我要去|想去|前往)")
+
+
+def _normalize_navigation_text(value: Any) -> str:
+    return re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", str(value or "").lower())
+
+
+def _navigation_similarity(query: str, term: str) -> float:
+    if not query or not term:
+        return 0.0
+    if term in query:
+        return 1.0
+    compact_query = _NAVIGATION_FILLER_RE.sub("", query)
+    if term in compact_query or compact_query and compact_query in term:
+        return 0.96
+    ratio = SequenceMatcher(None, compact_query or query, term).ratio()
+    if len(term) >= 2 and len(query) > len(term):
+        sizes = range(max(2, len(term) - 2), min(len(query), len(term) + 2) + 1)
+        ratio = max(ratio, *(SequenceMatcher(None, query[index:index + size], term).ratio() for size in sizes for index in range(len(query) - size + 1)))
+    return ratio
+
+
+def _route_match_terms(
+    route: dict[str, Any],
+    points: dict[str, dict[str, Any]],
+    exhibitors: dict[str, dict[str, Any]],
+    exhibits: dict[str, dict[str, Any]],
+) -> list[str]:
+    terms: list[Any] = [route.get("name"), *route.get("keywords", []), *route.get("aliases", [])]
+    for point_id in route.get("pointIds", []):
+        point = points.get(str(point_id), {})
+        exhibit = exhibits.get(str(point.get("exhibitId", "")), {})
+        exhibitor = exhibitors.get(str(point.get("exhibitorId", "")), {}) or exhibitors.get(str(exhibit.get("exhibitorId", "")), {})
+        terms.extend([point.get("name"), point.get("code"), exhibit.get("name"), exhibit.get("modelNo"), exhibitor.get("name"), exhibitor.get("boothCode")])
+    return list(dict.fromkeys(_normalize_navigation_text(term) for term in terms if _normalize_navigation_text(term)))
+
+
+def _shopping_match_terms(
+    strategy: dict[str, Any],
+    exhibits: dict[str, dict[str, Any]],
+    exhibitors: dict[str, dict[str, Any]],
+    exhibit_ids: list[str],
+) -> list[tuple[str, str]]:
+    terms: list[Any] = [strategy.get("name"), *strategy.get("tags", []), *strategy.get("aliases", [])]
+    for exhibit_id in exhibit_ids:
+        exhibit = exhibits.get(exhibit_id, {})
+        exhibitor = exhibitors.get(str(exhibit.get("exhibitorId", "")), {})
+        terms.extend([
+            exhibit.get("name"), exhibit.get("modelNo"), exhibit.get("category"),
+            exhibitor.get("name"), exhibitor.get("boothCode"), exhibitor.get("category"),
+        ])
+    result: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for value in terms:
+        original = str(value or "").strip()
+        normalized = _normalize_navigation_text(original)
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            result.append((original, normalized))
+    return result
+
+
+@router.post("/exhibitions/{exhibition_id}/shopping/query")
+def shopping_query(exhibition_id: str, request: Request, body: ShoppingQueryBody) -> dict[str, Any]:
+    """Deterministic database-backed virtual shopping match; no LLM is involved."""
+    store = get_store(request)
+    if exhibition_id == "current":
+        current = next((item for item in store.list_records("exhibitions") if item.get("isCurrent") or item.get("is_current")), None)
+        if not current:
+            raise HTTPException(status_code=404, detail={"code": "CURRENT_EXHIBITION_NOT_FOUND", "detail": "当前展会未配置"})
+        exhibition_id = str(current["id"])
+    _record(store, "exhibitions", exhibition_id)
+    query = _normalize_navigation_text(body.text)
+    exhibits = {str(item["id"]): item for item in store.list_records("exhibits", exhibition_id=exhibition_id)}
+    exhibitors = {str(item["id"]): item for item in store.list_records("exhibitors", exhibition_id=exhibition_id)}
+    strategies = [
+        item for item in store.list_records("interaction_shopping", exhibition_id=exhibition_id)
+        if item.get("status", "active") == "active"
+    ]
+    ranked: list[tuple[float, int, dict[str, Any], str, list[str]]] = []
+    for strategy in strategies:
+        strategy_id = str(strategy.get("id") or "")
+        exhibit_ids = [
+            str(value) for value in store.get_links("interaction_shopping", strategy_id, "exhibits")
+            if str(value) in exhibits
+        ]
+        if not exhibit_ids:
+            exhibit_ids = [str(value) for value in strategy.get("exhibitIds", strategy.get("exhibit_ids", [])) if str(value) in exhibits]
+        best_score, best_term = 0.0, ""
+        for original, normalized in _shopping_match_terms(strategy, exhibits, exhibitors, exhibit_ids):
+            score = _navigation_similarity(query, normalized)
+            if score > best_score:
+                best_score, best_term = score, original
+        threshold = 0.66 if strategy.get("fuzzyMatch", strategy.get("fuzzy_match", True)) else 1.0
+        if best_score >= threshold:
+            ranked.append((best_score, len(_normalize_navigation_text(best_term)), strategy, best_term, exhibit_ids))
+    ranked.sort(key=lambda item: (item[0], item[1], str(item[2].get("updatedAt") or item[2].get("updated_at") or "")), reverse=True)
+    if not ranked:
+        return {"matched": False}
+
+    _, _, strategy, matched_term, exhibit_ids = ranked[0]
+    selected_exhibits = [exhibits[exhibit_id] for exhibit_id in exhibit_ids if exhibit_id in exhibits]
+    spoken_text = str(strategy.get("spokenText") or strategy.get("spoken_text") or "").strip()
+    if not spoken_text:
+        descriptions = [_public_description(item.get("description")) for item in selected_exhibits]
+        spoken_text = "；".join(value for value in descriptions if value) or f"为您找到{strategy.get('name') or '相关展品'}。"
+    return {
+        "language": body.language,
+        "matched": True,
+        "strategy_id": str(strategy.get("id") or ""),
+        "matched_keyword": matched_term,
+        "title": str(strategy.get("name") or "虚拟导购"),
+        "spoken_text": spoken_text,
+        "registration_prompt": str(strategy.get("registrationPrompt") or strategy.get("registration_prompt") or ("Would you like me to display the registration QR code?" if body.language == "en-US" else "需要为您弹出登记二维码吗？")),
+        "confirmation_retry_prompt": str(strategy.get("confirmationRetryPrompt") or strategy.get("confirmation_retry_prompt") or ("Please answer yes or no to registration." if body.language == "en-US" else "请回答需要或不需要登记。")),
+        "confirm_keywords": strategy.get("confirmKeywords") or strategy.get("confirm_keywords") or (["yes", "okay", "register", "agree"] if body.language == "en-US" else ["需要", "好的", "可以", "同意", "登记", "我要登记"]),
+        "decline_keywords": strategy.get("declineKeywords") or strategy.get("decline_keywords") or (["no", "not now", "cancel", "do not register"] if body.language == "en-US" else ["不需要", "不用", "不要", "暂不", "取消", "不登记"]),
+        "exhibit_ids": exhibit_ids,
+        "related_entity_ids": exhibit_ids,
+    }
+
+
+@router.post("/exhibitions/{exhibition_id}/shopping/registration")
+def shopping_registration(exhibition_id: str, request: Request, body: ShoppingRegistrationBody) -> dict[str, Any]:
+    """Return a registration path only after the client has obtained explicit confirmation."""
+    store = get_store(request)
+    strategy = _record(store, "interaction_shopping", body.strategy_id)
+    if exhibition_id == "current":
+        exhibition_id = str(strategy.get("exhibitionId") or strategy.get("exhibition_id") or "")
+    if str(strategy.get("exhibitionId") or strategy.get("exhibition_id") or "") != exhibition_id or strategy.get("status", "active") != "active":
+        raise HTTPException(status_code=404, detail={"code": "SHOPPING_STRATEGY_NOT_FOUND", "detail": "导购策略不存在或未启用"})
+    confirmation = _normalize_navigation_text(body.confirmation_text)
+    confirm_keywords = strategy.get("confirmKeywords") or strategy.get("confirm_keywords") or (["yes", "okay", "register", "agree"] if body.language == "en-US" else ["需要", "好的", "可以", "同意", "登记", "我要登记"])
+    decline_keywords = strategy.get("declineKeywords") or strategy.get("decline_keywords") or (["no", "not now", "cancel", "do not register"] if body.language == "en-US" else ["不需要", "不用", "不要", "暂不", "取消", "不登记"])
+
+    def contains_keyword(values: list[Any]) -> bool:
+        for value in values:
+            keyword = _normalize_navigation_text(value)
+            if keyword and (confirmation == keyword if len(keyword) == 1 else keyword in confirmation):
+                return True
+        return False
+
+    if contains_keyword(decline_keywords) or not contains_keyword(confirm_keywords):
+        raise HTTPException(status_code=409, detail={"code": "SHOPPING_REGISTRATION_NOT_CONFIRMED", "detail": "用户尚未明确同意登记"})
+    exhibit_ids = [str(value) for value in store.get_links("interaction_shopping", body.strategy_id, "exhibits")]
+    if not exhibit_ids:
+        exhibit_ids = [str(value) for value in strategy.get("exhibitIds", strategy.get("exhibit_ids", []))]
+    exhibit = next((store.get_record("exhibits", exhibit_id) for exhibit_id in exhibit_ids if store.get_record("exhibits", exhibit_id)), None)
+    if not exhibit or str(exhibit.get("exhibitionId") or exhibit.get("exhibition_id") or "") != exhibition_id:
+        raise HTTPException(status_code=409, detail={"code": "SHOPPING_EXHIBIT_REQUIRED", "detail": "导购策略尚未关联可登记展品"})
+    token = str(exhibit.get("surveyToken") or "")
+    if not token:
+        token = secrets.token_urlsafe(18)
+        exhibit = store.save_record(
+            "exhibits",
+            {**exhibit, "surveyToken": token, "surveyCreatedAt": utc_now()},
+            exhibition_id,
+        )
+    return {
+        "language": body.language,
+        "strategy_id": body.strategy_id,
+        "exhibit_id": str(exhibit["id"]),
+        "title": str(exhibit.get("name") or strategy.get("name") or "登记信息"),
+        "path": f"/survey/{token}",
+        "spoken_text": str(strategy.get("registrationSuccessText") or strategy.get("registration_success_text") or ("The registration QR code is ready. Please scan it with your phone to complete the form." if body.language == "en-US" else "好的，登记二维码已为您打开，请使用手机扫码填写信息。")),
+    }
+
+
 @router.post("/exhibitions/{exhibition_id}/navigation/query")
 def navigation(exhibition_id: str, request: Request, body: NavigationBody) -> dict[str, Any]:
     store = get_store(request)
@@ -1549,15 +1925,60 @@ def navigation(exhibition_id: str, request: Request, body: NavigationBody) -> di
             raise HTTPException(status_code=404, detail={"code": "CURRENT_EXHIBITION_NOT_FOUND", "detail": "当前展会未配置"})
         exhibition_id = current["id"]
     _record(store, "exhibitions", exhibition_id)
-    text = body.text.strip().lower()
-    candidates = store.list_records("exhibitors", exhibition_id=exhibition_id) + store.list_records("exhibits", exhibition_id=exhibition_id) + store.list_records("venues", exhibition_id=exhibition_id)
-    match = next((item for item in candidates if any(text_part and text_part.lower() in text for text_part in [str(item.get("name", "")), str(item.get("boothCode", "")), str(item.get("category", ""))])), None)
-    if not match:
-        return {"title": "导航提示", "spoken_text": "暂时没有找到匹配的展位或设施，您可以告诉我更具体的展商、展品或场馆名称。", "subtitle_text": "未找到匹配路线", "route": {"from": "当前位置", "to": "", "directions": [], "estimated_minutes": None}}
-    routes = store.list_records("routes", exhibition_id=exhibition_id)
-    route = routes[0] if routes else None
-    target = match.get("name", "目标位置")
-    return {"title": f"前往{target}", "spoken_text": f"正在为您规划前往{target}的路线。", "subtitle_text": f"目的地：{target}", "route": {"from": "当前位置", "to": target, "directions": (route or {}).get("directions", ["请沿现场指引前行"]), "estimated_minutes": (route or {}).get("estimatedMinutes", 5)}}
+    query = _normalize_navigation_text(body.text)
+    exhibitors = {item["id"]: item for item in store.list_records("exhibitors", exhibition_id=exhibition_id)}
+    exhibits = {item["id"]: item for item in store.list_records("exhibits", exhibition_id=exhibition_id)}
+    points = {item["id"]: item for item in store.list_records("points", exhibition_id=exhibition_id)}
+    routes = [item for item in store.list_records("routes", exhibition_id=exhibition_id) if item.get("status") != "offline" and item.get("type", "navigation") == "navigation"]
+    ranked: list[tuple[float, int, dict[str, Any], str]] = []
+    for route in routes:
+        best_score = 0.0
+        best_term = ""
+        for term in _route_match_terms(route, points, exhibitors, exhibits):
+            score = _navigation_similarity(query, term)
+            if score > best_score:
+                best_score, best_term = score, term
+        threshold = 0.66 if route.get("fuzzyMatch", route.get("fuzzy_match", True)) else 1.0
+        if best_score >= threshold:
+            ranked.append((best_score, len(best_term), route, best_term))
+    ranked.sort(key=lambda item: (item[0], item[1], item[2].get("status") == "published"), reverse=True)
+    route = ranked[0][2] if ranked else None
+
+    # Keep old data usable: a uniquely configured route can still serve a clearly
+    # named exhibition entity even before route aliases are populated.
+    fallback_destination = ""
+    if route is None and len(routes) == 1:
+        for item in [*exhibitors.values(), *exhibits.values()]:
+            entity_terms = [item.get(field) for field in ("name", "boothCode", "modelNo")]
+            if any(_normalize_navigation_text(term) in query for term in entity_terms if _normalize_navigation_text(term)):
+                route = routes[0]
+                fallback_destination = str(item.get("name") or "")
+                break
+    if route is None:
+        if body.language == "en-US":
+            return {"matched": False, "language": body.language, "title": "Navigation", "spoken_text": "No matching route was found. Please provide a more specific exhibitor, exhibit, booth, or facility name.", "subtitle_text": "No matching route", "route": {"from": "Current location", "to": "", "directions": [], "estimated_minutes": None}}
+        return {"matched": False, "language": body.language, "title": "导航提示", "spoken_text": "暂时没有找到匹配的路线，您可以告诉我更具体的展商、展品、展位或设施名称。", "subtitle_text": "未找到匹配路线", "route": {"from": "当前位置", "to": "", "directions": [], "estimated_minutes": None}}
+
+    route_points = [points[point_id] for point_id in map(str, route.get("pointIds", [])) if point_id in points]
+    origin = route_points[0].get("name", "当前位置") if route_points else "当前位置"
+    destination = fallback_destination or (route_points[-1].get("name", route.get("name", "目标位置")) if route_points else route.get("name", "目标位置"))
+    directions = [str(value).strip() for value in route.get("directions", []) if str(value).strip()]
+    spoken_text = str(route.get("spokenText") or route.get("spoken_text") or "").strip() or "。".join(value.rstrip("。") for value in directions)
+    if not spoken_text:
+        spoken_text = f"请按照现场引导前往{destination}。"
+    image_urls = _public_image_urls(route, route_points[-1] if route_points else None)
+    return {
+        "language": body.language,
+        "matched": True,
+        "route_id": route.get("id"),
+        "matched_keyword": ranked[0][3] if ranked else "",
+        "title": route.get("name") or f"前往{destination}",
+        "spoken_text": spoken_text,
+        "subtitle_text": spoken_text,
+        "image_url": image_urls[0] if image_urls else None,
+        "image_urls": image_urls,
+        "route": {"from": origin, "to": destination, "directions": directions, "estimated_minutes": route.get("estimatedMinutes")},
+    }
 
 
 @router.post("/runtime/lead")
@@ -1588,3 +2009,5 @@ def terminal_heartbeat(request: Request, body: RecordBody) -> dict[str, Any]:
 # Web 端历史调用路径没有 /api/v1 前缀，保留原调用契约；Admin 端仍使用上面的统一前缀。
 public_router.add_api_route("/exhibitions/{exhibition_id}/digital-human-config", public_config, methods=["GET"])
 public_router.add_api_route("/exhibitions/{exhibition_id}/navigation/query", navigation, methods=["POST"])
+public_router.add_api_route("/exhibitions/{exhibition_id}/shopping/query", shopping_query, methods=["POST"])
+public_router.add_api_route("/exhibitions/{exhibition_id}/shopping/registration", shopping_registration, methods=["POST"])

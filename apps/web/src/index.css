@@ -207,6 +207,12 @@ body {
 .digital-display-navigation-copy .digital-display-navigation-summary { color: rgba(239, 251, 255, .9); }
 .digital-display-navigation-copy .digital-display-navigation-route { color: rgba(205, 236, 255, .78); }
 .digital-display-navigation-copy ol { margin: 5px 0 0; padding-left: 18px; color: rgba(224, 245, 255, .88); }
+.digital-display-registration-card { position: relative; display: grid; align-items: center; gap: 12px; grid-template-columns: 116px minmax(0, 1fr); align-self: stretch; border: 1px solid rgba(151, 239, 221, .55); border-radius: 14px; padding: 12px; color: #efffff; background: rgba(3, 88, 104, .72); box-shadow: 0 14px 34px rgba(0, 25, 62, .3); }
+.digital-display-registration-card > button { position: absolute; top: 7px; right: 8px; border: 0; color: rgba(231, 254, 255, .78); background: transparent; font-size: 18px; cursor: pointer; }
+.digital-display-registration-card > img { display: block; width: 116px; height: 116px; border-radius: 9px; background: #fff; }
+.digital-display-registration-card strong { display: block; padding-right: 18px; font-size: 13px; }
+.digital-display-registration-card p { margin: 7px 0; padding: 0; color: rgba(226, 250, 251, .82); background: transparent; font-size: 10px; line-height: 1.6; }
+.digital-display-registration-card a { color: #a8f3ff; font-size: 10px; text-decoration: underline; }
 .digital-display-chat-empty { align-self: center; margin: auto 0; color: rgba(245, 253, 255, .92); font-size: clamp(16px, 2.3vw, 23px); font-weight: 500; letter-spacing: .04em; text-align: center; }
 .digital-display-chat-line { display: flex; max-width: 88%; align-items: flex-start; gap: 8px; color: rgba(245, 253, 255, .92); font-size: 12px; line-height: 1.65; }
 .digital-display-chat-line.has-entities { width: min(100%, 520px); max-width: 100%; flex-direction: column; }
@@ -273,6 +279,8 @@ body {
 
 @media (max-width: 760px) {
   .digital-display-shell { height: 100dvh; min-height: 580px; }
+  .digital-display-registration-card { grid-template-columns: 92px minmax(0, 1fr); }
+  .digital-display-registration-card > img { width: 92px; height: 92px; }
   .digital-display-root { min-height: 100dvh; }
   .digital-display-header { top: 17px; left: 18px; right: 18px; }
   .digital-display-watermark { display: none; }

@@ -2,7 +2,7 @@
 
 ## 一、必须新增的接口
 
-### [ ] 1. 获取会展数字人配置
+### [x] 1. 获取会展数字人配置
 
 接口：
 
@@ -21,16 +21,25 @@ GET /exhibitions/{exhibition_id}/digital-human-config
     "navigation": ["导航", "怎么走", "在哪里", "洗手间", "展位在哪"],
     "exhibition_content": ["展品", "展商", "展会", "介绍", "活动"]
   },
-  "supports_deferred_speak": false
+  "supports_deferred_speak": true,
+  "wake_word": {
+    "enabled": true,
+    "words": ["你好小展"],
+    "active_window_seconds": 30
+  },
+  "welcome": {
+    "script_id": "script-1",
+    "text": "您好，欢迎来到本届展会。"
+  }
 }
 ```
 
 要求：
 
-- [ ] 支持按会展 ID 返回配置。
-- [ ] 如果终端没有传入会展 ID，支持 `current` 作为当前绑定会展。
-- [ ] 关键词数组允许为空，但必须返回合法 JSON。
-- [ ] 配置不存在时返回明确的 404 或业务错误信息。
+- [x] 支持按会展 ID 返回配置。
+- [x] 如果终端没有传入会展 ID，支持 `current` 作为当前绑定会展。
+- [x] 关键词数组允许为空，但必须返回合法 JSON。
+- [x] 配置不存在时返回明确的 404 或业务错误信息。
 
 ### [ ] 2. 查询导航结果
 
@@ -117,10 +126,10 @@ WS /sessions/{session_id}/speak_audio_stream
 
 如果后端支持 `defer_speak=true`：
 
-- [ ] 只完成语音识别并返回文本。
-- [ ] 不要在识别完成后自动调用 `speak`。
-- [ ] 返回格式与 `/transcribe` 一致：`session_id`、`status`、`text`。
-- [ ] 未传 `defer_speak` 时保持现有自动播报行为，兼容旧客户端。
+- [x] 只完成语音识别并返回文本。
+- [x] 不要在识别完成后自动调用 `speak`。
+- [x] 返回格式与 `/transcribe` 一致：`session_id`、`status`、`text`。
+- [x] 未传 `defer_speak` 时保持现有自动播报行为，兼容旧客户端。
 
 如果暂时不支持该字段，前端会继续使用 `/transcribe`，功能可用但实时性略低。
 

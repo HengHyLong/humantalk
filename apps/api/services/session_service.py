@@ -61,6 +61,7 @@ async def create_session(
     tts_voice: str | None = None,
     tts_model: str | None = None,
     llm_system_prompt: str | None = None,
+    language: str = "zh-CN",
     custom_ref_image_path: str | None = None,
     wav2lip_postprocess_mode: str | None = None,
     fasterliveportrait_config: Mapping[str, object] | None = None,
@@ -85,6 +86,7 @@ async def create_session(
         "avatar_id": avatar_id,
         "model": model,
         "state": "created",
+        "language": language,
     }
     if persona_id:
         data["persona_id"] = persona_id
@@ -125,6 +127,7 @@ async def create_session(
         "session_id": sid,
         "avatar_id": avatar_id,
         "model": model,
+        "language": language,
     }
     if persona_id:
         init_task["persona_id"] = persona_id
@@ -271,6 +274,7 @@ async def speak(
     sid: str,
     text: str,
     *,
+    language: str = "zh-CN",
     voice: str | None = None,
     tts_provider: str | None = None,
     tts_model: str | None = None,
@@ -285,6 +289,7 @@ async def speak(
         "cmd": "speak",
         "session_id": sid,
         "text": text,
+        "language": language,
         # Worker 用于测量「API 入队 speak → 首帧进 WebRTC」墙钟（与 Worker 同机时钟）
         "enqueue_unix": time.time(),
     }

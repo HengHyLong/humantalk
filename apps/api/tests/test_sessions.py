@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 import apps.api.main as api_main
 import apps.api.routes.health as health_routes
 import apps.api.routes.sessions as sessions_routes
-from apps.api.schemas.session import CreateSessionRequest
+from apps.api.schemas.session import CreateSessionRequest, SpeakRequest
 import apps.unified.main as unified_main
 import opentalking.runtime.task_consumer as task_consumer
 from opentalking.providers.rtc.aiortc import adapter as aiortc_adapter
@@ -23,6 +23,33 @@ from opentalking.core.model_config import clear_model_config_cache
 from opentalking.core.redis_keys import FLASHTALK_QUEUE_STATUS
 from opentalking.core.session_store import session_key, set_session_state
 from opentalking.pipeline.recording.recording import append_flashtalk_frames
+
+
+def test_conversation_language_schema_is_strict_and_defaults_to_chinese() -> None:
+    assert CreateSessionRequest().language == "zh-CN"
+    assert SpeakRequest(text="hello", language="en-US").language == "en-US"
+    with pytest.raises(ValueError):
+        SpeakRequest(text="bonjour", language="fr-FR")
+
+
+def test_worker_forwards_language_marker_to_chat_runner(tmp_path: Path) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeRunner:
+        def create_chat_task(self, text: str, **kwargs: object) -> None:
+            calls.append({"text": text, **kwargs})
+
+    asyncio.run(
+        task_consumer.handle_worker_task(
+            {"cmd": "speak", "session_id": "language-session", "text": "Where is Hall B?", "language": "en-US"},
+            None,
+            tmp_path,
+            "cpu",
+            {"language-session": FakeRunner()},  # type: ignore[dict-item]
+        )
+    )
+
+    assert calls[0]["language"] == "en-US"
 
 
 def test_normalize_voice_for_speak_accepts_elevenlabs_voice_id() -> None:
@@ -1011,6 +1038,43 @@ def test_speak_audio_passes_request_level_stt_provider(
     assert response.status_code == 200, response.json()
     assert response.json()["text"] == "上传识别文本"
     assert seen == ["dashscope"]
+
+
+def test_speak_audio_defer_speak_only_returns_transcription(
+    unified_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    speak_calls: list[str] = []
+
+    async def fake_transcribe_upload_path(upload_path: Path, *, stt_provider: str | None = None) -> str:
+        del upload_path, stt_provider
+        return "你好小展，A1馆怎么走"
+
+    async def fake_speak(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+        speak_calls.append("called")
+
+    monkeypatch.setattr(sessions_routes, "_transcribe_upload_path", fake_transcribe_upload_path)
+    monkeypatch.setattr(sessions_routes.session_service, "speak", fake_speak)
+
+    create_response = unified_client.post(
+        "/sessions",
+        json={"avatar_id": "singer", "model": "flashtalk"},
+    )
+    session_id = create_response.json()["session_id"]
+    response = unified_client.post(
+        f"/sessions/{session_id}/speak_audio",
+        data={"tts_provider": "edge", "defer_speak": "true"},
+        files={"file": ("speech.webm", b"fake-audio", "audio/webm")},
+    )
+
+    assert response.status_code == 200, response.json()
+    assert response.json() == {
+        "session_id": session_id,
+        "status": "transcribed",
+        "text": "你好小展，A1馆怎么走",
+    }
+    assert speak_calls == []
 
 
 def test_update_fasterliveportrait_config_for_active_session(

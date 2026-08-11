@@ -33,6 +33,7 @@ import {
   apiPut,
   apiUploadFile,
   buildApiUrl,
+  createShoppingRegistration,
   getMemoryLibraries,
   getExhibitionVoiceConfig,
   listExhibitionEntities,
@@ -41,6 +42,7 @@ import {
   listSceneCompositions,
   queryExhibitionQa,
   queryExhibitionNavigation,
+  queryExhibitionShopping,
   transcribeSessionAudio,
   loadRuntimeConfig,
   uploadExportVideo,
@@ -52,6 +54,7 @@ import {
   type ExhibitionSummary,
   type ExhibitionQaQueryResponse,
   type NavigationResult,
+  type ShoppingRegistrationResult,
   type KnowledgeBaseSummary,
   type KnowledgeBasesResponse,
   type PersonaSummary,
@@ -71,6 +74,7 @@ import {
   matchVoiceIntent,
   normalizeExhibitionVoiceConfig,
 } from "./lib/exhibitionVoiceConfig";
+import { matchWakeWord } from "./lib/wakeWord";
 import { connectSse } from "./lib/sse";
 import {
   DEFAULT_TTS_PREVIEW_TEXT,
@@ -108,6 +112,9 @@ import {
   TTS_PROVIDER_STORAGE_KEY,
 } from "./constants/ttsQwen";
 import type { ConnectionStatus, ExhibitionEntityCard, MemoryLibrary, Message, QueueInfo } from "./types";
+import { matchExhibitionEntities } from "./lib/exhibitionEntityMatch";
+import { classifyRegistrationDecision } from "./lib/shoppingConversation";
+import { isEnglishConversation, type ConversationLanguage } from "./lib/conversationLanguage";
 import {
   canChangeModelForAvatar,
   normalizeAvatarModelSelection,
@@ -116,6 +123,20 @@ import {
 } from "./light2d/avatarSelection";
 
 const MEMORY_PROFILE_ID = "default";
+
+type PendingShoppingRegistration = {
+  strategyId: string;
+  title: string;
+  retryPrompt: string;
+  confirmKeywords: string[];
+  declineKeywords: string[];
+  relatedEntities: ExhibitionEntityCard[];
+};
+
+export type ShoppingRegistrationCard = ShoppingRegistrationResult & {
+  url: string;
+  qrDataUrl: string;
+};
 
 function bailianModelOptions(provider: TtsProviderExtended): { id: string; label: string }[] {
   switch (provider) {
@@ -732,44 +753,6 @@ function makeToastId() {
   return `toast-${++toastCounter}-${Date.now()}`;
 }
 
-function normalizeEntityKeyword(value: string): string {
-  return value
-    .toLocaleLowerCase("zh-CN")
-    .replace(/[\s,，。！？!?、;；:："'“”‘’（）()【】\[\]{}<>《》·._-]+/g, "");
-}
-
-function matchExhibitionEntities(text: string, entities: ExhibitionEntityCard[]): ExhibitionEntityCard[] {
-  const normalizedText = normalizeEntityKeyword(text);
-  if (!normalizedText) return [];
-  return entities
-    .map((entity) => ({
-      entity,
-      matchLength: entity.keywords.reduce((length, keyword) => {
-        const normalizedKeyword = normalizeEntityKeyword(keyword);
-        return normalizedKeyword.length >= 2 && normalizedText.includes(normalizedKeyword)
-          ? Math.max(length, normalizedKeyword.length)
-          : length;
-      }, 0),
-    }))
-    .filter((candidate) => candidate.matchLength > 0)
-    .sort((left, right) => right.matchLength - left.matchLength)
-    .slice(0, 3)
-    .map((candidate) => candidate.entity);
-}
-
-export function buildEntitySpeech(entities: ExhibitionEntityCard[]): string {
-  return entities
-    .map((entity) => {
-      const details = entity.details
-        .slice(0, 4)
-        .map((detail) => `${detail.label}：${detail.value}`)
-        .join("，");
-      return [`为您介绍${entity.name}`, entity.description.trim(), details].filter(Boolean).join("。 ");
-    })
-    .filter(Boolean)
-    .join("。 ");
-}
-
 function pickInitialAvatar(
   avatars: AvatarSummary[],
   registeredModels: string[],
@@ -1010,13 +993,24 @@ export default function App() {
 
   // Chat
   const [messages, setMessages] = useState<Message[]>([]);
+  const [conversationLanguage, setConversationLanguage] = useState<ConversationLanguage>("zh-CN");
+  const englishConversation = isEnglishConversation(conversationLanguage);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [currentSubtitle, setCurrentSubtitle] = useState("");
   const [exhibitionVoiceConfig, setExhibitionVoiceConfig] = useState<ExhibitionVoiceConfig | null>(null);
   const [exhibitionEntities, setExhibitionEntities] = useState<ExhibitionEntityCard[]>([]);
   const [exhibitionConfigNotice, setExhibitionConfigNotice] = useState<string | null>(null);
-  const [lastVoiceIntent, setLastVoiceIntent] = useState<"navigation" | "exhibition_content" | null>(null);
+  const [lastVoiceIntent, setLastVoiceIntent] = useState<"navigation" | "exhibition_content" | "shopping" | null>(null);
   const [navigationResult, setNavigationResult] = useState<NavigationResult | null>(null);
+  const [shoppingRegistration, setShoppingRegistration] = useState<ShoppingRegistrationCard | null>(null);
+  const pendingShoppingRegistrationRef = useRef<PendingShoppingRegistration | null>(null);
+  const wakeAwakeUntilRef = useRef(0);
+
+  useEffect(() => {
+    wakeAwakeUntilRef.current = 0;
+    pendingShoppingRegistrationRef.current = null;
+    setShoppingRegistration(null);
+  }, [configuredExhibitionId, sessionId]);
   const [, setRuntimeStatus] = useState<HealthResponse | null>(null);
   const [runtimeConfig, setRuntimeConfig] = useState<RuntimeConfigResponse | null>(null);
   const [runtimeConfigLoading, setRuntimeConfigLoading] = useState(false);
@@ -1381,12 +1375,14 @@ export default function App() {
       const raw = await getExhibitionVoiceConfig(configuredExhibitionId);
       const normalized = normalizeExhibitionVoiceConfig(raw, configuredExhibitionId);
       setExhibitionVoiceConfig(normalized);
+      wakeAwakeUntilRef.current = 0;
       setExhibitionConfigNotice(
         normalized.keywords.navigation.length ? null : "当前展会暂未配置导航关键词，将按普通展品问答处理。",
       );
     } catch (error) {
       console.warn("load exhibition voice config failed", error);
       setExhibitionVoiceConfig(null);
+      wakeAwakeUntilRef.current = 0;
       setExhibitionConfigNotice("展会导航配置暂不可用，普通展品问答仍可使用。");
     }
   }, [configuredExhibitionId]);
@@ -2409,6 +2405,7 @@ export default function App() {
         avatar_id: avatarId,
         model,
         llm_system_prompt: llmSystemPrompt.trim() || undefined,
+        language: conversationLanguage,
         tts_provider: ttsProvider,
         stt_provider: lockedAsrProvider,
         tts_voice: isEdgeTts(ttsProvider)
@@ -2501,6 +2498,7 @@ export default function App() {
     clientUserId,
     clearSubtitleState,
     closePeerConnection,
+    conversationLanguage,
     edgeVoice,
     exhibitionBindingsReady,
     exhibitions,
@@ -2709,6 +2707,7 @@ export default function App() {
       const selectedTtsVoice = resolveSelectableTtsVoice(ttsProvider, qwenVoice, bailianVoices);
       const payload = {
         text,
+        language: conversationLanguage,
         voice:
           isEdgeTts(ttsProvider)
             ? edgeVoice
@@ -2726,16 +2725,63 @@ export default function App() {
         notify(`发送失败：${detail}`, "error");
       });
     },
-    [appendAssistantError, bailianVoices, edgeVoice, isSpeaking, notify, qwenModel, qwenVoice, sessionId, ttsProvider],
+    [appendAssistantError, bailianVoices, conversationLanguage, edgeVoice, isSpeaking, notify, qwenModel, qwenVoice, sessionId, ttsProvider],
   );
 
   const routeRecognizedText = useCallback(async (rawText: string) => {
     const text = rawText.trim();
     if (!text || !sessionId) return;
     const relatedEntities = matchExhibitionEntities(text, exhibitionEntities);
+
+    const pendingShopping = pendingShoppingRegistrationRef.current;
+    if (pendingShopping) {
+      setLastVoiceIntent("shopping");
+      setNavigationResult(null);
+      const decision = classifyRegistrationDecision(
+        text,
+        pendingShopping.confirmKeywords,
+        pendingShopping.declineKeywords,
+      );
+      if (decision === "decline") {
+        pendingShoppingRegistrationRef.current = null;
+        setShoppingRegistration(null);
+        enqueueSpeech(englishConversation ? "Okay, no registration for now. You can continue exploring other exhibits." : "好的，暂不登记。您还可以继续了解其他展品。", text, pendingShopping.relatedEntities, true);
+        return;
+      }
+      if (decision === "unknown") {
+        enqueueSpeech(pendingShopping.retryPrompt, text, pendingShopping.relatedEntities, true);
+        return;
+      }
+      try {
+        const registration = await createShoppingRegistration(configuredExhibitionId, {
+          strategy_id: pendingShopping.strategyId,
+          session_id: sessionId,
+          confirmation_text: text,
+          language: conversationLanguage,
+        });
+        const url = new URL(registration.path, window.location.origin).toString();
+        const { toDataURL } = await import("qrcode");
+        const qrDataUrl = await toDataURL(url, {
+          width: 360,
+          margin: 2,
+          errorCorrectionLevel: "M",
+          color: { dark: "#082f49", light: "#ffffff" },
+        });
+        pendingShoppingRegistrationRef.current = null;
+        setShoppingRegistration({ ...registration, url, qrDataUrl });
+        enqueueSpeech(registration.spoken_text, text, pendingShopping.relatedEntities, true);
+      } catch (error) {
+        console.warn("shopping registration failed", error);
+        enqueueSpeech(englishConversation ? "The registration QR code is temporarily unavailable. Please try again later." : "登记二维码暂时无法生成，请稍后再试。", text, pendingShopping.relatedEntities, true);
+      }
+      return;
+    }
+
     const baseVoiceConfig = exhibitionVoiceConfig ?? {
       exhibition_id: configuredExhibitionId ?? "current",
       keywords: { navigation: [], exhibition_content: [] },
+      wake_word: { enabled: false, words: [], active_window_seconds: 30 },
+      welcome: { script_id: "", text: "" },
     };
     const match = matchVoiceIntent(text, {
       ...baseVoiceConfig,
@@ -2754,18 +2800,55 @@ export default function App() {
         const result = await queryExhibitionNavigation(configuredExhibitionId, {
           text,
           session_id: sessionId,
+          language: conversationLanguage,
         });
         setNavigationResult(result);
         const spokenText = result.spoken_text?.trim();
-        enqueueSpeech(spokenText || text, text, relatedEntities);
+        enqueueSpeech(spokenText || text, text, relatedEntities, true);
         return;
       } catch (error) {
         console.warn("navigation query failed, falling back to exhibition Q&A", error);
         setNavigationResult(null);
-        notify("导航服务暂不可用，已切换为展会内容问答。", "info");
+        notify(englishConversation ? "Navigation is temporarily unavailable. Switched to exhibition Q&A." : "导航服务暂不可用，已切换为展会内容问答。", "info");
       }
     } else {
       setNavigationResult(null);
+    }
+    try {
+      const shopping = await queryExhibitionShopping(configuredExhibitionId, {
+        text,
+        session_id: sessionId,
+        language: conversationLanguage,
+      });
+      if (shopping.matched && shopping.strategy_id) {
+        const entityIds = new Set(shopping.related_entity_ids ?? shopping.exhibit_ids ?? []);
+        const shoppingEntities = exhibitionEntities.filter((entity) => entityIds.has(entity.id));
+        const registrationPrompt = shopping.registration_prompt?.trim() || (englishConversation ? "Would you like me to display the registration QR code?" : "需要为您弹出登记二维码吗？");
+        pendingShoppingRegistrationRef.current = {
+          strategyId: shopping.strategy_id,
+          title: shopping.title?.trim() || (englishConversation ? "Shopping assistant" : "虚拟导购"),
+          retryPrompt: shopping.confirmation_retry_prompt?.trim() || (englishConversation ? "Please answer yes or no to registration." : "请回答需要或不需要登记。"),
+          confirmKeywords: shopping.confirm_keywords?.length ? shopping.confirm_keywords : (englishConversation ? ["yes", "okay", "register", "agree"] : ["需要", "好的", "可以", "同意", "登记"]),
+          declineKeywords: shopping.decline_keywords?.length ? shopping.decline_keywords : (englishConversation ? ["no", "not now", "cancel", "do not register"] : ["不需要", "不用", "不要", "暂不", "取消", "不登记"]),
+          relatedEntities: shoppingEntities,
+        };
+        setLastVoiceIntent("shopping");
+        setShoppingRegistration(null);
+        const introduction = shopping.spoken_text?.trim();
+        enqueueSpeech([introduction, registrationPrompt].filter(Boolean).join("\n"), text, shoppingEntities, true);
+        return;
+      }
+    } catch (error) {
+      console.warn("shopping keyword query failed", error);
+    }
+
+    const introductionEntity = relatedEntities.find((entity) => entity.kind === "venue" || entity.kind === "point" || entity.kind === "exhibit" || entity.kind === "exhibitor");
+    if (introductionEntity) {
+      const introductionText = introductionEntity.spoken_text?.trim() || introductionEntity.description.trim();
+      if (introductionText) {
+        enqueueSpeech(introductionText, text, [introductionEntity], true);
+        return;
+      }
     }
 
     const turnId = `turn-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -2780,7 +2863,7 @@ export default function App() {
       {
         id: pendingId,
         role: "assistant",
-        text: "正在检索展会知识...",
+        text: englishConversation ? "Searching exhibition knowledge..." : "正在检索展会知识...",
         timestamp: Date.now(),
         relatedEntities,
         qa: { turnId },
@@ -2793,7 +2876,7 @@ export default function App() {
         session_id: sessionId,
         turn_id: turnId,
         question: text,
-        locale: "zh-CN",
+        locale: conversationLanguage,
         voice:
           isEdgeTts(ttsProvider)
             ? edgeVoice
@@ -2807,7 +2890,9 @@ export default function App() {
         message.id === pendingId
           ? {
               ...message,
-              text: result.speak_mode === "agent" ? "正在根据知识库生成答案..." : "正在合成语音和口型...",
+              text: result.speak_mode === "agent"
+                ? (englishConversation ? "Generating an answer from the knowledge base..." : "正在根据知识库生成答案...")
+                : (englishConversation ? "Synthesizing speech and lip movement..." : "正在合成语音和口型..."),
               qa: {
                 turnId: result.turn_id,
                 traceId: result.trace_id,
@@ -2818,43 +2903,66 @@ export default function App() {
           : message
       )));
       if (result.match_type === "retrieval_error") {
-        notify(`知识检索暂不可用（Trace：${result.trace_id}）`, "error");
+        notify(englishConversation ? `Knowledge retrieval is unavailable (Trace: ${result.trace_id})` : `知识检索暂不可用（Trace：${result.trace_id}）`, "error");
       } else if (result.match_type === "clarification") {
-        notify("问题信息不足，请根据数字人的追问补充具体对象。", "info");
+        notify(englishConversation ? "Please provide more details based on the follow-up question." : "问题信息不足，请根据数字人的追问补充具体对象。", "info");
       }
     } catch (error) {
       console.warn("exhibition Q&A query failed", error);
-      const detail = apiErrorMessage(error, "问答服务暂不可用，请稍后重试。");
+      const detail = apiErrorMessage(error, englishConversation ? "The Q&A service is temporarily unavailable." : "问答服务暂不可用，请稍后重试。");
       pendingAssistantMsgIdRef.current = null;
       setIsSpeaking(false);
       setMessages((prev) => prev.map((message) => (
-        message.id === pendingId ? { ...message, text: `问答失败：${detail}` } : message
+        message.id === pendingId ? { ...message, text: englishConversation ? `Q&A failed: ${detail}` : `问答失败：${detail}` } : message
       )));
-      notify(`问答失败：${detail}`, "error");
+      notify(englishConversation ? `Q&A failed: ${detail}` : `问答失败：${detail}`, "error");
     }
-  }, [bailianVoices, configuredExhibitionId, edgeVoice, enqueueSpeech, exhibitionEntities, exhibitionVoiceConfig, notify, qwenModel, qwenVoice, sessionId, ttsProvider]);
-
+  }, [bailianVoices, configuredExhibitionId, conversationLanguage, edgeVoice, englishConversation, enqueueSpeech, exhibitionEntities, exhibitionVoiceConfig, notify, qwenModel, qwenVoice, sessionId, ttsProvider]);
   const handleSend = useCallback((text: string) => {
     void routeRecognizedText(text);
   }, [routeRecognizedText]);
+
+  const handleRecognizedVoiceText = useCallback(async (rawText: string) => {
+    const text = rawText.trim();
+    if (!text) return;
+    const wakeConfig = exhibitionVoiceConfig?.wake_word;
+    if (!wakeConfig?.enabled || !wakeConfig.words.length) {
+      await routeRecognizedText(text);
+      return;
+    }
+
+    const now = Date.now();
+    const matched = matchWakeWord(text, wakeConfig.words);
+    if (!matched && now >= wakeAwakeUntilRef.current) return;
+
+    wakeAwakeUntilRef.current = now + wakeConfig.active_window_seconds * 1000;
+    if (matched && !matched.remainder) {
+      const welcomeText = exhibitionVoiceConfig?.welcome.text.trim();
+      if (welcomeText) {
+        enqueueSpeech(welcomeText, text, matchExhibitionEntities(text, exhibitionEntities), true);
+      }
+      return;
+    }
+    await routeRecognizedText(matched?.remainder || text);
+  }, [enqueueSpeech, exhibitionEntities, exhibitionVoiceConfig, routeRecognizedText]);
 
   const handleRealtimeVoiceAudio = useCallback(async (blob: Blob) => {
     if (!sessionId) return;
     try {
       const result = await transcribeSessionAudio(sessionId, blob, activeAsrProvider || undefined);
-      await routeRecognizedText(result.text);
+      await handleRecognizedVoiceText(result.text);
     } catch (error) {
       console.warn("realtime voice transcription failed", error);
       const detail = apiErrorMessage(error, "语音识别失败，请检查 STT 配置。");
       appendAssistantError(`语音识别失败：${detail}`);
       notify(`语音识别失败：${detail}`, "error");
     }
-  }, [activeAsrProvider, appendAssistantError, notify, routeRecognizedText, sessionId]);
+  }, [activeAsrProvider, appendAssistantError, handleRecognizedVoiceText, notify, sessionId]);
 
-  /** 流式 STT 只返回识别文本，统一交给实体/导航路由决定播报内容。 */
+  /** 流式 STT 只返回识别文本，统一交给唤醒词和业务路由处理。 */
   const handleSpeakAudioStreamResult = useCallback(({ text }: { text: string }) => {
-    void routeRecognizedText(text);
-  }, [routeRecognizedText]);
+    void handleRecognizedVoiceText(text);
+  }, [handleRecognizedVoiceText]);
 
   const handleSpeakAudioStreamError = useCallback((message: string) => {
     const detail = message || "语音识别失败，请检查 STT 配置。";
@@ -2875,7 +2983,7 @@ export default function App() {
           activeAsrProvider || normalizeAsrProvider(asrProvider, "dashscope"),
           { signal: ac.signal },
         );
-        await routeRecognizedText(res.text);
+        await handleRecognizedVoiceText(res.text);
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") return;
         // 勿将 connection 置为 error，否则会重新出现「开始 Demo」全屏遮罩
@@ -2889,7 +2997,7 @@ export default function App() {
         }
       }
     },
-    [activeAsrProvider, appendAssistantError, asrProvider, notify, routeRecognizedText, sessionId],
+    [activeAsrProvider, appendAssistantError, asrProvider, handleRecognizedVoiceText, notify, sessionId],
   );
 
   const handleInterrupt = useCallback(() => {
@@ -3378,7 +3486,11 @@ export default function App() {
           onSpeakAudio={handleRealtimeVoiceAudio}
           voiceIntent={lastVoiceIntent}
           navigationResult={navigationResult}
+          shoppingRegistration={shoppingRegistration}
+          onCloseShoppingRegistration={() => setShoppingRegistration(null)}
           exhibitionConfigNotice={exhibitionConfigNotice}
+          language={conversationLanguage}
+          onLanguageChange={setConversationLanguage}
           onNotify={notify}
           ttsProvider={ttsProvider}
           sttProvider={activeAsrProvider}
@@ -3626,6 +3738,7 @@ export default function App() {
                 </div>
               ) : null}
               <ChatInput
+                language={conversationLanguage}
                 onSend={handleSend}
                 onSpeakAudio={handleSpeakAudio}
                 onSpeakFlashtalkAudioFile={
@@ -3634,7 +3747,6 @@ export default function App() {
                 streamingAsrSessionId={sessionId}
                 onSpeakAudioStreamResult={handleSpeakAudioStreamResult}
                 onSpeakAudioStreamError={handleSpeakAudioStreamError}
-                deferSpeak
                 onInterrupt={handleInterrupt}
                 isSpeaking={isSpeaking}
                 disabled={connection !== "live" && connection !== "expiring"}
@@ -3645,6 +3757,7 @@ export default function App() {
                 edgeVoice={edgeVoice}
                 qwenModel={qwenModel}
                 qwenVoice={qwenVoice}
+                deferSpeak={Boolean(exhibitionVoiceConfig?.supports_deferred_speak)}
               />
             </div>
             ) : null}

@@ -326,6 +326,7 @@ def _create_runner(
         llm_model=settings.llm_model,
         llm_system_prompt=str(task.get("llm_system_prompt", "") or settings.llm_system_prompt)
         or "你是一个友好的数字人助手，请用简洁的语言回答问题。不要使用表情符号或emoji。",
+        language=str(task.get("language", "zh-CN") or "zh-CN"),
         wav2lip_postprocess_mode=str(task.get("wav2lip_postprocess_mode", "") or ""),
         memory_scope=memory_scope,
         **agent_kwargs,
@@ -561,6 +562,7 @@ async def handle_worker_task(
         tts_provider = str(tp).strip().lower() if tp else None
         tm = task.get("tts_model")
         tts_model = str(tm).strip() if tm else None
+        language = "en-US" if str(task.get("language", "zh-CN")) == "en-US" else "zh-CN"
         enqueue_unix = task.get("enqueue_unix")
         if isinstance(enqueue_unix, (int, float)):
             log.info(
@@ -586,6 +588,7 @@ async def handle_worker_task(
                 "tts_voice": tts_voice or None,
                 "tts_provider": tts_provider or None,
                 "tts_model": tts_model or None,
+                "language": language,
                 "enqueue_unix": enqueue_value,
             }
             if knowledge_context:

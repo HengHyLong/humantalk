@@ -43,7 +43,7 @@ import type {
 const STORAGE_PREFIX = "opentalking-admin-";
 const now = () => new Date().toISOString();
 const leadSourceName = (item: Lead) => item.sourceName || (item.source === "exhibit_survey" ? "展品调研二维码" : item.terminalName || "人工录入");
-export type EventImageResource = "exhibitors" | "exhibits" | "venues" | "points";
+export type EventImageResource = "exhibitors" | "exhibits" | "venues" | "points" | "routes";
 
 function readLocalImage(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -111,7 +111,7 @@ const DEFAULT_SCRIPTS: ScriptTemplate[] = [
 ];
 
 const DEFAULT_WELCOME_CONFIGS: WelcomeConfig[] = [
-  { id: "welcome-config-1", exhibitionId: "exhibition-1", exhibitionName: "2026 西部博览会", triggers: ["终端启动", "用户靠近", "唤醒词：你好小展"], scriptId: "script-1", highlights: ["智能制造展区", "主论坛活动", "现场签到服务"], checkInGuide: "请前往1号入口签到台，出示预约二维码完成入场。", notices: "请按照现场工作人员指引有序参观，保管好随身物品。", routingStrategy: "按时段优先推荐当前开放展馆", status: "active", updatedAt: "2026-08-03 16:20:00" },
+  { id: "welcome-config-1", exhibitionId: "exhibition-1", exhibitionName: "2026 西部博览会", triggers: ["终端启动", "用户靠近", "唤醒词"], wakeWords: ["你好小展"], wakeActiveSeconds: 30, scriptId: "script-1", highlights: ["智能制造展区", "主论坛活动", "现场签到服务"], checkInGuide: "请前往1号入口签到台，出示预约二维码完成入场。", notices: "请按照现场工作人员指引有序参观，保管好随身物品。", routingStrategy: "按时段优先推荐当前开放展馆", status: "active", updatedAt: "2026-08-03 16:20:00" },
 ];
 
 const DEFAULT_EXPLAIN_FLOWS: ExplainFlow[] = [
@@ -120,7 +120,7 @@ const DEFAULT_EXPLAIN_FLOWS: ExplainFlow[] = [
 ];
 
 const DEFAULT_SHOPPING_STRATEGIES: ShoppingStrategy[] = [
-  { id: "shopping-strategy-1", exhibitionId: "exhibition-1", exhibitionName: "2026 西部博览会", name: "协作机器人展品推荐", tags: ["协作机器人", "智能制造", "产线"], tagWeight: 0.7, compareDimensions: ["适用场景", "部署周期", "服务能力"], intentThreshold: 70, exhibitCategories: ["智能装备"], exhibitIds: ["exhibit-1"], status: "active", updatedAt: "2026-08-03 14:40:00" },
+  { id: "shopping-strategy-1", exhibitionId: "exhibition-1", exhibitionName: "2026 西部博览会", name: "协作机器人展品推荐", tags: ["协作机器人", "智能制造", "产线"], aliases: ["机器人工作站", "CR-2400"], fuzzyMatch: true, spokenText: "这款协作机器人工作站支持多工位协作和视觉识别，适合柔性生产线快速部署。", registrationPrompt: "如果您希望进一步了解方案或报价，需要为您弹出登记二维码吗？", confirmationRetryPrompt: "请告诉我需要登记还是暂不登记。", registrationSuccessText: "好的，登记二维码已为您打开，请使用手机扫码填写信息。", confirmKeywords: ["需要", "好的", "可以", "同意", "登记", "我要登记"], declineKeywords: ["不需要", "不用", "不要", "暂不", "取消", "不登记"], tagWeight: 0.7, compareDimensions: ["适用场景", "部署周期", "服务能力"], intentThreshold: 70, exhibitCategories: ["智能装备"], exhibitIds: ["exhibit-1"], status: "active", updatedAt: "2026-08-03 14:40:00" },
 ];
 
 const DEFAULT_PACKAGES: PublishPackage[] = [
@@ -160,8 +160,8 @@ const DEFAULT_EXHIBITS: Exhibit[] = [
 ];
 
 const DEFAULT_ROUTES: ExhibitionRoute[] = [
-  { id: "route-1", venueId: "venue-1", name: "主入口到智能制造展区", type: "navigation", pointIds: ["point-entrance", "point-booth-a1"], directions: ["从1号入口沿中央通道向东直行。", "经过服务台后右转进入A1馆。"], estimatedMinutes: 4, description: "适合现场导航和数字人讲解。", status: "published", createdAt: "2026-07-28 09:00", updatedAt: "2026-08-01 17:20" },
-  { id: "route-2", venueId: "venue-1", name: "主入口到休息区", type: "navigation", pointIds: ["point-entrance", "point-rest"], directions: ["沿中央通道直行至服务设施区域。"], estimatedMinutes: 2, description: "适合现场导航和数字人讲解。", status: "published", createdAt: "2026-07-28 09:20", updatedAt: "2026-07-28 09:20" },
+  { id: "route-1", exhibitionId: "exhibition-1", venueId: "venue-1", name: "主入口到智能制造展区", type: "navigation", pointIds: ["point-entrance", "point-booth-a1"], keywords: ["怎么去智能制造展区", "智能制造展区怎么走"], aliases: ["A1馆", "智造展区"], fuzzyMatch: true, directions: ["从1号入口沿中央通道向东直行。", "经过服务台后右转进入A1馆。"], spokenText: "从1号入口沿中央通道向东直行，经过服务台后右转进入A1馆。", imageUrls: [], estimatedMinutes: 4, description: "适合现场导航和数字人讲解。", status: "published", createdAt: "2026-07-28 09:00", updatedAt: "2026-08-01 17:20" },
+  { id: "route-2", exhibitionId: "exhibition-1", venueId: "venue-1", name: "主入口到休息区", type: "navigation", pointIds: ["point-entrance", "point-rest"], keywords: ["休息区怎么走"], aliases: ["休息区", "中央休息区"], fuzzyMatch: true, directions: ["沿中央通道直行至服务设施区域。"], spokenText: "请沿中央通道直行至服务设施区域。", imageUrls: [], estimatedMinutes: 2, description: "适合现场导航和数字人讲解。", status: "published", createdAt: "2026-07-28 09:20", updatedAt: "2026-07-28 09:20" },
 ];
 
 const DEFAULT_SCHEDULES: EventSchedule[] = [
@@ -270,7 +270,7 @@ export interface AdminApiClient {
   saveExhibition(item: Exhibition): Promise<Exhibition>;
   deleteExhibition(id: string): Promise<void>;
   transitionExhibition(id: string, status: ExhibitionStatus): Promise<Exhibition>;
-  uploadEventImages(files: File[], resource: "exhibitors" | "exhibits" | "venues" | "points"): Promise<string[]>;
+  uploadEventImages(files: File[], resource: EventImageResource): Promise<string[]>;
   listVenues(): Promise<EventVenue[]>;
   saveVenue(item: EventVenue): Promise<EventVenue>;
   deleteVenue(id: string): Promise<void>;
@@ -430,8 +430,18 @@ export class MockAdminApiClient implements AdminApiClient {
   async listScripts() { migrateInteractionMockData(); return readStore("scripts", DEFAULT_SCRIPTS); }
   async saveScript(item: ScriptTemplate) { const next = [item, ...(await this.listScripts()).filter((candidate) => candidate.id !== item.id)]; writeStore("scripts", next); return item; }
   async deleteScript(id: string) { writeStore("scripts", (await this.listScripts()).filter((item) => item.id !== id)); }
-  async listWelcomeConfigs(exhibitionId?: string) { migrateInteractionMockData(); return (await readStore<WelcomeConfig[]>("welcome-configs", DEFAULT_WELCOME_CONFIGS)).filter((item) => !exhibitionId || exhibitionId === "all" || item.exhibitionId === exhibitionId); }
-  async saveWelcomeConfig(item: WelcomeConfig) { const exhibition = (await this.listExhibitions()).find((candidate) => candidate.id === item.exhibitionId); if (!exhibition) throw new Error("欢迎配置所属展会不存在"); const scripts = await this.listScripts(); if (!scripts.some((script) => script.id === item.scriptId && script.scene === "welcome")) throw new Error("欢迎配置必须关联迎宾话术"); const saved = { ...item, exhibitionName: exhibition.name, updatedAt: now() }; writeStore("welcome-configs", [saved, ...(await this.listWelcomeConfigs()).filter((candidate) => candidate.id !== item.id)]); return saved; }
+  async listWelcomeConfigs(exhibitionId?: string) {
+    migrateInteractionMockData();
+    return (await readStore<WelcomeConfig[]>("welcome-configs", DEFAULT_WELCOME_CONFIGS))
+      .map((item) => ({
+        ...item,
+        triggers: normalizeWelcomeTrigger(item.triggers),
+        wakeWords: normalizeWakeWords(item as unknown as JsonRecord),
+        wakeActiveSeconds: normalizeWakeActiveSeconds(item.wakeActiveSeconds),
+      }))
+      .filter((item) => !exhibitionId || exhibitionId === "all" || item.exhibitionId === exhibitionId);
+  }
+  async saveWelcomeConfig(item: WelcomeConfig) { const exhibition = (await this.listExhibitions()).find((candidate) => candidate.id === item.exhibitionId); if (!exhibition) throw new Error("欢迎配置所属展会不存在"); const scripts = await this.listScripts(); if (!scripts.some((script) => script.id === item.scriptId && script.scene === "welcome")) throw new Error("欢迎配置必须关联迎宾话术"); const saved = { ...item, triggers: normalizeWelcomeTrigger(item.triggers), wakeWords: [...new Set(item.wakeWords.map((word) => word.trim()).filter(Boolean))], wakeActiveSeconds: normalizeWakeActiveSeconds(item.wakeActiveSeconds), exhibitionName: exhibition.name, updatedAt: now() }; writeStore("welcome-configs", [saved, ...(await this.listWelcomeConfigs()).filter((candidate) => candidate.id !== item.id)]); return saved; }
   async listExplainFlows(exhibitionId?: string) { migrateInteractionMockData(); return (await readStore<ExplainFlow[]>("explain-flows", DEFAULT_EXPLAIN_FLOWS)).filter((item) => !exhibitionId || exhibitionId === "all" || item.exhibitionId === exhibitionId); }
   async saveExplainFlow(item: ExplainFlow) { const exhibition = (await this.listExhibitions()).find((candidate) => candidate.id === item.exhibitionId); if (!exhibition) throw new Error("讲解流程所属展会不存在"); const scripts = await this.listScripts(); if (!scripts.some((script) => script.id === item.scriptId && script.scene === "explain")) throw new Error("讲解流程必须关联讲解话术"); const saved = { ...item, exhibitionName: exhibition.name, updatedAt: now() }; writeStore("explain-flows", [saved, ...(await this.listExplainFlows()).filter((candidate) => candidate.id !== item.id)]); return saved; }
   async deleteExplainFlow(id: string) { writeStore("explain-flows", (await this.listExplainFlows()).filter((item) => item.id !== id)); }
@@ -537,13 +547,33 @@ export class MockAdminApiClient implements AdminApiClient {
     const routes = await readStore<Array<ExhibitionRoute & { exhibitionId?: string; from?: string; to?: string }>>("routes", DEFAULT_ROUTES);
     const points = await this.listPoints();
     return routes.map((route) => {
-      if (route.pointIds?.length) return route;
+      if (route.pointIds?.length) return { ...route, keywords: route.keywords ?? [], aliases: route.aliases ?? [], fuzzyMatch: route.fuzzyMatch !== false, spokenText: route.spokenText ?? "", imageUrls: route.imageUrls ?? [] };
       const venueId = route.venueId ?? DEFAULT_VENUES.find((venue) => venue.exhibitionId === route.exhibitionId)?.id ?? route.exhibitionId ?? "";
       const pointIds = [route.from, route.to].map((name) => points.find((point) => point.venueId === venueId && point.name === name)?.id).filter((id): id is string => Boolean(id));
-      return { id: route.id, venueId, name: route.name, type: "navigation" as const, pointIds, directions: route.directions ?? [], estimatedMinutes: route.estimatedMinutes, description: route.description, status: route.status, createdAt: route.createdAt, updatedAt: route.updatedAt };
+      return { id: route.id, exhibitionId: route.exhibitionId, venueId, name: route.name, type: "navigation" as const, pointIds, keywords: route.keywords ?? [], aliases: route.aliases ?? [], fuzzyMatch: route.fuzzyMatch !== false, directions: route.directions ?? [], spokenText: route.spokenText ?? "", imageUrls: route.imageUrls ?? [], estimatedMinutes: route.estimatedMinutes, description: route.description, status: route.status, createdAt: route.createdAt, updatedAt: route.updatedAt };
     });
   }
-  async saveRoute(item: ExhibitionRoute) { const venue = (await this.listVenues()).find((candidate) => candidate.id === item.venueId); if (!venue) throw new Error("路线所属场地不存在"); const points = await this.listPoints(); if (item.pointIds.length < 2 || item.pointIds.some((id) => points.find((point) => point.id === id)?.venueId !== item.venueId)) throw new Error("路线至少需要两个属于同一场地的点位"); const saved = { ...item, updatedAt: now() }; writeStore("routes", [saved, ...(await this.listRoutes()).filter((candidate) => candidate.id !== item.id)]); return saved; }
+  async saveRoute(item: ExhibitionRoute) {
+    const [venues, points] = await Promise.all([this.listVenues(), this.listPoints()]);
+    const routePoints = item.pointIds.map((id) => points.find((point) => point.id === id));
+    const firstPoint = routePoints[0];
+    const exhibitionId = item.exhibitionId || venues.find((venue) => venue.id === firstPoint?.venueId)?.exhibitionId || "";
+    if (routePoints.length < 2 || routePoints.some((point) => !point || venues.find((venue) => venue.id === point.venueId)?.exhibitionId !== exhibitionId)) {
+      throw new Error("路线至少需要两个属于同一展会的有效点位");
+    }
+    const routeDirections = item.directions.filter((value) => value.trim());
+    const directions = routeDirections.length ? routeDirections : routePoints.slice(0, -1).map((point, index) => {
+      const destination = routePoints[index + 1]!;
+      const startVenue = venues.find((venue) => venue.id === point!.venueId);
+      const destinationVenue = venues.find((venue) => venue.id === destination.venueId);
+      if (point!.venueId !== destination.venueId) return `从${startVenue?.name || "当前场馆"}的${point!.name}出发，离馆后前往${destinationVenue?.name || "目标场馆"}的${destination.name}。`;
+      if (point!.floor && destination.floor && point!.floor !== destination.floor) return `从${point!.name}出发，由${point!.floor}前往${destination.floor}的${destination.name}。`;
+      return `从${point!.name}出发，前往${destination.name}。`;
+    });
+    const saved = { ...item, exhibitionId, venueId: firstPoint!.venueId, directions, updatedAt: now() };
+    writeStore("routes", [saved, ...(await this.listRoutes()).filter((candidate) => candidate.id !== item.id)]);
+    return saved;
+  }
   async deleteRoute(id: string) { writeStore("routes", (await this.listRoutes()).filter((item) => item.id !== id)); }
   async listBroadcasts() { return readStore<EmergencyBroadcast[]>("broadcasts", DEFAULT_BROADCASTS); }
   async saveBroadcast(item: EmergencyBroadcast) { const saved = { ...item, updatedAt: now() }; writeStore("broadcasts", [saved, ...(await this.listBroadcasts()).filter((candidate) => candidate.id !== item.id)]); return saved; }
@@ -627,17 +657,32 @@ function isClientDraftId(value: unknown): boolean {
 
 function stringArray(value: unknown): string[] {
   if (Array.isArray(value)) return value.map((item) => String(item)).filter(Boolean);
-  if (typeof value === "string") return value.split(/[,，\n]/).map((item) => item.trim()).filter(Boolean);
+  if (typeof value === "string") return value.split(/[,，、\n]/).map((item) => item.trim()).filter(Boolean);
   return [];
 }
 
 function normalizeWelcomeTrigger(value: unknown): string[] {
-  if (Array.isArray(value)) return stringArray(value);
-  const trigger = String(value || "");
-  if (trigger === "terminal_start") return ["终端启动"];
-  if (trigger === "user_nearby") return ["用户靠近"];
-  if (trigger === "wake_word") return ["唤醒词"];
-  return trigger ? [trigger] : [];
+  const values = Array.isArray(value) ? stringArray(value) : [String(value || "")].filter(Boolean);
+  return [...new Set(values.map((trigger) => {
+    if (trigger === "terminal_start") return "终端启动";
+    if (trigger === "user_nearby") return "用户靠近";
+    if (trigger === "wake_word" || trigger.startsWith("唤醒词")) return "唤醒词";
+    return trigger;
+  }))];
+}
+
+function normalizeWakeWords(item: JsonRecord): string[] {
+  const configured = stringArray(item.wakeWords ?? item.wake_words);
+  if (configured.length) return [...new Set(configured)];
+  return [...new Set(stringArray(item.triggers ?? item.trigger).flatMap((trigger) => {
+    const matched = trigger.match(/^唤醒词[：:]\s*(.+)$/);
+    return matched ? stringArray(matched[1]) : [];
+  }))];
+}
+
+function normalizeWakeActiveSeconds(value: unknown): number {
+  const seconds = Number(value ?? 30);
+  return Number.isInteger(seconds) && seconds >= 10 && seconds <= 600 ? seconds : 30;
 }
 
 export class FetchAdminApiClient implements AdminApiClient {
@@ -701,24 +746,24 @@ export class FetchAdminApiClient implements AdminApiClient {
   }
 
   private venue(item: JsonRecord): EventVenue {
-    return { ...item, id: String(item.id || ""), exhibitionId: String(item.exhibitionId || item.exhibition_id || ""), name: String(item.name || item.code || item.id || "未命名场地"), address: String(item.address || ""), description: String(item.description || ""), imageUrls: stringArray(item.imageUrls || item.image_urls || item.images), status: item.status === "active" || item.status === "inactive" ? item.status : "draft", createdAt: String(item.createdAt || item.created_at || ""), updatedAt: String(item.updatedAt || item.updated_at || "") } as EventVenue;
+    return { ...item, id: String(item.id || ""), exhibitionId: String(item.exhibitionId || item.exhibition_id || ""), name: String(item.name || item.code || item.id || "未命名场地"), address: String(item.address || ""), description: String(item.description || ""), introductionKeywords: stringArray(item.introductionKeywords || item.introduction_keywords), aliases: stringArray(item.aliases), fuzzyMatch: item.fuzzyMatch !== false && item.fuzzy_match !== false, spokenText: String(item.spokenText || item.spoken_text || ""), imageUrls: stringArray(item.imageUrls || item.image_urls || item.images), status: item.status === "active" || item.status === "inactive" ? item.status : "draft", createdAt: String(item.createdAt || item.created_at || ""), updatedAt: String(item.updatedAt || item.updated_at || "") } as EventVenue;
   }
 
   private point(item: JsonRecord): EventPoint {
     const pointTypes = ["entrance", "booth", "forum", "facility", "service", "other"];
-    return { ...item, id: String(item.id || ""), venueId: String(item.venueId || item.venue_id || ""), code: String(item.code || item.id || ""), name: String(item.name || item.code || item.id || "未命名点位"), type: pointTypes.includes(String(item.type)) ? String(item.type) as EventPoint["type"] : "other", floor: String(item.floor || ""), x: Number(item.x ?? 0), y: Number(item.y ?? 0), exhibitorId: item.exhibitorId || item.exhibitor_id || null, exhibitId: item.exhibitId || item.exhibit_id || null, description: String(item.description || ""), imageUrls: stringArray(item.imageUrls || item.image_urls || item.images), status: item.status === "active" || item.status === "inactive" ? item.status : "draft", createdAt: String(item.createdAt || item.created_at || ""), updatedAt: String(item.updatedAt || item.updated_at || "") } as EventPoint;
+    return { ...item, id: String(item.id || ""), venueId: String(item.venueId || item.venue_id || ""), code: String(item.code || item.id || ""), name: String(item.name || item.code || item.id || "未命名点位"), type: pointTypes.includes(String(item.type)) ? String(item.type) as EventPoint["type"] : "other", floor: String(item.floor || ""), x: Number(item.x ?? 0), y: Number(item.y ?? 0), exhibitorId: item.exhibitorId || item.exhibitor_id || null, exhibitId: item.exhibitId || item.exhibit_id || null, description: String(item.description || ""), introductionKeywords: stringArray(item.introductionKeywords || item.introduction_keywords), aliases: stringArray(item.aliases), fuzzyMatch: item.fuzzyMatch !== false && item.fuzzy_match !== false, spokenText: String(item.spokenText || item.spoken_text || ""), imageUrls: stringArray(item.imageUrls || item.image_urls || item.images), status: item.status === "active" || item.status === "inactive" ? item.status : "draft", createdAt: String(item.createdAt || item.created_at || ""), updatedAt: String(item.updatedAt || item.updated_at || "") } as EventPoint;
   }
 
   private exhibitor(item: JsonRecord): Exhibitor {
-    return { ...item, id: String(item.id || ""), exhibitionId: String(item.exhibitionId || item.exhibition_id || ""), name: String(item.name || item.companyName || item.id || "未命名展商"), boothCode: String(item.boothCode || item.booth_code || ""), category: String(item.category || ""), contact: String(item.contact || ""), phone: String(item.phone || ""), status: item.status === "active" || item.status === "inactive" ? item.status : "pending", description: String(item.description || ""), imageUrls: stringArray(item.imageUrls || item.image_urls || item.images), createdAt: String(item.createdAt || item.created_at || ""), updatedAt: String(item.updatedAt || item.updated_at || "") } as Exhibitor;
+    return { ...item, id: String(item.id || ""), exhibitionId: String(item.exhibitionId || item.exhibition_id || ""), name: String(item.name || item.companyName || item.id || "未命名展商"), boothCode: String(item.boothCode || item.booth_code || ""), category: String(item.category || ""), contact: String(item.contact || ""), phone: String(item.phone || ""), status: item.status === "active" || item.status === "inactive" ? item.status : "pending", description: String(item.description || ""), introductionKeywords: stringArray(item.introductionKeywords || item.introduction_keywords), aliases: stringArray(item.aliases), fuzzyMatch: item.fuzzyMatch !== false && item.fuzzy_match !== false, spokenText: String(item.spokenText || item.spoken_text || ""), imageUrls: stringArray(item.imageUrls || item.image_urls || item.images), createdAt: String(item.createdAt || item.created_at || ""), updatedAt: String(item.updatedAt || item.updated_at || "") } as Exhibitor;
   }
 
   private exhibit(item: JsonRecord): Exhibit {
-    return { ...item, id: String(item.id || ""), exhibitionId: String(item.exhibitionId || item.exhibition_id || ""), exhibitorId: String(item.exhibitorId || item.exhibitor_id || ""), name: String(item.name || item.modelNo || item.model_no || item.id || "未命名展品"), category: String(item.category || ""), modelNo: String(item.modelNo || item.model_no || ""), description: String(item.description || ""), imageUrls: stringArray(item.imageUrls || item.image_urls || item.images), status: item.status === "published" || item.status === "offline" ? item.status : "draft", createdAt: String(item.createdAt || item.created_at || ""), updatedAt: String(item.updatedAt || item.updated_at || "") } as Exhibit;
+    return { ...item, id: String(item.id || ""), exhibitionId: String(item.exhibitionId || item.exhibition_id || ""), exhibitorId: String(item.exhibitorId || item.exhibitor_id || ""), name: String(item.name || item.modelNo || item.model_no || item.id || "未命名展品"), category: String(item.category || ""), modelNo: String(item.modelNo || item.model_no || ""), description: String(item.description || ""), introductionKeywords: stringArray(item.introductionKeywords || item.introduction_keywords), aliases: stringArray(item.aliases), fuzzyMatch: item.fuzzyMatch !== false && item.fuzzy_match !== false, spokenText: String(item.spokenText || item.spoken_text || ""), imageUrls: stringArray(item.imageUrls || item.image_urls || item.images), status: item.status === "published" || item.status === "offline" ? item.status : "draft", createdAt: String(item.createdAt || item.created_at || ""), updatedAt: String(item.updatedAt || item.updated_at || "") } as Exhibit;
   }
 
   private route(item: JsonRecord): ExhibitionRoute {
-    return { ...item, id: String(item.id || ""), venueId: String(item.venueId || item.venue_id || ""), name: String(item.name || item.code || item.id || "未命名路线"), type: item.type === "tour" || item.type === "emergency" ? item.type : "navigation", pointIds: stringArray(item.pointIds || item.point_ids), directions: stringArray(item.directions), estimatedMinutes: Number(item.estimatedMinutes ?? item.estimated_minutes ?? 0), description: String(item.description || ""), status: item.status === "published" || item.status === "offline" ? item.status : "draft", createdAt: String(item.createdAt || item.created_at || ""), updatedAt: String(item.updatedAt || item.updated_at || "") } as ExhibitionRoute;
+    return { ...item, id: String(item.id || ""), exhibitionId: String(item.exhibitionId || item.exhibition_id || ""), venueId: String(item.venueId || item.venue_id || ""), name: String(item.name || item.code || item.id || "未命名路线"), type: item.type === "tour" || item.type === "emergency" ? item.type : "navigation", pointIds: stringArray(item.pointIds || item.point_ids), keywords: stringArray(item.keywords), aliases: stringArray(item.aliases), fuzzyMatch: item.fuzzyMatch !== false && item.fuzzy_match !== false, directions: stringArray(item.directions), spokenText: String(item.spokenText || item.spoken_text || ""), imageUrls: stringArray(item.imageUrls || item.image_urls || item.images), estimatedMinutes: Number(item.estimatedMinutes ?? item.estimated_minutes ?? 0), description: String(item.description || ""), status: item.status === "published" || item.status === "offline" ? item.status : "draft", createdAt: String(item.createdAt || item.created_at || ""), updatedAt: String(item.updatedAt || item.updated_at || "") } as ExhibitionRoute;
   }
 
   private schedule(item: JsonRecord): EventSchedule {
@@ -746,6 +791,8 @@ export class FetchAdminApiClient implements AdminApiClient {
       exhibitionId: String(item.exhibitionId || ""),
       exhibitionName: String(item.exhibitionName || exhibitions.find((exhibition) => exhibition.id === item.exhibitionId)?.name || ""),
       triggers: normalizeWelcomeTrigger(item.triggers ?? item.trigger),
+      wakeWords: normalizeWakeWords(item),
+      wakeActiveSeconds: normalizeWakeActiveSeconds(item.wakeActiveSeconds ?? item.wake_active_seconds),
       scriptId: String(item.scriptId || item.script_id || ""),
       highlights: stringArray(item.highlights),
       checkInGuide: String(item.checkInGuide || item.check_in_guide || ""),
@@ -779,6 +826,14 @@ export class FetchAdminApiClient implements AdminApiClient {
       exhibitionName: String(item.exhibitionName || exhibitions.find((exhibition) => exhibition.id === item.exhibitionId)?.name || ""),
       name: String(item.name || "未命名导购策略"),
       tags: stringArray(item.tags),
+      aliases: stringArray(item.aliases),
+      fuzzyMatch: item.fuzzyMatch !== false && item.fuzzy_match !== false,
+      spokenText: String(item.spokenText || item.spoken_text || ""),
+      registrationPrompt: String(item.registrationPrompt || item.registration_prompt || "需要为您弹出登记二维码吗？"),
+      confirmationRetryPrompt: String(item.confirmationRetryPrompt || item.confirmation_retry_prompt || "请回答需要或不需要登记。"),
+      registrationSuccessText: String(item.registrationSuccessText || item.registration_success_text || "好的，登记二维码已为您打开，请使用手机扫码填写信息。"),
+      confirmKeywords: stringArray(item.confirmKeywords || item.confirm_keywords || ["需要", "好的", "可以", "同意", "登记", "我要登记"]),
+      declineKeywords: stringArray(item.declineKeywords || item.decline_keywords || ["不需要", "不用", "不要", "暂不", "取消", "不登记"]),
       tagWeight: Number(item.tagWeight ?? weights.tag ?? 0),
       compareDimensions: stringArray(item.compareDimensions || item.compare_dimensions),
       intentThreshold: Number(item.intentThreshold ?? item.intent_threshold ?? 0),

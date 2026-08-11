@@ -15,6 +15,8 @@ export type ExhibitionEntityCard = {
   image_urls: string[];
   details: Array<{ label: string; value: string }>;
   keywords: string[];
+  fuzzy_keywords?: string[];
+  spoken_text?: string;
 };
 
 export interface Message {
