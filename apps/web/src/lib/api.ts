@@ -377,6 +377,59 @@ export async function queryExhibitionNavigation(
   return apiPost<NavigationQueryResponse>(path, input);
 }
 
+export type QaMatchType =
+  | "official_qa"
+  | "rag"
+  | "clarification"
+  | "fallback"
+  | "retrieval_error"
+  | "blocked";
+
+export type QaSource = {
+  id: string;
+  title: string;
+  excerpt: string;
+  score: number;
+  document_id?: string | null;
+};
+
+export type ExhibitionQaQueryRequest = {
+  session_id: string;
+  turn_id: string;
+  question: string;
+  locale?: string;
+  voice?: string;
+  tts_provider?: string;
+  tts_model?: string;
+};
+
+export type ExhibitionQaQueryResponse = {
+  session_id: string;
+  exhibition_id: string;
+  turn_id: string;
+  trace_id: string;
+  status: "queued";
+  match_type: QaMatchType;
+  speak_mode: "direct" | "agent";
+  answer?: string | null;
+  need_clarification: boolean;
+  clarification_question?: string | null;
+  sources: QaSource[];
+  score?: number | null;
+  error_code?: string | null;
+};
+
+export async function queryExhibitionQa(
+  exhibitionId: string | null | undefined,
+  input: ExhibitionQaQueryRequest,
+): Promise<ExhibitionQaQueryResponse> {
+  const id = exhibitionId?.trim();
+  return apiPost<ExhibitionQaQueryResponse>(
+    `/exhibitions/${encodeURIComponent(id || "current")}/qa/query`,
+    input,
+  );
+}
+
 export async function transcribeSessionAudio(
   sessionId: string,
   file: Blob,

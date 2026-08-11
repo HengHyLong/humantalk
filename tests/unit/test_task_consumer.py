@@ -818,6 +818,7 @@ async def test_handle_worker_task_routes_text_speak_through_chat_when_available(
             "tts_provider": "dashscope",
             "tts_model": "qwen3-tts-flash-realtime",
             "enqueue_unix": 123.0,
+            "knowledge_context": "可信展会知识片段",
         },
         redis,
         Path("."),
@@ -834,6 +835,7 @@ async def test_handle_worker_task_routes_text_speak_through_chat_when_available(
             "tts_provider": "dashscope",
             "tts_model": "qwen3-tts-flash-realtime",
             "enqueue_unix": 123.0,
+            "knowledge_context": "可信展会知识片段",
         }
     ]
 
@@ -858,6 +860,30 @@ def test_speak_flashtalk_uploaded_pcm_queues_redis_pcm_key() -> None:
         stored = await redis.get(pcm_key)
         assert stored is not None
         assert base64.b64decode(stored) == pcm
+
+    asyncio.run(run())
+
+
+def test_session_service_speak_keeps_grounding_and_trace_metadata_server_side() -> None:
+    async def run() -> None:
+        redis = InMemoryRedis()
+        await session_service.speak(
+            redis,
+            "sess-grounded",
+            "服务中心在哪里？",
+            knowledge_context="可信展会知识片段",
+            turn_id="turn-grounded",
+            trace_id="trace-grounded",
+        )
+
+        await redis.brpop(TASK_QUEUE, timeout=1)  # interrupt
+        queued = await redis.brpop(TASK_QUEUE, timeout=1)
+        assert queued is not None
+        _, raw = queued
+        task = json.loads(raw)
+        assert task["knowledge_context"] == "可信展会知识片段"
+        assert task["turn_id"] == "turn-grounded"
+        assert task["trace_id"] == "trace-grounded"
 
     asyncio.run(run())
 

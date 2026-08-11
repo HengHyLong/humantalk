@@ -23,6 +23,12 @@ export interface Message {
   text: string;
   timestamp: number;
   relatedEntities?: ExhibitionEntityCard[];
+  qa?: {
+    turnId: string;
+    traceId?: string;
+    matchType?: "official_qa" | "rag" | "clarification" | "fallback" | "retrieval_error" | "blocked";
+    sources?: Array<{ id: string; title: string; excerpt: string; score: number }>;
+  };
 }
 
 export type MemoryLibrary = {

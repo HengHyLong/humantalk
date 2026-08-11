@@ -1019,11 +1019,17 @@ def report(request: Request, exhibition_id: str | None = None, auth: dict[str, A
     store = get_store(request)
     _require(store, auth, "dashboard:view")
     alerts = store.list_records("alerts")
+    knowledge_hits = store.list_records("knowledge_hits", exhibition_id=exhibition_id)
+    knowledge_misses = store.list_records("miss_pool", exhibition_id=exhibition_id)
     return {
         "exhibition_id": exhibition_id or "current",
         "interaction_count": len(store.audit_list()),
         "online_terminals": len([x for x in store.list_records("terminals") if x.get("status") == "online"]),
         "pending_knowledge": len([x for x in store.list_records("qa") if x.get("status") == "pending_review"]),
+        "knowledge_hits": len(knowledge_hits),
+        "knowledge_misses": sum(int(item.get("count") or 0) for item in knowledge_misses),
+        "official_qa_hits": len([item for item in knowledge_hits if item.get("matchType") == "official_qa"]),
+        "rag_hits": len([item for item in knowledge_hits if item.get("matchType") == "rag"]),
         "new_leads": len(store.list_records("leads", exhibition_id=exhibition_id, status="new")),
         "alerts": len([x for x in alerts if x.get("status") in {"open", "active"}]),
         "todo": [],
