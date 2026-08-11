@@ -969,6 +969,7 @@ async def speak(session_id: str, body: SpeakRequest, request: Request) -> dict[s
         voice=voice,
         tts_provider=eff_prov,
         tts_model=tm,
+        direct=body.direct,
     )
     return {"session_id": session_id, "status": "queued"}
 
@@ -1203,6 +1204,7 @@ async def speak_audio_stream_ws(websocket: WebSocket, session_id: str) -> None:
         await websocket.send_json({"error": "expected {\"type\":\"meta\", ...}"})
         await websocket.close(code=4400)
         return
+    defer_speak = bool(meta.get("defer_speak"))
 
     try:
         v, eff_prov, tm = _normalize_voice_for_speak(
@@ -1298,14 +1300,15 @@ async def speak_audio_stream_ws(websocket: WebSocket, session_id: str) -> None:
         await websocket.close(code=4400)
         return
 
-    await session_service.speak(
-        r,
-        session_id,
-        stripped,
-        voice=v,
-        tts_provider=eff_prov,
-        tts_model=tm,
-    )
+    if not defer_speak:
+        await session_service.speak(
+            r,
+            session_id,
+            stripped,
+            voice=v,
+            tts_provider=eff_prov,
+            tts_model=tm,
+        )
     await websocket.send_json({"session_id": session_id, "status": "queued", "text": stripped})
 
 

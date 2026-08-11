@@ -123,7 +123,7 @@ def test_public_exhibition_entities_include_display_fields_and_image_fallbacks(t
         response = client.get("/exhibitions/expo-test/entities")
         assert response.status_code == 200
         items = {item["id"]: item for item in response.json()["items"]}
-        assert set(items) == {"exhibitor-public", "exhibit-public", "venue-public", "point-public", "schedule-public"}
+        assert set(items) == {"expo-test", "exhibitor-public", "exhibit-public", "venue-public", "point-public", "schedule-public"}
         assert items["exhibitor-public"]["description"] == "企业简介 专注智能制造。"
         assert items["exhibitor-public"]["keywords"] == ["星河科技", "A-08"]
         assert items["exhibit-public"]["image_urls"] == ["/scene-assets/exhibitor.jpg"]
@@ -308,3 +308,34 @@ def test_llm_config_list_includes_effective_file_configuration_and_masks_keys(tm
         assert memory["apiKeyConfigured"] is True
         assert "conversation-secret" not in response.text
         assert "memory-secret" not in response.text
+
+
+def test_llm_config_list_deduplicates_managed_record_matching_runtime(tmp_path) -> None:
+    with _client(tmp_path) as client:
+        settings = client.app.state.settings
+        settings.llm_provider = "OpenAI_Compatible"
+        settings.llm_base_url = "https://conversation.example.test/v1/"
+        settings.llm_api_key = "conversation-secret"
+        settings.llm_model = "Conversation-Model"
+        store = client.app.state.admin_store
+        store.save_record(
+            "llm_configs",
+            {
+                "id": "llm-runtime-copy",
+                "name": "数据库中的主模型",
+                "provider": "openai_compatible",
+                "baseUrl": "https://CONVERSATION.example.test/v1",
+                "model": "conversation-model",
+                "apiKey": "conversation-secret",
+                "systemPrompt": "",
+                "isActive": True,
+            },
+        )
+
+        response = client.get("/api/v1/admin/llm-configs", headers=_login(client))
+        assert response.status_code == 200
+        items = response.json()["items"]
+        conversation = [item for item in items if item["usage"] == "conversation"]
+        assert len(conversation) == 1
+        assert conversation[0]["id"] == "llm-runtime-copy"
+        assert response.json()["total"] == len(items)

@@ -63,6 +63,10 @@ class CreateSessionResponse(BaseModel):
 
 class SpeakRequest(BaseModel):
     text: str
+    direct: bool = Field(
+        default=False,
+        description="直接使用 TTS 播报文本，不经过对话大模型。",
+    )
     voice: str | None = Field(
         default=None,
         description=(

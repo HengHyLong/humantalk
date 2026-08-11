@@ -315,9 +315,13 @@ def _configured_llm_configs(request: Request) -> list[dict[str, Any]]:
 def _llm_signature(item: dict[str, Any]) -> tuple[str, str, str]:
     return (
         str(item.get("provider") or "").strip().lower(),
-        str(item.get("baseUrl") or "").strip().rstrip("/"),
-        str(item.get("model") or "").strip(),
+        str(item.get("baseUrl") or "").strip().rstrip("/").lower(),
+        str(item.get("model") or "").strip().lower(),
     )
+
+
+def _llm_usage(item: dict[str, Any]) -> str:
+    return str(item.get("usage") or "conversation").strip().lower() or "conversation"
 
 
 def _resolve_llm_config(request: Request, record_id: str) -> dict[str, Any] | None:
@@ -362,13 +366,20 @@ def list_llm_configs(request: Request, auth: dict[str, Any] = Depends(current_us
     store = get_store(request)
     _require(store, auth, "system:llm")
     configured = _configured_llm_configs(request)
-    configured_conversation = next((item for item in configured if item["usage"] == "conversation"), None)
+    configured_conversation = next((item for item in configured if _llm_usage(item) == "conversation"), None)
     managed = store.list_records("llm_configs")
     if configured_conversation is not None:
         current_signature = _llm_signature(configured_conversation)
-        matching_managed = next((item for item in managed if _llm_signature(item) == current_signature), None)
+        matching_managed = next(
+            (
+                item
+                for item in managed
+                if _llm_usage(item) == "conversation" and _llm_signature(item) == current_signature
+            ),
+            None,
+        )
         if matching_managed is not None:
-            configured = [item for item in configured if item["usage"] != "conversation"]
+            configured = [item for item in configured if _llm_usage(item) != "conversation"]
             managed = [
                 {**item, "isActive": str(item.get("id")) == str(matching_managed.get("id"))}
                 for item in managed
@@ -376,7 +387,17 @@ def list_llm_configs(request: Request, auth: dict[str, Any] = Depends(current_us
         else:
             managed = [{**item, "isActive": False} for item in managed]
     managed = sorted(managed, key=lambda item: (not bool(item.get("isActive")), str(item.get("updatedAt") or "")), reverse=False)
-    items = [*configured, *managed]
+    # A managed record can itself have been saved more than once with the same
+    # provider/base URL/model. Keep the active/newest record and never expose
+    # duplicate logical configurations to the admin UI.
+    items: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str, str]] = set()
+    for item in [*configured, *managed]:
+        key = (_llm_usage(item), *_llm_signature(item))
+        if key in seen:
+            continue
+        seen.add(key)
+        items.append(item)
     return {"items": [_public_llm_config(item) for item in items], "total": len(items)}
 
 
@@ -1392,7 +1413,7 @@ def public_exhibition_entities(exhibition_id: str, request: Request) -> dict[str
         if not current:
             raise HTTPException(status_code=404, detail={"code": "CURRENT_EXHIBITION_NOT_FOUND", "detail": "当前展会未配置"})
         exhibition_id = str(current["id"])
-    _record(store, "exhibitions", exhibition_id)
+    exhibition = _record(store, "exhibitions", exhibition_id)
 
     exhibitors = {item["id"]: item for item in store.list_records("exhibitors", exhibition_id=exhibition_id)}
     exhibits = {item["id"]: item for item in store.list_records("exhibits", exhibition_id=exhibition_id)}
@@ -1416,6 +1437,16 @@ def public_exhibition_entities(exhibition_id: str, request: Request) -> dict[str
             "details": clean_details,
             "keywords": clean_keywords,
         })
+
+    append_entity(
+        entity_id=str(exhibition["id"]),
+        kind="exhibition",
+        name=str(exhibition.get("name") or exhibition.get("code") or ""),
+        description=exhibition.get("description"),
+        images=_public_image_urls(exhibition),
+        details=[("展会编码", exhibition.get("code")), ("状态", exhibition.get("status"))],
+        keywords=[exhibition.get("code")],
+    )
 
     for item in exhibitors.values():
         append_entity(

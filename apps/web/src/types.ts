@@ -5,7 +5,7 @@ export interface QueueInfo {
   message: string;    // "waiting" | "slot_acquired" | "queue_full" | "timeout"
 }
 
-export type ExhibitionEntityKind = "exhibitor" | "exhibit" | "venue" | "point" | "schedule";
+export type ExhibitionEntityKind = "exhibition" | "exhibitor" | "exhibit" | "venue" | "point" | "schedule";
 
 export type ExhibitionEntityCard = {
   id: string;

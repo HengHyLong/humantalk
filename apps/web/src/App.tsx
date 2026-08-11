@@ -591,7 +591,6 @@ function validateAudioProviderConfigBeforeStart({
   return `${missing.join("；")}。请在后端 .env 配置后重启服务。`;
 }
 
-type SpeakAudioResponse = { session_id: string; status: string; text: string };
 type SessionRecord = { session_id: string; state?: string };
 type PrewarmState = "idle" | "preparing" | "ready" | "failed";
 type AvatarPrewarmResponse = {
@@ -754,6 +753,19 @@ function matchExhibitionEntities(text: string, entities: ExhibitionEntityCard[])
     .sort((left, right) => right.matchLength - left.matchLength)
     .slice(0, 3)
     .map((candidate) => candidate.entity);
+}
+
+function buildEntitySpeech(entities: ExhibitionEntityCard[]): string {
+  return entities
+    .map((entity) => {
+      const details = entity.details
+        .slice(0, 4)
+        .map((detail) => `${detail.label}：${detail.value}`)
+        .join("，");
+      return [`为您介绍${entity.name}`, entity.description.trim(), details].filter(Boolean).join("。 ");
+    })
+    .filter(Boolean)
+    .join("。 ");
 }
 
 function pickInitialAvatar(
@@ -2674,7 +2686,7 @@ export default function App() {
   }, [bailianVoices, edgeVoice, notify, qwenModel, qwenVoice, ttsPreviewText, ttsProvider]);
 
   const enqueueSpeech = useCallback(
-    (speechText: string, userText: string, relatedEntities: ExhibitionEntityCard[] = []) => {
+    (speechText: string, userText: string, relatedEntities: ExhibitionEntityCard[] = [], direct = false) => {
       const text = speechText.trim();
       const user = userText.trim();
       if (!sessionId || !text) return;
@@ -2703,6 +2715,7 @@ export default function App() {
               : selectedTtsVoice || undefined,
         tts_provider: ttsProvider,
         tts_model: ttsModelSelectable(ttsProvider) ? qwenModel : undefined,
+        ...(direct ? { direct: true } : {}),
       };
       void apiPost(`/sessions/${sessionId}/${endpoint}`, payload).catch((err) => {
         console.warn(`${endpoint} failed`, err);
@@ -2733,6 +2746,15 @@ export default function App() {
       },
     });
     setLastVoiceIntent(match.intent);
+
+    if (match.intent !== "navigation" && relatedEntities.length > 0) {
+      const entitySpeech = buildEntitySpeech(relatedEntities);
+      if (entitySpeech) {
+        setNavigationResult(null);
+        enqueueSpeech(entitySpeech, text, relatedEntities, true);
+        return;
+      }
+    }
 
     if (match.intent === "navigation") {
       try {
@@ -2772,13 +2794,10 @@ export default function App() {
     }
   }, [activeAsrProvider, appendAssistantError, notify, routeRecognizedText, sessionId]);
 
-  /** 流式 STT（WebSocket PCM）成功后仅追加本地消息（speak 已由后端入队） */
+  /** 流式 STT 只返回识别文本，统一交给实体/导航路由决定播报内容。 */
   const handleSpeakAudioStreamResult = useCallback(({ text }: { text: string }) => {
-    setMessages((prev) => [
-      ...prev,
-      { id: makeId(), role: "user", text, timestamp: Date.now(), relatedEntities: matchExhibitionEntities(text, exhibitionEntities) },
-    ]);
-  }, [exhibitionEntities]);
+    void routeRecognizedText(text);
+  }, [routeRecognizedText]);
 
   const handleSpeakAudioStreamError = useCallback((message: string) => {
     const detail = message || "语音识别失败，请检查 STT 配置。";
@@ -2792,29 +2811,14 @@ export default function App() {
       speakAudioAbortRef.current?.abort();
       const ac = new AbortController();
       speakAudioAbortRef.current = ac;
-      const fd = new FormData();
-      fd.append("file", blob, "speech.webm");
-      fd.append(
-        "voice",
-        isEdgeTts(ttsProvider)
-          ? edgeVoice
-          : resolveSelectableTtsVoice(ttsProvider, qwenVoice, bailianVoices),
-      );
-      fd.append("tts_provider", ttsProvider);
-      fd.append("stt_provider", activeAsrProvider || normalizeAsrProvider(asrProvider, "dashscope"));
-      if (ttsModelSelectable(ttsProvider)) {
-        fd.append("tts_model", qwenModel);
-      }
       try {
-        const res = await apiPostForm<SpeakAudioResponse>(
-          `/sessions/${sessionId}/speak_audio`,
-          fd,
+        const res = await transcribeSessionAudio(
+          sessionId,
+          blob,
+          activeAsrProvider || normalizeAsrProvider(asrProvider, "dashscope"),
           { signal: ac.signal },
         );
-        setMessages((prev) => [
-          ...prev,
-          { id: makeId(), role: "user", text: res.text, timestamp: Date.now(), relatedEntities: matchExhibitionEntities(res.text, exhibitionEntities) },
-        ]);
+        await routeRecognizedText(res.text);
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") return;
         // 勿将 connection 置为 error，否则会重新出现「开始 Demo」全屏遮罩
@@ -2828,7 +2832,7 @@ export default function App() {
         }
       }
     },
-    [activeAsrProvider, appendAssistantError, asrProvider, bailianVoices, edgeVoice, exhibitionEntities, notify, qwenModel, qwenVoice, sessionId, ttsProvider],
+    [activeAsrProvider, appendAssistantError, asrProvider, notify, routeRecognizedText, sessionId],
   );
 
   const handleInterrupt = useCallback(() => {
@@ -3573,6 +3577,7 @@ export default function App() {
                 streamingAsrSessionId={sessionId}
                 onSpeakAudioStreamResult={handleSpeakAudioStreamResult}
                 onSpeakAudioStreamError={handleSpeakAudioStreamError}
+                deferSpeak
                 onInterrupt={handleInterrupt}
                 isSpeaking={isSpeaking}
                 disabled={connection !== "live" && connection !== "expiring"}

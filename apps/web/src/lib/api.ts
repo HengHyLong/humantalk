@@ -381,11 +381,16 @@ export async function transcribeSessionAudio(
   sessionId: string,
   file: Blob,
   sttProvider?: string,
+  init?: RequestInit,
 ): Promise<{ session_id: string; text: string }> {
   const form = new FormData();
   form.set("file", file, "speech.webm");
   if (sttProvider) form.set("stt_provider", sttProvider);
-  return apiPostForm<{ session_id: string; text: string }>(`/sessions/${encodeURIComponent(sessionId)}/transcribe`, form);
+  return apiPostForm<{ session_id: string; text: string }>(
+    `/sessions/${encodeURIComponent(sessionId)}/transcribe`,
+    form,
+    init,
+  );
 }
 
 export type CreateSceneCompositionInput = {

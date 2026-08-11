@@ -2,6 +2,7 @@ import { buildApiUrl } from "../lib/api";
 import type { ExhibitionEntityCard as ExhibitionEntityCardData } from "../types";
 
 const KIND_LABELS: Record<ExhibitionEntityCardData["kind"], string> = {
+  exhibition: "展会",
   exhibitor: "展商",
   exhibit: "展品",
   venue: "场地",

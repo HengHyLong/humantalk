@@ -572,7 +572,15 @@ async def handle_worker_task(
             float(enqueue_unix) if isinstance(enqueue_unix, (int, float)) else None
         )
         create_chat_task = getattr(runner, "create_chat_task", None)
-        if callable(create_chat_task):
+        if task.get("direct"):
+            runner.create_speak_task(
+                text,
+                tts_voice=tts_voice or None,
+                tts_provider=tts_provider or None,
+                tts_model=tts_model or None,
+                enqueue_unix=enqueue_value,
+            )
+        elif callable(create_chat_task):
             create_chat_task(
                 text,
                 tts_voice=tts_voice or None,
