@@ -14,6 +14,7 @@ from opentalking.core.redis_keys import TASK_QUEUE
 from opentalking.core.session_store import get_session_record, session_key
 import opentalking.runtime.task_consumer as task_consumer
 from opentalking.pipeline.session.runner import SessionRunner
+from opentalking.pipeline.speak.synthesis_runner import FlashTalkRunner
 from opentalking.runtime.task_consumer import handle_worker_task
 
 
@@ -92,6 +93,103 @@ class ChatCapableRunner(StubRunner):
         self.speech_tasks.add(task)
         task.add_done_callback(self.speech_tasks.discard)
         return task
+
+
+class DirectSpeakCapableRunner(ChatCapableRunner):
+    def __init__(self) -> None:
+        super().__init__()
+        self.direct_spoken: list[str] = []
+
+    def create_direct_speak_task(
+        self,
+        text: str,
+        tts_voice: str | None = None,
+        **kwargs: object,
+    ) -> asyncio.Task[None]:
+        async def _speak() -> None:
+            self.direct_spoken.append(text)
+
+        task = asyncio.create_task(_speak())
+        self.speech_tasks.add(task)
+        task.add_done_callback(self.speech_tasks.discard)
+        return task
+
+
+def test_direct_speak_task_bypasses_chat_pipeline() -> None:
+    runner = DirectSpeakCapableRunner()
+
+    async def run() -> None:
+        await handle_worker_task(
+            {
+                "cmd": "speak",
+                "session_id": "sess_direct",
+                "text": "请沿主通道直行。",
+                "direct": True,
+            },
+            InMemoryRedis(),
+            Path("examples/avatars"),
+            "cpu",
+            {"sess_direct": runner},  # type: ignore[arg-type]
+        )
+        await asyncio.gather(*runner.speech_tasks)
+
+    asyncio.run(run())
+
+    assert runner.direct_spoken == ["请沿主通道直行。"]
+    assert runner.chat_calls == []
+    assert runner.spoken == []
+
+
+def test_flashtalk_direct_speak_task_marks_pipeline_as_direct() -> None:
+    runner = object.__new__(FlashTalkRunner)
+    runner.speech_tasks = set()
+    captured: dict[str, object] = {}
+
+    async def fake_run_speak_task(
+        text: str,
+        tts_voice: str | None = None,
+        tts_provider: str | None = None,
+        tts_model: str | None = None,
+        enqueue_unix: float | None = None,
+        knowledge_context: str | None = None,
+        *,
+        direct: bool = False,
+    ) -> None:
+        captured.update(
+            {
+                "text": text,
+                "tts_voice": tts_voice,
+                "tts_provider": tts_provider,
+                "tts_model": tts_model,
+                "enqueue_unix": enqueue_unix,
+                "knowledge_context": knowledge_context,
+                "direct": direct,
+            }
+        )
+
+    runner._run_speak_task = fake_run_speak_task  # type: ignore[method-assign]
+
+    async def run() -> None:
+        task = runner.create_direct_speak_task(
+            "请沿主通道直行。",
+            tts_voice="Cherry",
+            tts_provider="dashscope",
+            tts_model="qwen3-tts-flash-realtime",
+            enqueue_unix=123.0,
+        )
+        await task
+
+    asyncio.run(run())
+
+    assert captured == {
+        "text": "请沿主通道直行。",
+        "tts_voice": "Cherry",
+        "tts_provider": "dashscope",
+        "tts_model": "qwen3-tts-flash-realtime",
+        "enqueue_unix": 123.0,
+        "knowledge_context": None,
+        "direct": True,
+    }
 
 
 def test_task_knowledge_base_ids_do_not_fallback_to_default() -> None:
@@ -834,6 +932,7 @@ async def test_handle_worker_task_routes_text_speak_through_chat_when_available(
             "tts_voice": "Cherry",
             "tts_provider": "dashscope",
             "tts_model": "qwen3-tts-flash-realtime",
+            "language": "zh-CN",
             "enqueue_unix": 123.0,
             "knowledge_context": "可信展会知识片段",
         }

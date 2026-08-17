@@ -114,6 +114,7 @@ import {
 import type { ConnectionStatus, ExhibitionEntityCard, MemoryLibrary, Message, QueueInfo } from "./types";
 import { matchExhibitionEntities } from "./lib/exhibitionEntityMatch";
 import { classifyRegistrationDecision } from "./lib/shoppingConversation";
+import { classifyContentClarification } from "./lib/contentClarification";
 import { isEnglishConversation, type ConversationLanguage } from "./lib/conversationLanguage";
 import {
   canChangeModelForAvatar,
@@ -131,6 +132,13 @@ type PendingShoppingRegistration = {
   confirmKeywords: string[];
   declineKeywords: string[];
   relatedEntities: ExhibitionEntityCard[];
+};
+
+type PendingContentClarification = {
+  routeResult: NavigationResult;
+  entity: ExhibitionEntityCard;
+  prompt: string;
+  retryPrompt: string;
 };
 
 export type ShoppingRegistrationCard = ShoppingRegistrationResult & {
@@ -1004,11 +1012,13 @@ export default function App() {
   const [navigationResult, setNavigationResult] = useState<NavigationResult | null>(null);
   const [shoppingRegistration, setShoppingRegistration] = useState<ShoppingRegistrationCard | null>(null);
   const pendingShoppingRegistrationRef = useRef<PendingShoppingRegistration | null>(null);
+  const pendingContentClarificationRef = useRef<PendingContentClarification | null>(null);
   const wakeAwakeUntilRef = useRef(0);
 
   useEffect(() => {
     wakeAwakeUntilRef.current = 0;
     pendingShoppingRegistrationRef.current = null;
+    pendingContentClarificationRef.current = null;
     setShoppingRegistration(null);
   }, [configuredExhibitionId, sessionId]);
   const [, setRuntimeStatus] = useState<HealthResponse | null>(null);
@@ -2767,6 +2777,9 @@ export default function App() {
           errorCorrectionLevel: "M",
           color: { dark: "#082f49", light: "#ffffff" },
         });
+        if (!qrDataUrl.startsWith("data:image/png;base64,")) {
+          throw new Error("Registration QR generation returned an invalid image payload");
+        }
         pendingShoppingRegistrationRef.current = null;
         setShoppingRegistration({ ...registration, url, qrDataUrl });
         enqueueSpeech(registration.spoken_text, text, pendingShopping.relatedEntities, true);
@@ -2774,6 +2787,33 @@ export default function App() {
         console.warn("shopping registration failed", error);
         enqueueSpeech(englishConversation ? "The registration QR code is temporarily unavailable. Please try again later." : "登记二维码暂时无法生成，请稍后再试。", text, pendingShopping.relatedEntities, true);
       }
+      return;
+    }
+
+    const pendingContent = pendingContentClarificationRef.current;
+    if (pendingContent) {
+      const destination = pendingContent.routeResult.route?.to?.trim() || pendingContent.routeResult.title?.trim() || "";
+      const choice = classifyContentClarification(text, pendingContent.entity.name, destination);
+      if (choice === "route") {
+        pendingContentClarificationRef.current = null;
+        setLastVoiceIntent("navigation");
+        setNavigationResult(pendingContent.routeResult);
+        enqueueSpeech(pendingContent.routeResult.spoken_text || text, text, [], true);
+        return;
+      }
+      if (choice === "entity") {
+        pendingContentClarificationRef.current = null;
+        setLastVoiceIntent("exhibition_content");
+        setNavigationResult(null);
+        const introductionText = pendingContent.entity.spoken_text?.trim()
+          || pendingContent.entity.description.trim()
+          || (englishConversation
+            ? `Here is the information card for ${pendingContent.entity.name}.`
+            : `为您展示${pendingContent.entity.name}的介绍卡片。`);
+        enqueueSpeech(introductionText, text, [pendingContent.entity], true);
+        return;
+      }
+      enqueueSpeech(pendingContent.retryPrompt || pendingContent.prompt, text, [], true);
       return;
     }
 
@@ -2802,9 +2842,49 @@ export default function App() {
           session_id: sessionId,
           language: conversationLanguage,
         });
+        const competingEntity = relatedEntities.find((entity) => entity.kind === "exhibit" || entity.kind === "exhibitor")
+          || relatedEntities.find((entity) => entity.kind === "point" || entity.kind === "venue");
+        if (result.matched && competingEntity) {
+          const destination = result.route?.to?.trim() || result.title?.trim() || (englishConversation ? "the destination" : "目的地");
+          const entityType = competingEntity.kind === "exhibit"
+            ? (englishConversation ? "exhibit" : "展品")
+            : competingEntity.kind === "exhibitor"
+              ? (englishConversation ? "exhibitor" : "展商")
+              : competingEntity.kind === "venue"
+                ? (englishConversation ? "venue" : "场馆")
+                : (englishConversation ? "area" : "展区");
+          const entityChoice = competingEntity.kind === "point" || competingEntity.kind === "venue"
+            ? (englishConversation ? `learn about ${competingEntity.name}` : `了解${competingEntity.name}的介绍`)
+            : (englishConversation ? `learn about the ${entityType} ${competingEntity.name}` : `了解${competingEntity.name}${entityType}`);
+          const contentAnswer = competingEntity.kind === "exhibit"
+            ? (englishConversation ? "product introduction" : "了解展品")
+            : competingEntity.kind === "exhibitor"
+              ? (englishConversation ? "exhibitor introduction" : "了解展商")
+              : competingEntity.kind === "venue"
+                ? (englishConversation ? "venue introduction" : "了解场馆")
+                : (englishConversation ? "area introduction" : "了解展区");
+          const prompt = englishConversation
+            ? `Would you like to ${entityChoice}, or see the route to ${destination}?`
+            : `请问您要${entityChoice}，还是去${destination}的路线？`;
+          const retryPrompt = englishConversation
+            ? `Please say "${contentAnswer}" or "view route". Would you like to learn about ${competingEntity.name}, or see the route to ${destination}?`
+            : `请回答“${contentAnswer}”或“查看路线”。您要${entityChoice}，还是去${destination}的路线？`;
+          pendingContentClarificationRef.current = {
+            routeResult: result,
+            entity: competingEntity,
+            prompt,
+            retryPrompt,
+          };
+          setNavigationResult(null);
+          enqueueSpeech(prompt, text, [], true);
+          return;
+        }
         setNavigationResult(result);
         const spokenText = result.spoken_text?.trim();
-        enqueueSpeech(spokenText || text, text, relatedEntities, true);
+        // Navigation has its own route card. Do not attach entities matched from
+        // the destination phrase (for example, "机器人" matching a product),
+        // otherwise product-introduction cards compete with the route result.
+        enqueueSpeech(spokenText || text, text, [], true);
         return;
       } catch (error) {
         console.warn("navigation query failed, falling back to exhibition Q&A", error);
@@ -3488,10 +3568,19 @@ export default function App() {
            onSpeakAudioStreamError={exhibitionVoiceConfig?.supports_deferred_speak ? handleSpeakAudioStreamError : undefined}
            streamingAsrSessionId={exhibitionVoiceConfig?.supports_deferred_speak ? sessionId : null}
            deferSpeak={Boolean(exhibitionVoiceConfig?.supports_deferred_speak)}
-           voiceIntent={lastVoiceIntent}
+          voiceIntent={lastVoiceIntent}
           navigationResult={navigationResult}
+          onCloseNavigation={() => setNavigationResult(null)}
           shoppingRegistration={shoppingRegistration}
           onCloseShoppingRegistration={() => setShoppingRegistration(null)}
+          onCloseEntity={(entityId) => setMessages((current) => current.map((message) => (
+            message.relatedEntities?.some((entity) => entity.id === entityId)
+              ? {
+                  ...message,
+                  relatedEntities: message.relatedEntities.filter((entity) => entity.id !== entityId),
+                }
+              : message
+          )))}
           exhibitionConfigNotice={exhibitionConfigNotice}
           language={conversationLanguage}
           onLanguageChange={setConversationLanguage}

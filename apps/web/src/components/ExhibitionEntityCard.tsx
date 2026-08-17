@@ -16,10 +16,33 @@ function displayImageUrl(value: string): string {
   return url;
 }
 
-export function ExhibitionEntityCard({ entity, immersive = false }: { entity: ExhibitionEntityCardData; immersive?: boolean }) {
+type ExhibitionEntityCardProps = {
+  entity: ExhibitionEntityCardData;
+  immersive?: boolean;
+  onClose?: () => void;
+  closeLabel?: string;
+};
+
+export function ExhibitionEntityCard({
+  entity,
+  immersive = false,
+  onClose,
+  closeLabel = "关闭介绍卡片",
+}: ExhibitionEntityCardProps) {
   const imageUrl = entity.image_urls.map(displayImageUrl).find(Boolean);
   return (
     <article className={`exhibition-entity-card ${immersive ? "is-immersive" : "is-light"}`}>
+      {onClose ? (
+        <button
+          type="button"
+          className="exhibition-entity-card-close"
+          onClick={onClose}
+          aria-label={closeLabel}
+          title={closeLabel}
+        >
+          ×
+        </button>
+      ) : null}
       <div className="exhibition-entity-card-copy">
         <div className="exhibition-entity-card-heading">
           <span>{KIND_LABELS[entity.kind]}</span>

@@ -1846,6 +1846,30 @@ class FlashTalkRunner:
         task.add_done_callback(self.speech_tasks.discard)
         return task
 
+    def create_direct_speak_task(
+        self,
+        text: str,
+        tts_voice: str | None = None,
+        *,
+        tts_provider: str | None = None,
+        tts_model: str | None = None,
+        enqueue_unix: float | None = None,
+    ) -> asyncio.Task[None]:
+        """Speak deterministic application text without sending it to the LLM."""
+        task = asyncio.create_task(
+            self._run_speak_task(
+                text,
+                tts_voice=tts_voice,
+                tts_provider=tts_provider,
+                tts_model=tts_model,
+                enqueue_unix=enqueue_unix,
+                direct=True,
+            )
+        )
+        self.speech_tasks.add(task)
+        task.add_done_callback(self.speech_tasks.discard)
+        return task
+
     def create_speak_uploaded_pcm_task(
         self,
         pcm_path: str,
@@ -1908,6 +1932,8 @@ class FlashTalkRunner:
         tts_model: str | None = None,
         enqueue_unix: float | None = None,
         knowledge_context: str | None = None,
+        *,
+        direct: bool = False,
     ) -> None:
         log.info("speak start: %s (session=%s)", text[:30], self.session_id)
         try:
@@ -1918,6 +1944,7 @@ class FlashTalkRunner:
                 tts_model=tts_model,
                 enqueue_unix=enqueue_unix,
                 knowledge_context=knowledge_context,
+                direct=direct,
             )
             log.info("speak done: session=%s", self.session_id)
         except asyncio.CancelledError:
@@ -1950,6 +1977,7 @@ class FlashTalkRunner:
         tts_model: str | None = None,
         enqueue_unix: float | None = None,
         knowledge_context: str | None = None,
+        direct: bool = False,
     ) -> None:
         """Full pipeline: user text → LLM → TTS → FlashTalk → WebRTC.
 
@@ -1983,20 +2011,25 @@ class FlashTalkRunner:
             )
             self._speech_started = True
 
-            memory_prompt = await self._memory.retrieve_prompt(text) if self._memory else ""
+            memory_prompt = (
+                await self._memory.retrieve_prompt(text)
+                if self._memory is not None and not direct
+                else ""
+            )
             llm_user_text = (
                 f"{memory_prompt}\n\nCurrent user message:\n{text}"
                 if memory_prompt
                 else text
             )
-            self.conversation.add_user(text)
-            agent_context = await self._build_agent_context(text)
-            if knowledge_context:
+            if not direct:
+                self.conversation.add_user(text)
+            agent_context = await self._build_agent_context(text) if not direct else None
+            if knowledge_context and not direct:
                 agent_context = "\n\n".join(
                     item for item in (agent_context, knowledge_context.strip()) if item
                 )
 
-            full_response = ""
+            full_response = text if direct else ""
             spoken_prefix = ""
             chunk_samples = self.flashtalk.audio_chunk_samples  # 17920
             # Queue: (pcm_chunk, subtitle_for_playback) | None. Subtitle is emitted in the
@@ -2351,16 +2384,26 @@ class FlashTalkRunner:
                             timing["llm_first_token_ms"] = (t_first_token - t_llm0) * 1000.0
                         await sentence_q.put(None)  # signal TTS worker to stop
 
+                async def _direct_text_feeder() -> None:
+                    """Queue configured application copy directly for TTS."""
+                    try:
+                        if not self._interrupt.is_set() and text.strip():
+                            await _queue_sentence_for_tts(text, force=True)
+                    finally:
+                        await sentence_q.put(None)
+
                 try:
                     t_opener0 = time.perf_counter()
-                    await _emit_cached_opener()
+                    if not direct:
+                        await _emit_cached_opener()
                     timing["opener_ms"] = (time.perf_counter() - t_opener0) * 1000.0
                     # Run LLM feeder and TTS worker concurrently within
                     # the producer; the TTS worker processes sentences as
                     # fast as Edge TTS can generate audio while the LLM
                     # feeder keeps streaming deltas into sentence_q.
                     t_gather0 = time.perf_counter()
-                    await asyncio.gather(_llm_feeder(), _tts_worker())
+                    feeder = _direct_text_feeder() if direct else _llm_feeder()
+                    await asyncio.gather(feeder, _tts_worker())
                     timing["llm_tts_gather_ms"] = (time.perf_counter() - t_gather0) * 1000.0
 
                     # Flush leftover audio with a short silence tail so the mouth can settle.
@@ -2653,7 +2696,7 @@ class FlashTalkRunner:
             )
 
             stored_response = _merge_spoken_reply(spoken_prefix, full_response)
-            if stored_response:
+            if stored_response and not direct:
                 self.conversation.add_assistant(stored_response)
                 await self._save_agent_turn(user_text=text, assistant_text=stored_response)
                 if self._memory is not None:

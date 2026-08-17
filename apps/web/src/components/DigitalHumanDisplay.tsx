@@ -49,8 +49,10 @@ type DigitalHumanDisplayProps = {
   qwenModel?: string;
   qwenVoice?: string;
   navigationResult?: NavigationResult | null;
+  onCloseNavigation?: () => void;
   shoppingRegistration?: { title: string; url: string; qrDataUrl: string } | null;
   onCloseShoppingRegistration?: () => void;
+  onCloseEntity?: (entityId: string) => void;
   voiceIntent?: VoiceIntent | null;
   exhibitionConfigNotice?: string | null;
   language: ConversationLanguage;
@@ -88,8 +90,10 @@ export function DigitalHumanDisplay({
   qwenModel = "",
   qwenVoice = "",
   navigationResult = null,
+  onCloseNavigation,
   shoppingRegistration = null,
   onCloseShoppingRegistration,
+  onCloseEntity,
   voiceIntent = null,
   exhibitionConfigNotice = null,
   language,
@@ -185,19 +189,17 @@ export function DigitalHumanDisplay({
               {exhibitionConfigNotice ? (
                 <div className="digital-display-chat-notice" role="status">{exhibitionConfigNotice}</div>
               ) : null}
-              {shoppingRegistration ? (
-                <article className="digital-display-registration-card" role="dialog" aria-label={english ? "Registration QR code" : "登记二维码"}>
-                  <button type="button" onClick={onCloseShoppingRegistration} aria-label={english ? "Close registration QR code" : "关闭登记二维码"}>×</button>
-                  <img src={shoppingRegistration.qrDataUrl} alt={english ? `${shoppingRegistration.title} registration QR code` : `${shoppingRegistration.title}登记二维码`} />
-                  <div>
-                    <strong>{shoppingRegistration.title}</strong>
-                    <p>{english ? "Scan with your phone to register. Your submission will be added to lead management." : "请使用手机扫码登记，提交后信息将同步至线索运营。"}</p>
-                    <a href={shoppingRegistration.url} target="_blank" rel="noreferrer">{english ? "Open the registration page" : "无法扫码时打开登记页"}</a>
-                  </div>
-                </article>
-              ) : null}
               {navigationResult ? (
                 <article className="digital-display-navigation-card">
+                  <button
+                    type="button"
+                    className="digital-display-card-close"
+                    onClick={onCloseNavigation}
+                    aria-label={english ? "Close navigation directions" : "关闭路线指引"}
+                    title={english ? "Close navigation directions" : "关闭路线指引"}
+                  >
+                    ×
+                  </button>
                   {navigationResult.image_url ? (
                     <img
                       src={navigationImageUrl(navigationResult.image_url)}
@@ -311,10 +313,33 @@ export function DigitalHumanDisplay({
             </div>
           </section>
 
-          {navigationResult || visibleMessages.some((message) => message.relatedEntities?.length) ? (
-            <section className="digital-display-waist-panel" aria-label={english ? "Exhibition content" : "展会内容展示"}>
-              {navigationResult ? (
+          {shoppingRegistration || navigationResult || visibleMessages.some((message) => message.relatedEntities?.length) ? (
+            <section
+              className={`digital-display-waist-panel ${shoppingRegistration ? "is-registration" : ""}`}
+              aria-label={shoppingRegistration ? (english ? "Registration QR code" : "登记二维码") : (english ? "Exhibition content" : "展会内容展示")}
+            >
+              {shoppingRegistration ? (
+                <article className="digital-display-registration-card" role="dialog" aria-modal="true" aria-label={english ? "Registration QR code" : "登记二维码"}>
+                  <button type="button" onClick={onCloseShoppingRegistration} aria-label={english ? "Close registration QR code" : "关闭登记二维码"}>×</button>
+                  <img src={shoppingRegistration.qrDataUrl} alt={english ? `${shoppingRegistration.title} registration QR code` : `${shoppingRegistration.title}登记二维码`} />
+                  <div>
+                    <strong>{shoppingRegistration.title}</strong>
+                    <p>{english ? "Scan with your phone to register. Your submission will be added to lead management." : "请使用手机扫码登记，提交后信息将同步至线索运营。"}</p>
+                    <a href={shoppingRegistration.url} target="_blank" rel="noreferrer">{english ? "Open the registration page" : "无法扫码时打开登记页"}</a>
+                  </div>
+                </article>
+              ) : null}
+              {!shoppingRegistration && navigationResult ? (
                 <article className="digital-display-navigation-card">
+                  <button
+                    type="button"
+                    className="digital-display-card-close"
+                    onClick={onCloseNavigation}
+                    aria-label={english ? "Close navigation directions" : "关闭路线指引"}
+                    title={english ? "Close navigation directions" : "关闭路线指引"}
+                  >
+                    ×
+                  </button>
                   {navigationResult.image_url ? (
                     <img
                       src={navigationImageUrl(navigationResult.image_url)}
@@ -349,15 +374,17 @@ export function DigitalHumanDisplay({
                   </div>
                 </article>
               ) : null}
-              {visibleMessages.flatMap((message) =>
+              {!shoppingRegistration && !navigationResult ? visibleMessages.flatMap((message) =>
                 (message.relatedEntities ?? []).map((entity) => (
                   <ExhibitionEntityCard
                     key={`${message.id}-${entity.kind}-${entity.id}`}
                     entity={entity}
                     immersive
+                    onClose={onCloseEntity ? () => onCloseEntity(entity.id) : undefined}
+                    closeLabel={english ? `Close ${entity.name}` : `关闭${entity.name}介绍`}
                   />
                 )),
-              )}
+              ) : null}
             </section>
           ) : null}
 

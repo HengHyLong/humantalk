@@ -575,8 +575,14 @@ async def handle_worker_task(
         )
         knowledge_context = str(task.get("knowledge_context") or "").strip() or None
         create_chat_task = getattr(runner, "create_chat_task", None)
+        create_direct_speak_task = getattr(runner, "create_direct_speak_task", None)
         if task.get("direct"):
-            runner.create_speak_task(
+            speak_direct = (
+                create_direct_speak_task
+                if callable(create_direct_speak_task)
+                else runner.create_speak_task
+            )
+            speak_direct(
                 text,
                 tts_voice=tts_voice or None,
                 tts_provider=tts_provider or None,
