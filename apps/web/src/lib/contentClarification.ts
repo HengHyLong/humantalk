@@ -7,6 +7,25 @@ function normalizeChoiceText(value: string): string {
     .replace(/[\s\p{P}\p{S}]+/gu, "");
 }
 
+export function classifyExplicitContentRequest(value: string): ContentClarificationChoice {
+  const text = normalizeChoiceText(value);
+  if (!text) return "unknown";
+
+  const routeSignals = [
+    "路线", "怎么去", "如何去", "怎么走", "如何走", "导航", "带我去", "带路",
+    "前往", "去往", "route", "directions", "navigation", "navigate", "howtoget",
+    "howdoigetto", "takemeto",
+  ];
+  if (routeSignals.some((signal) => text.includes(normalizeChoiceText(signal)))) return "route";
+
+  const introductionSignals = [
+    "介绍", "了解", "讲解", "讲一讲", "讲讲", "认识一下", "是什么", "看看",
+    "introduce", "introduction", "tellmeabout", "learnabout", "showme",
+  ];
+  if (introductionSignals.some((signal) => text.includes(normalizeChoiceText(signal)))) return "entity";
+  return "unknown";
+}
+
 export function classifyContentClarification(
   value: string,
   entityName: string,

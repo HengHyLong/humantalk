@@ -27,3 +27,21 @@ test("entity matcher tolerates one ASR character error", () => {
 test("entity matcher does not fuzzily match two-character aliases", () => {
   assert.equal(matchExhibitionEntities("介绍一下小兰", [entity]).length, 0);
 });
+
+test("entity matcher keeps the most specific area or product alias first", () => {
+  const area: ExhibitionEntityCard = {
+    id: "point-robot-area",
+    kind: "point",
+    name: "机器人展区",
+    description: "机器人主题展区。",
+    spoken_text: "这是机器人展区介绍。",
+    image_urls: [],
+    details: [],
+    keywords: ["机器人展区", "智能制造区"],
+    fuzzy_keywords: [],
+  };
+
+  assert.equal(matchExhibitionEntities("介绍机器人展区", [entity, area])[0]?.id, area.id);
+  assert.equal(matchExhibitionEntities("了解智能制造区", [entity, area])[0]?.id, area.id);
+  assert.equal(matchExhibitionEntities("介绍一下小蓝", [entity, area])[0]?.id, entity.id);
+});

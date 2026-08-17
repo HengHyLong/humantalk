@@ -114,7 +114,7 @@ import {
 import type { ConnectionStatus, ExhibitionEntityCard, MemoryLibrary, Message, QueueInfo } from "./types";
 import { matchExhibitionEntities } from "./lib/exhibitionEntityMatch";
 import { classifyRegistrationDecision } from "./lib/shoppingConversation";
-import { classifyContentClarification } from "./lib/contentClarification";
+import { classifyContentClarification, classifyExplicitContentRequest } from "./lib/contentClarification";
 import { isEnglishConversation, type ConversationLanguage } from "./lib/conversationLanguage";
 import {
   canChangeModelForAvatar,
@@ -2823,7 +2823,7 @@ export default function App() {
       wake_word: { enabled: false, words: [], active_window_seconds: 30 },
       welcome: { script_id: "", text: "" },
     };
-    const match = matchVoiceIntent(text, {
+    const configuredMatch = matchVoiceIntent(text, {
       ...baseVoiceConfig,
       keywords: {
         ...baseVoiceConfig.keywords,
@@ -2833,6 +2833,12 @@ export default function App() {
         ],
       },
     });
+    const explicitContentRequest = classifyExplicitContentRequest(text);
+    const match = explicitContentRequest === "route"
+      ? { intent: "navigation" as const, keyword: null }
+      : explicitContentRequest === "entity" && relatedEntities.length > 0
+        ? { intent: "exhibition_content" as const, keyword: null }
+        : configuredMatch;
     setLastVoiceIntent(match.intent);
 
     if (match.intent === "navigation") {
@@ -2842,10 +2848,28 @@ export default function App() {
           session_id: sessionId,
           language: conversationLanguage,
         });
-        const competingEntity = relatedEntities.find((entity) => entity.kind === "exhibit" || entity.kind === "exhibitor")
-          || relatedEntities.find((entity) => entity.kind === "point" || entity.kind === "venue");
-        if (result.matched && competingEntity) {
-          const destination = result.route?.to?.trim() || result.title?.trim() || (englishConversation ? "the destination" : "目的地");
+        const competingEntity = relatedEntities.find((entity) => (
+          entity.kind === "exhibit"
+          || entity.kind === "exhibitor"
+          || entity.kind === "point"
+          || entity.kind === "venue"
+        ));
+        const destination = result.route?.to?.trim() || result.title?.trim() || (englishConversation ? "the destination" : "目的地");
+        const explicitContentChoice = competingEntity
+          ? explicitContentRequest
+          : "unknown";
+        if (result.matched && competingEntity && explicitContentChoice === "entity") {
+          setLastVoiceIntent("exhibition_content");
+          setNavigationResult(null);
+          const introductionText = competingEntity.spoken_text?.trim()
+            || competingEntity.description.trim()
+            || (englishConversation
+              ? `Here is the information card for ${competingEntity.name}.`
+              : `为您展示${competingEntity.name}的介绍卡片。`);
+          enqueueSpeech(introductionText, text, [competingEntity], true);
+          return;
+        }
+        if (result.matched && competingEntity && explicitContentChoice === "unknown") {
           const entityType = competingEntity.kind === "exhibit"
             ? (englishConversation ? "exhibit" : "展品")
             : competingEntity.kind === "exhibitor"
@@ -2894,6 +2918,26 @@ export default function App() {
     } else {
       setNavigationResult(null);
     }
+
+    if (explicitContentRequest === "entity") {
+      const introductionEntity = relatedEntities.find((entity) => (
+        entity.kind === "venue"
+        || entity.kind === "point"
+        || entity.kind === "exhibit"
+        || entity.kind === "exhibitor"
+      ));
+      if (introductionEntity) {
+        const introductionText = introductionEntity.spoken_text?.trim()
+          || introductionEntity.description.trim()
+          || (englishConversation
+            ? `Here is the information card for ${introductionEntity.name}.`
+            : `为您展示${introductionEntity.name}的介绍卡片。`);
+        setLastVoiceIntent("exhibition_content");
+        enqueueSpeech(introductionText, text, [introductionEntity], true);
+        return;
+      }
+    }
+
     try {
       const shopping = await queryExhibitionShopping(configuredExhibitionId, {
         text,

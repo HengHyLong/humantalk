@@ -197,15 +197,17 @@ body {
 .digital-display-chat-reveal:hover { background: rgba(21, 111, 170, .78); }
 .digital-display-waist-panel { position: absolute; left: 50%; top: 47%; transform: translateX(-50%); z-index: 24; display: flex; align-items: stretch; gap: 10px; width: min(860px, 92%); max-height: 30vh; padding: 8px; overflow-x: auto; overflow-y: auto; border: 1px solid rgba(168, 235, 255, .35); border-radius: 14px; background: rgba(1, 35, 86, .55); box-shadow: 0 14px 30px rgba(0, 19, 63, .24); backdrop-filter: blur(10px); scrollbar-width: thin; scrollbar-color: rgba(183, 237, 255, .5) transparent; }
 .digital-display-waist-panel.is-registration { width: min(620px, 92%); max-height: none; overflow: visible; border-color: rgba(151, 239, 221, .5); background: rgba(1, 31, 73, .82); }
-.digital-display-waist-panel.is-registration .digital-display-registration-card { width: 100%; grid-template-columns: 220px minmax(0, 1fr); padding: 18px; }
-.digital-display-waist-panel.is-registration .digital-display-registration-card > img { width: 220px; height: 220px; }
+.digital-display-waist-panel.is-registration .digital-display-registration-card { width: 100%; min-width: 0; grid-template-columns: clamp(132px, 36%, 220px) minmax(0, 1fr); padding: 18px; }
+.digital-display-waist-panel.is-registration .digital-display-registration-card > img { width: 100%; height: auto; max-width: 220px; max-height: min(28vh, 220px); aspect-ratio: 1; justify-self: center; object-fit: contain; }
 .digital-display-waist-panel.is-registration .digital-display-registration-card strong { font-size: 17px; }
 .digital-display-waist-panel.is-registration .digital-display-registration-card p,
 .digital-display-waist-panel.is-registration .digital-display-registration-card a { font-size: 12px; }
 .digital-display-waist-panel .digital-display-navigation-card,
-.digital-display-waist-panel .exhibition-entity-card.is-immersive { flex: 0 0 250px; min-height: 0; max-height: 29vh; }
+.digital-display-waist-panel .exhibition-entity-card.is-immersive { width: min(100%, 420px); min-width: 0; flex: 1 1 250px; max-height: 29vh; }
 .digital-display-waist-panel .digital-display-navigation-card img,
-.digital-display-waist-panel .exhibition-entity-card.is-immersive > img { height: 120px; min-height: 0; max-height: 120px; }
+.digital-display-waist-panel .exhibition-entity-card.is-immersive > img { width: 100%; min-width: 0; max-width: 100%; min-height: 0; object-fit: contain; background: rgba(1, 30, 70, .5); }
+.digital-display-waist-panel .digital-display-navigation-card img { height: auto; max-height: min(18vh, 180px); }
+.digital-display-waist-panel .exhibition-entity-card.is-immersive > img { height: 100%; max-height: 29vh; }
 .digital-display-chat-heading { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; color: rgba(230, 249, 255, .8); font-size: 10px; letter-spacing: .16em; }
 .digital-display-chat-state { color: rgba(185, 240, 255, .88); font-size: 9px; letter-spacing: .08em; }
 .digital-display-chat-feed { position: relative; display: flex; height: var(--digital-display-latest-round-height, auto); max-height: min(27vh, 300px); min-height: 0; flex: 0 1 auto; flex-direction: column; gap: 8px; overflow-y: auto; padding: 2px 3px; scrollbar-width: thin; scrollbar-color: rgba(183, 237, 255, .5) transparent; transition: height .2s ease; }
@@ -221,7 +223,7 @@ body {
 .exhibition-entity-card-close:hover { border-color: rgba(215, 248, 255, .7); background: rgba(5, 69, 126, .94); transform: scale(1.05); }
 .digital-display-card-close:focus-visible,
 .exhibition-entity-card-close:focus-visible { outline: 2px solid #8ceaff; outline-offset: 2px; }
-.digital-display-navigation-card img { display: block; width: 100%; max-height: 180px; object-fit: cover; }
+.digital-display-navigation-card img { display: block; width: 100%; height: auto; max-width: 100%; max-height: 180px; object-fit: contain; background: rgba(1, 30, 70, .5); }
 .digital-display-navigation-copy { padding: 9px 10px; color: rgba(239, 251, 255, .94); font-size: 10px; line-height: 1.55; }
 .digital-display-navigation-copy strong { display: block; font-size: 11px; }
 .digital-display-navigation-copy p { margin: 3px 0 0; color: rgba(205, 236, 255, .78); }
@@ -230,7 +232,7 @@ body {
 .digital-display-navigation-copy ol { margin: 5px 0 0; padding-left: 18px; color: rgba(224, 245, 255, .88); }
 .digital-display-registration-card { position: relative; display: grid; align-items: center; gap: 12px; grid-template-columns: 116px minmax(0, 1fr); align-self: stretch; border: 1px solid rgba(151, 239, 221, .55); border-radius: 14px; padding: 12px; color: #efffff; background: rgba(3, 88, 104, .72); box-shadow: 0 14px 34px rgba(0, 25, 62, .3); }
 .digital-display-registration-card > button { position: absolute; top: 7px; right: 8px; border: 0; color: rgba(231, 254, 255, .78); background: transparent; font-size: 18px; cursor: pointer; }
-.digital-display-registration-card > img { display: block; width: 116px; height: 116px; border-radius: 9px; background: #fff; }
+.digital-display-registration-card > img { display: block; width: min(100%, 116px); height: auto; max-width: 100%; aspect-ratio: 1; border-radius: 9px; object-fit: contain; background: #fff; }
 .digital-display-registration-card strong { display: block; padding-right: 18px; font-size: 13px; }
 .digital-display-registration-card p { margin: 7px 0; padding: 0; color: rgba(226, 250, 251, .82); background: transparent; font-size: 10px; line-height: 1.6; }
 .digital-display-registration-card a { color: #a8f3ff; font-size: 10px; text-decoration: underline; }
@@ -256,7 +258,7 @@ body {
 .exhibition-entity-card dl div { display: flex; min-width: 0; align-items: center; gap: 5px; border-radius: 8px; padding: 5px 8px; }
 .exhibition-entity-card dt, .exhibition-entity-card dd { margin: 0; font-size: 10px; line-height: 1.45; }
 .exhibition-entity-card dd { min-width: 0; overflow: hidden; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
-.exhibition-entity-card > img { display: block; width: 100%; height: clamp(145px, 23vh, 230px); object-fit: cover; }
+.exhibition-entity-card > img { display: block; width: 100%; max-width: 100%; height: clamp(145px, 23vh, 230px); object-fit: contain; background: rgba(1, 30, 70, .5); }
 .exhibition-entity-card.is-immersive { display: grid; min-height: 132px; grid-template-columns: minmax(0, 1.25fr) minmax(150px, .75fr); border: 1px solid rgba(165, 233, 255, .46); color: #f3fbff; background: rgba(2, 51, 112, .82); box-shadow: 0 14px 30px rgba(0, 19, 63, .24); backdrop-filter: blur(10px); }
 .exhibition-entity-card.is-immersive .exhibition-entity-card-copy { min-width: 0; }
 .exhibition-entity-card.is-immersive .exhibition-entity-card-copy > p { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
@@ -302,10 +304,10 @@ body {
 @media (max-width: 760px) {
   .digital-display-shell { height: 100dvh; min-height: 580px; }
   .digital-display-registration-card { grid-template-columns: 92px minmax(0, 1fr); }
-  .digital-display-registration-card > img { width: 92px; height: 92px; }
+  .digital-display-registration-card > img { width: min(100%, 92px); height: auto; }
   .digital-display-waist-panel.is-registration { top: 31%; max-height: 58vh; overflow-y: auto; }
   .digital-display-waist-panel.is-registration .digital-display-registration-card { display: block; padding: 15px; text-align: center; }
-  .digital-display-waist-panel.is-registration .digital-display-registration-card > img { width: 180px; height: 180px; margin: 0 auto 12px; }
+  .digital-display-waist-panel.is-registration .digital-display-registration-card > img { width: min(68vw, 180px); height: auto; max-height: min(32vh, 180px); margin: 0 auto 12px; }
   .digital-display-root { min-height: 100dvh; }
   .digital-display-header { top: 17px; left: 18px; right: 18px; }
   .digital-display-watermark { display: none; }
