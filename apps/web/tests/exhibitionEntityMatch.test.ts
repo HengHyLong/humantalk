@@ -45,3 +45,22 @@ test("entity matcher keeps the most specific area or product alias first", () =>
   assert.equal(matchExhibitionEntities("了解智能制造区", [entity, area])[0]?.id, area.id);
   assert.equal(matchExhibitionEntities("介绍一下小蓝", [entity, area])[0]?.id, entity.id);
 });
+
+test("entity matcher recognizes a specific leading part of the official name", () => {
+  const workstation: ExhibitionEntityCard = {
+    ...entity,
+    id: "robot-workstation",
+    name: "协作机器人工作站",
+    keywords: ["机器人工作站"],
+    fuzzy_keywords: [],
+  };
+  const terminal: ExhibitionEntityCard = {
+    ...entity,
+    id: "guide-terminal",
+    name: "智能导览终端",
+    keywords: ["导览终端"],
+    fuzzy_keywords: [],
+  };
+
+  assert.equal(matchExhibitionEntities("介绍协作机器人", [terminal, workstation])[0]?.id, workstation.id);
+});

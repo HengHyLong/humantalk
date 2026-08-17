@@ -9,6 +9,7 @@ import type {
 } from "../lib/api";
 import { buildApiUrl } from "../lib/api";
 import { isEnglishConversation, type ConversationLanguage } from "../lib/conversationLanguage";
+import { selectCurrentEntityPresentation } from "../lib/entityPresentation";
 import type { TtsProviderExtended } from "../constants/ttsBailian";
 import type { ConnectionStatus, Message } from "../types";
 import { ChatInput } from "./ChatInput";
@@ -120,7 +121,8 @@ export function DigitalHumanDisplay({
   const english = isEnglishConversation(language);
   const suggestions = english ? ["Venue navigation", "Book a meeting", "Conference services", "About the exhibition"] : ["展馆导航", "预约洽谈", "会议服务", "关于展览"];
   const displaySubtitle = subtitle?.trim() || (messages.length === 0 ? (english ? "You can ask me the following questions" : "你可以问我以下问题哦") : "");
-  const presentationMessages = messages.slice(-5);
+  const latestVisibleMessage = messages[messages.length - 1];
+  const presentationMessages = selectCurrentEntityPresentation(messages);
   const visibleEntityPresentationKey = presentationMessages
     .flatMap((message) => message.relatedEntities ?? [])
     .map((entity) => `${entity.kind}:${entity.id}`)
@@ -133,7 +135,6 @@ export function DigitalHumanDisplay({
       : visibleEntityPresentationKey
         ? `entities:${visibleEntityPresentationKey}`
         : "";
-  const latestVisibleMessage = messages[messages.length - 1];
   const showLiveSubtitle = Boolean(
     subtitle?.trim()
       && !(latestVisibleMessage?.role === "assistant" && latestVisibleMessage.text.trim() === subtitle.trim()),

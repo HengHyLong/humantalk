@@ -391,6 +391,35 @@ def test_public_shopping_keyword_match_and_confirmed_registration(tmp_path) -> N
         assert registration.json()["path"].startswith("/survey/")
         assert store.get_record("exhibits", "exhibit-shopping-flow").get("surveyToken")
 
+        store.save_record(
+            "exhibits",
+            {
+                "id": "exhibit-shopping-second",
+                "exhibitionId": "expo-test",
+                "exhibitorId": "exhibitor-shopping-flow",
+                "name": "智能导览终端",
+            },
+            "expo-test",
+        )
+        store.set_links(
+            "interaction_shopping",
+            "shopping-flow",
+            "exhibits",
+            ["exhibit-shopping-flow", "exhibit-shopping-second"],
+        )
+        selected_registration = client.post(
+            "/exhibitions/expo-test/shopping/registration",
+            json={
+                "strategy_id": "shopping-flow",
+                "session_id": "session-shopping",
+                "confirmation_text": "需要登记",
+                "exhibit_id": "exhibit-shopping-second",
+            },
+        )
+        assert selected_registration.status_code == 200
+        assert selected_registration.json()["exhibit_id"] == "exhibit-shopping-second"
+        assert selected_registration.json()["title"] == "智能导览终端"
+
         unmatched = client.post(
             "/exhibitions/expo-test/shopping/query",
             json={"text": "卫生间在哪里", "session_id": "session-shopping"},

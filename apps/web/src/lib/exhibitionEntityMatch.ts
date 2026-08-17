@@ -35,16 +35,32 @@ function fuzzyScore(text: string, keyword: string): number {
   return best;
 }
 
+function normalizeEntityQuery(value: string): string {
+  let text = normalizeEntityKeyword(value);
+  const requestSignals = [
+    "介绍一下", "了解一下", "讲解一下", "认识一下", "给我介绍", "帮我介绍",
+    "我想了解", "想要了解", "介绍", "了解", "讲解", "讲一讲", "讲讲", "看看",
+    "请", "麻烦", "一下",
+  ].map(normalizeEntityKeyword).sort((left, right) => right.length - left.length);
+  for (const signal of requestSignals) text = text.replaceAll(signal, "");
+  return text;
+}
+
 export function matchExhibitionEntities(text: string, entities: ExhibitionEntityCard[]): ExhibitionEntityCard[] {
   const normalizedText = normalizeEntityKeyword(text);
   if (!normalizedText) return [];
+  const normalizedQuery = normalizeEntityQuery(text);
   return entities
     .map((entity) => {
-      const exactLength = entity.keywords.reduce((length, keyword) => {
+      const exactTerms = [entity.name, ...entity.keywords];
+      const exactLength = exactTerms.reduce((length, keyword) => {
         const normalizedKeyword = normalizeEntityKeyword(keyword);
-        return normalizedKeyword.length >= 2 && normalizedText.includes(normalizedKeyword)
-          ? Math.max(length, normalizedKeyword.length)
-          : length;
+        if (normalizedKeyword.length < 2) return length;
+        if (normalizedText.includes(normalizedKeyword)) return Math.max(length, normalizedKeyword.length);
+        if (normalizedQuery.length >= 4 && normalizedKeyword.includes(normalizedQuery)) {
+          return Math.max(length, normalizedQuery.length);
+        }
+        return length;
       }, 0);
       const fuzzy = exactLength > 0 ? 0 : (entity.fuzzy_keywords ?? []).reduce((score, keyword) => {
         const normalizedKeyword = normalizeEntityKeyword(keyword);

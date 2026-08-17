@@ -71,6 +71,7 @@ class ShoppingRegistrationBody(BaseModel):
     strategy_id: str = Field(min_length=1, max_length=200)
     session_id: str = Field(min_length=1, max_length=200)
     confirmation_text: str = Field(min_length=1, max_length=1000)
+    exhibit_id: str | None = Field(default=None, min_length=1, max_length=200)
     language: Literal["zh-CN", "en-US"] = "zh-CN"
 
 
@@ -1895,7 +1896,10 @@ def shopping_registration(exhibition_id: str, request: Request, body: ShoppingRe
     exhibit_ids = [str(value) for value in store.get_links("interaction_shopping", body.strategy_id, "exhibits")]
     if not exhibit_ids:
         exhibit_ids = [str(value) for value in strategy.get("exhibitIds", strategy.get("exhibit_ids", []))]
-    exhibit = next((store.get_record("exhibits", exhibit_id) for exhibit_id in exhibit_ids if store.get_record("exhibits", exhibit_id)), None)
+    if body.exhibit_id and body.exhibit_id not in exhibit_ids:
+        raise HTTPException(status_code=409, detail={"code": "SHOPPING_EXHIBIT_NOT_LINKED", "detail": "所选展品未关联当前导购策略"})
+    selected_exhibit_ids = [body.exhibit_id] if body.exhibit_id else exhibit_ids
+    exhibit = next((store.get_record("exhibits", exhibit_id) for exhibit_id in selected_exhibit_ids if store.get_record("exhibits", exhibit_id)), None)
     if not exhibit or str(exhibit.get("exhibitionId") or exhibit.get("exhibition_id") or "") != exhibition_id:
         raise HTTPException(status_code=409, detail={"code": "SHOPPING_EXHIBIT_REQUIRED", "detail": "导购策略尚未关联可登记展品"})
     token = str(exhibit.get("surveyToken") or "")

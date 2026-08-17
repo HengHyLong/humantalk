@@ -113,7 +113,7 @@ import {
 } from "./constants/ttsQwen";
 import type { ConnectionStatus, ExhibitionEntityCard, MemoryLibrary, Message, QueueInfo } from "./types";
 import { matchExhibitionEntities } from "./lib/exhibitionEntityMatch";
-import { classifyRegistrationDecision } from "./lib/shoppingConversation";
+import { classifyRegistrationDecision, selectShoppingPresentationEntities } from "./lib/shoppingConversation";
 import { classifyContentClarification, classifyExplicitContentRequest } from "./lib/contentClarification";
 import { isEnglishConversation, type ConversationLanguage } from "./lib/conversationLanguage";
 import {
@@ -127,6 +127,7 @@ const MEMORY_PROFILE_ID = "default";
 
 type PendingShoppingRegistration = {
   strategyId: string;
+  exhibitId?: string;
   title: string;
   retryPrompt: string;
   confirmKeywords: string[];
@@ -2742,9 +2743,18 @@ export default function App() {
     const text = rawText.trim();
     if (!text || !sessionId) return;
     const relatedEntities = matchExhibitionEntities(text, exhibitionEntities);
+    const explicitContentRequest = classifyExplicitContentRequest(text);
 
     const pendingShopping = pendingShoppingRegistrationRef.current;
-    if (pendingShopping) {
+    if (pendingShopping && explicitContentRequest !== "unknown") {
+      pendingShoppingRegistrationRef.current = null;
+      setShoppingRegistration(null);
+      setMessages((current) => current.map((message) => (
+        message.relatedEntities?.length
+          ? { ...message, relatedEntities: [] }
+          : message
+      )));
+    } else if (pendingShopping) {
       setLastVoiceIntent("shopping");
       setNavigationResult(null);
       const decision = classifyRegistrationDecision(
@@ -2767,6 +2777,7 @@ export default function App() {
           strategy_id: pendingShopping.strategyId,
           session_id: sessionId,
           confirmation_text: text,
+          exhibit_id: pendingShopping.exhibitId,
           language: conversationLanguage,
         });
         const url = new URL(registration.path, window.location.origin).toString();
@@ -2833,7 +2844,6 @@ export default function App() {
         ],
       },
     });
-    const explicitContentRequest = classifyExplicitContentRequest(text);
     const match = explicitContentRequest === "route"
       ? { intent: "navigation" as const, keyword: null }
       : explicitContentRequest === "entity" && relatedEntities.length > 0
@@ -2919,23 +2929,23 @@ export default function App() {
       setNavigationResult(null);
     }
 
-    if (explicitContentRequest === "entity") {
-      const introductionEntity = relatedEntities.find((entity) => (
+    const explicitIntroductionEntity = explicitContentRequest === "entity"
+      ? relatedEntities.find((entity) => (
         entity.kind === "venue"
         || entity.kind === "point"
         || entity.kind === "exhibit"
         || entity.kind === "exhibitor"
-      ));
-      if (introductionEntity) {
-        const introductionText = introductionEntity.spoken_text?.trim()
-          || introductionEntity.description.trim()
+      ))
+      : undefined;
+    if (explicitIntroductionEntity && explicitIntroductionEntity.kind !== "exhibit") {
+        const introductionText = explicitIntroductionEntity.spoken_text?.trim()
+          || explicitIntroductionEntity.description.trim()
           || (englishConversation
-            ? `Here is the information card for ${introductionEntity.name}.`
-            : `为您展示${introductionEntity.name}的介绍卡片。`);
+            ? `Here is the information card for ${explicitIntroductionEntity.name}.`
+            : `为您展示${explicitIntroductionEntity.name}的介绍卡片。`);
         setLastVoiceIntent("exhibition_content");
-        enqueueSpeech(introductionText, text, [introductionEntity], true);
+        enqueueSpeech(introductionText, text, [explicitIntroductionEntity], true);
         return;
-      }
     }
 
     try {
@@ -2947,19 +2957,23 @@ export default function App() {
       if (shopping.matched && shopping.strategy_id) {
         const entityIds = new Set(shopping.related_entity_ids ?? shopping.exhibit_ids ?? []);
         const shoppingEntities = exhibitionEntities.filter((entity) => entityIds.has(entity.id));
+        const presentedShoppingEntities = selectShoppingPresentationEntities(explicitIntroductionEntity, shoppingEntities);
         const registrationPrompt = shopping.registration_prompt?.trim() || (englishConversation ? "Would you like me to display the registration QR code?" : "需要为您弹出登记二维码吗？");
         pendingShoppingRegistrationRef.current = {
           strategyId: shopping.strategy_id,
+          exhibitId: presentedShoppingEntities.length === 1 ? presentedShoppingEntities[0].id : undefined,
           title: shopping.title?.trim() || (englishConversation ? "Shopping assistant" : "虚拟导购"),
           retryPrompt: shopping.confirmation_retry_prompt?.trim() || (englishConversation ? "Please answer yes or no to registration." : "请回答需要或不需要登记。"),
           confirmKeywords: shopping.confirm_keywords?.length ? shopping.confirm_keywords : (englishConversation ? ["yes", "okay", "register", "agree"] : ["需要", "好的", "可以", "同意", "登记"]),
           declineKeywords: shopping.decline_keywords?.length ? shopping.decline_keywords : (englishConversation ? ["no", "not now", "cancel", "do not register"] : ["不需要", "不用", "不要", "暂不", "取消", "不登记"]),
-          relatedEntities: shoppingEntities,
+          relatedEntities: presentedShoppingEntities,
         };
         setLastVoiceIntent("shopping");
         setShoppingRegistration(null);
-        const introduction = shopping.spoken_text?.trim();
-        enqueueSpeech([introduction, registrationPrompt].filter(Boolean).join("\n"), text, shoppingEntities, true);
+        const introduction = explicitIntroductionEntity?.spoken_text?.trim()
+          || explicitIntroductionEntity?.description.trim()
+          || shopping.spoken_text?.trim();
+        enqueueSpeech([introduction, registrationPrompt].filter(Boolean).join("\n"), text, presentedShoppingEntities, true);
         return;
       }
     } catch (error) {

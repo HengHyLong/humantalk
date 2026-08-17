@@ -1,4 +1,16 @@
+import type { ExhibitionEntityCard } from "../types";
+
 export type RegistrationDecision = "confirm" | "decline" | "unknown";
+
+export function selectShoppingPresentationEntities(
+  preferredEntity: ExhibitionEntityCard | undefined,
+  strategyEntities: ExhibitionEntityCard[],
+): ExhibitionEntityCard[] {
+  if (!preferredEntity || preferredEntity.kind !== "exhibit") return strategyEntities;
+  return strategyEntities.some((entity) => entity.id === preferredEntity.id)
+    ? [preferredEntity]
+    : strategyEntities;
+}
 
 export function normalizeRegistrationText(value: string): string {
   return value

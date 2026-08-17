@@ -489,7 +489,7 @@ export async function queryExhibitionShopping(
 
 export async function createShoppingRegistration(
   exhibitionId: string | null | undefined,
-  input: { strategy_id: string; session_id: string; confirmation_text: string; language: ConversationLanguage },
+  input: { strategy_id: string; session_id: string; confirmation_text: string; exhibit_id?: string; language: ConversationLanguage },
 ): Promise<ShoppingRegistrationResult> {
   const id = exhibitionId?.trim();
   return apiPost<ShoppingRegistrationResult>(
