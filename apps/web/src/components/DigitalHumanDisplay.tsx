@@ -15,6 +15,8 @@ import { ChatInput } from "./ChatInput";
 import { ExhibitionEntityCard } from "./ExhibitionEntityCard";
 import { SceneStage } from "./SceneStage";
 
+const PRESENTATION_AUTO_CLOSE_MS = 45_000;
+
 function navigationImageUrl(value: string): string {
   const url = value.trim();
   return url.startsWith("/scene-assets/") ? buildApiUrl(url) : url;
@@ -53,6 +55,7 @@ type DigitalHumanDisplayProps = {
   shoppingRegistration?: { title: string; url: string; qrDataUrl: string } | null;
   onCloseShoppingRegistration?: () => void;
   onCloseEntity?: (entityId: string) => void;
+  onAutoClosePresentation?: () => void;
   voiceIntent?: VoiceIntent | null;
   exhibitionConfigNotice?: string | null;
   language: ConversationLanguage;
@@ -94,6 +97,7 @@ export function DigitalHumanDisplay({
   shoppingRegistration = null,
   onCloseShoppingRegistration,
   onCloseEntity,
+  onAutoClosePresentation,
   voiceIntent = null,
   exhibitionConfigNotice = null,
   language,
@@ -101,6 +105,7 @@ export function DigitalHumanDisplay({
 }: DigitalHumanDisplayProps) {
   const [draft, setDraft] = useState("");
   const [inputMode, setInputMode] = useState<"voice" | "keyboard">("voice");
+  const [presentationActivity, setPresentationActivity] = useState(0);
   const chatFeedRef = useRef<HTMLDivElement>(null);
   const chatFeedContentRef = useRef<HTMLDivElement>(null);
   const live = connection === "live" || connection === "expiring";
@@ -109,6 +114,18 @@ export function DigitalHumanDisplay({
   const suggestions = english ? ["Venue navigation", "Book a meeting", "Conference services", "About the exhibition"] : ["展馆导航", "预约洽谈", "会议服务", "关于展览"];
   const displaySubtitle = subtitle?.trim() || (messages.length === 0 ? (english ? "You can ask me the following questions" : "你可以问我以下问题哦") : "");
   const visibleMessages = messages.slice(-5);
+  const visibleEntityPresentationKey = visibleMessages
+    .flatMap((message) => message.relatedEntities ?? [])
+    .map((entity) => `${entity.kind}:${entity.id}`)
+    .sort()
+    .join("|");
+  const presentationKey = shoppingRegistration
+    ? `registration:${shoppingRegistration.url}`
+    : navigationResult
+      ? `navigation:${navigationResult.route_id || navigationResult.title || navigationResult.spoken_text}`
+      : visibleEntityPresentationKey
+        ? `entities:${visibleEntityPresentationKey}`
+        : "";
   const latestVisibleMessage = visibleMessages[visibleMessages.length - 1];
   const showLiveSubtitle = Boolean(
     subtitle?.trim()
@@ -134,6 +151,12 @@ export function DigitalHumanDisplay({
     observer.observe(content);
     return () => observer.disconnect();
   }, []);
+
+  useEffect(() => {
+    if (!presentationKey || !onAutoClosePresentation) return;
+    const timer = window.setTimeout(onAutoClosePresentation, PRESENTATION_AUTO_CLOSE_MS);
+    return () => window.clearTimeout(timer);
+  }, [onAutoClosePresentation, presentationActivity, presentationKey]);
 
   const submit = () => {
     const text = draft.trim();
@@ -190,7 +213,7 @@ export function DigitalHumanDisplay({
                 <div className="digital-display-chat-notice" role="status">{exhibitionConfigNotice}</div>
               ) : null}
               {navigationResult ? (
-                <article className="digital-display-navigation-card">
+                <article className="digital-display-navigation-card" onPointerDown={() => setPresentationActivity((value) => value + 1)}>
                   <button
                     type="button"
                     className="digital-display-card-close"
@@ -317,6 +340,7 @@ export function DigitalHumanDisplay({
             <section
               className={`digital-display-waist-panel ${shoppingRegistration ? "is-registration" : ""}`}
               aria-label={shoppingRegistration ? (english ? "Registration QR code" : "登记二维码") : (english ? "Exhibition content" : "展会内容展示")}
+              onPointerDown={() => setPresentationActivity((value) => value + 1)}
             >
               {shoppingRegistration ? (
                 <article className="digital-display-registration-card" role="dialog" aria-modal="true" aria-label={english ? "Registration QR code" : "登记二维码"}>

@@ -3002,6 +3002,16 @@ export default function App() {
     void routeRecognizedText(text);
   }, [routeRecognizedText]);
 
+  const handleAutoClosePresentation = useCallback(() => {
+    setNavigationResult(null);
+    setShoppingRegistration(null);
+    setMessages((current) => current.map((message) => (
+      message.relatedEntities?.length
+        ? { ...message, relatedEntities: [] }
+        : message
+    )));
+  }, []);
+
   const handleRecognizedVoiceText = useCallback(async (rawText: string) => {
     const text = rawText.trim();
     if (!text) return;
@@ -3581,6 +3591,7 @@ export default function App() {
                 }
               : message
           )))}
+          onAutoClosePresentation={handleAutoClosePresentation}
           exhibitionConfigNotice={exhibitionConfigNotice}
           language={conversationLanguage}
           onLanguageChange={setConversationLanguage}
