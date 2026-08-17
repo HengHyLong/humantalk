@@ -188,7 +188,13 @@ body {
 @keyframes digital-display-spin { to { transform: rotate(360deg); } }
 @keyframes digital-display-loading-progress { 0% { transform: translateX(-120%); } 55%, 100% { transform: translateX(280%); } }
 
-.digital-display-chat-panel { position: absolute; z-index: 20; top: 62%; right: 3%; bottom: 7%; left: 3%; display: flex; min-height: 0; flex-direction: column; gap: 10px; border: 1px solid rgba(159, 228, 255, .4); border-radius: 18px; padding: 15px; background: rgba(7, 111, 188, .16); box-shadow: 0 16px 32px rgba(0, 22, 72, .12); }
+.digital-display-chat-panel { position: absolute; z-index: 20; right: 3%; bottom: 7%; left: 3%; display: flex; max-height: min(46vh, 520px); min-height: 0; flex-direction: column; gap: 10px; border: 1px solid rgba(159, 228, 255, .4); border-radius: 18px; padding: 15px; background: rgba(7, 111, 188, .16); box-shadow: 0 16px 32px rgba(0, 22, 72, .12); transition: border-color .2s ease, background .2s ease, box-shadow .2s ease; }
+.digital-display-chat-panel.is-conversation-hidden { border-color: transparent; padding-top: 4px; background: transparent; box-shadow: none; }
+.digital-display-chat-panel.is-conversation-hidden .digital-display-chat-heading,
+.digital-display-chat-panel.is-conversation-hidden .digital-display-chat-feed,
+.digital-display-chat-panel.is-conversation-hidden .digital-display-chat-suggestions { display: none; }
+.digital-display-chat-reveal { align-self: flex-end; border: 1px solid rgba(181, 232, 255, .4); border-radius: 999px; padding: 7px 12px; color: #dcf7ff; background: rgba(2, 45, 98, .72); font-size: 10px; cursor: pointer; backdrop-filter: blur(8px); }
+.digital-display-chat-reveal:hover { background: rgba(21, 111, 170, .78); }
 .digital-display-waist-panel { position: absolute; left: 50%; top: 47%; transform: translateX(-50%); z-index: 24; display: flex; align-items: stretch; gap: 10px; width: min(860px, 92%); max-height: 30vh; padding: 8px; overflow-x: auto; overflow-y: auto; border: 1px solid rgba(168, 235, 255, .35); border-radius: 14px; background: rgba(1, 35, 86, .55); box-shadow: 0 14px 30px rgba(0, 19, 63, .24); backdrop-filter: blur(10px); scrollbar-width: thin; scrollbar-color: rgba(183, 237, 255, .5) transparent; }
 .digital-display-waist-panel.is-registration { width: min(620px, 92%); max-height: none; overflow: visible; border-color: rgba(151, 239, 221, .5); background: rgba(1, 31, 73, .82); }
 .digital-display-waist-panel.is-registration .digital-display-registration-card { width: 100%; grid-template-columns: 220px minmax(0, 1fr); padding: 18px; }
@@ -202,8 +208,11 @@ body {
 .digital-display-waist-panel .exhibition-entity-card.is-immersive > img { height: 120px; min-height: 0; max-height: 120px; }
 .digital-display-chat-heading { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; color: rgba(230, 249, 255, .8); font-size: 10px; letter-spacing: .16em; }
 .digital-display-chat-state { color: rgba(185, 240, 255, .88); font-size: 9px; letter-spacing: .08em; }
-.digital-display-chat-feed { display: flex; min-height: 0; flex: 1; flex-direction: column; gap: 8px; overflow-y: auto; padding: 2px 3px; scrollbar-width: thin; scrollbar-color: rgba(183, 237, 255, .5) transparent; }
-.digital-display-chat-feed-content { display: flex; min-height: 100%; flex-direction: column; gap: 8px; }
+.digital-display-chat-feed { position: relative; display: flex; height: var(--digital-display-latest-round-height, auto); max-height: min(27vh, 300px); min-height: 0; flex: 0 1 auto; flex-direction: column; gap: 8px; overflow-y: auto; padding: 2px 3px; scrollbar-width: thin; scrollbar-color: rgba(183, 237, 255, .5) transparent; transition: height .2s ease; }
+.digital-display-chat-feed-content { display: flex; min-height: 0; flex-direction: column; gap: 8px; }
+.digital-display-chat-round { display: flex; flex: 0 0 auto; flex-direction: column; gap: 8px; }
+.digital-display-scroll-bottom { position: sticky; bottom: 4px; z-index: 4; display: inline-flex; align-self: center; align-items: center; gap: 5px; border: 1px solid rgba(177, 235, 255, .48); border-radius: 999px; padding: 6px 11px; color: #e7faff; background: rgba(2, 45, 98, .9); box-shadow: 0 7px 18px rgba(0, 18, 58, .28); font-size: 10px; cursor: pointer; backdrop-filter: blur(8px); }
+.digital-display-scroll-bottom:hover { background: rgba(24, 124, 184, .94); }
 .digital-display-chat-notice { align-self: stretch; border: 1px solid rgba(255, 218, 144, .28); border-radius: 9px; padding: 7px 9px; color: rgba(255, 240, 199, .9); background: rgba(117, 82, 23, .2); font-size: 10px; line-height: 1.5; }
 .digital-display-navigation-card { position: relative; align-self: stretch; overflow: hidden; border: 1px solid rgba(168, 235, 255, .38); border-radius: 12px; background: rgba(2, 50, 108, .42); }
 .digital-display-card-close,

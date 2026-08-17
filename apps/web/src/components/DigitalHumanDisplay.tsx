@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type RefObject } from "react";
 import type {
   AvatarSummary,
   ClientRendererDescriptor,
@@ -16,6 +16,7 @@ import { ExhibitionEntityCard } from "./ExhibitionEntityCard";
 import { SceneStage } from "./SceneStage";
 
 const PRESENTATION_AUTO_CLOSE_MS = 45_000;
+const CONVERSATION_IDLE_HIDE_MS = 45_000;
 
 function navigationImageUrl(value: string): string {
   const url = value.trim();
@@ -106,15 +107,21 @@ export function DigitalHumanDisplay({
   const [draft, setDraft] = useState("");
   const [inputMode, setInputMode] = useState<"voice" | "keyboard">("voice");
   const [presentationActivity, setPresentationActivity] = useState(0);
+  const [conversationActivity, setConversationActivity] = useState(0);
+  const [conversationVisible, setConversationVisible] = useState(true);
+  const [showScrollToBottom, setShowScrollToBottom] = useState(false);
+  const [latestRoundHeight, setLatestRoundHeight] = useState<number | null>(null);
   const chatFeedRef = useRef<HTMLDivElement>(null);
   const chatFeedContentRef = useRef<HTMLDivElement>(null);
+  const latestRoundRef = useRef<HTMLDivElement>(null);
+  const shouldStickToBottomRef = useRef(true);
   const live = connection === "live" || connection === "expiring";
   const busy = connection === "connecting" || connection === "queued";
   const english = isEnglishConversation(language);
   const suggestions = english ? ["Venue navigation", "Book a meeting", "Conference services", "About the exhibition"] : ["展馆导航", "预约洽谈", "会议服务", "关于展览"];
   const displaySubtitle = subtitle?.trim() || (messages.length === 0 ? (english ? "You can ask me the following questions" : "你可以问我以下问题哦") : "");
-  const visibleMessages = messages.slice(-5);
-  const visibleEntityPresentationKey = visibleMessages
+  const presentationMessages = messages.slice(-5);
+  const visibleEntityPresentationKey = presentationMessages
     .flatMap((message) => message.relatedEntities ?? [])
     .map((entity) => `${entity.kind}:${entity.id}`)
     .sort()
@@ -126,31 +133,93 @@ export function DigitalHumanDisplay({
       : visibleEntityPresentationKey
         ? `entities:${visibleEntityPresentationKey}`
         : "";
-  const latestVisibleMessage = visibleMessages[visibleMessages.length - 1];
+  const latestVisibleMessage = messages[messages.length - 1];
   const showLiveSubtitle = Boolean(
     subtitle?.trim()
       && !(latestVisibleMessage?.role === "assistant" && latestVisibleMessage.text.trim() === subtitle.trim()),
   );
+  const latestConversationMessage = messages[messages.length - 1];
+  const conversationRounds = messages.reduce<Message[][]>((rounds, message) => {
+    if (message.role === "user" || rounds.length === 0) rounds.push([message]);
+    else rounds[rounds.length - 1].push(message);
+    return rounds;
+  }, []);
+  const conversationActivityKey = [
+    messages.length,
+    latestConversationMessage?.id ?? "",
+    latestConversationMessage?.text ?? "",
+    subtitle?.trim() ?? "",
+  ].join(":");
+  const chatFeedStyle = latestRoundHeight == null
+    ? undefined
+    : ({ "--digital-display-latest-round-height": `${latestRoundHeight}px` } as CSSProperties);
 
-  useEffect(() => {
+  const updateScrollToBottomVisibility = useCallback(() => {
     const feed = chatFeedRef.current;
     if (!feed) return;
+    const distanceFromBottom = feed.scrollHeight - feed.scrollTop - feed.clientHeight;
+    const isNearBottom = distanceFromBottom <= 36;
+    shouldStickToBottomRef.current = isNearBottom;
+    setShowScrollToBottom(!isNearBottom);
+  }, []);
+
+  const scrollChatToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
+    const feed = chatFeedRef.current;
+    if (!feed) return;
+    shouldStickToBottomRef.current = true;
+    feed.scrollTo({ top: feed.scrollHeight, behavior });
+    setShowScrollToBottom(false);
+  }, []);
+
+  const revealConversation = useCallback(() => {
+    setConversationVisible(true);
+    setConversationActivity((value) => value + 1);
+    window.requestAnimationFrame(() => scrollChatToBottom("smooth"));
+  }, [scrollChatToBottom]);
+
+  useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
-      feed.scrollTo({ top: feed.scrollHeight, behavior: "smooth" });
+      scrollChatToBottom("smooth");
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [messages, navigationResult, shoppingRegistration, subtitle]);
+  }, [messages, navigationResult, scrollChatToBottom, shoppingRegistration, subtitle]);
 
   useEffect(() => {
     const feed = chatFeedRef.current;
     const content = chatFeedContentRef.current;
     if (!feed || !content || typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(() => {
-      feed.scrollTo({ top: feed.scrollHeight, behavior: "smooth" });
+      if (shouldStickToBottomRef.current) scrollChatToBottom("smooth");
     });
     observer.observe(content);
     return () => observer.disconnect();
-  }, []);
+  }, [scrollChatToBottom]);
+
+  useLayoutEffect(() => {
+    const latestRound = latestRoundRef.current;
+    if (!latestRound) {
+      setLatestRoundHeight(null);
+      return;
+    }
+    const updateHeight = () => {
+      const measuredHeight = Math.ceil(latestRound.getBoundingClientRect().height) + 4;
+      setLatestRoundHeight((current) => current === measuredHeight ? current : measuredHeight);
+    };
+    updateHeight();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(updateHeight);
+    observer.observe(latestRound);
+    return () => observer.disconnect();
+  }, [conversationActivityKey, showLiveSubtitle]);
+
+  useEffect(() => {
+    setConversationVisible(true);
+    const timer = window.setTimeout(() => {
+      setConversationVisible(false);
+      setShowScrollToBottom(false);
+    }, CONVERSATION_IDLE_HIDE_MS);
+    return () => window.clearTimeout(timer);
+  }, [conversationActivity, conversationActivityKey]);
 
   useEffect(() => {
     if (!presentationKey || !onAutoClosePresentation) return;
@@ -199,7 +268,12 @@ export function DigitalHumanDisplay({
             ))}
           </aside>
 
-          <section className="digital-display-chat-panel" aria-label={english ? "Live conversation" : "实时对话"}>
+          <section className={`digital-display-chat-panel ${conversationVisible ? "" : "is-conversation-hidden"}`} aria-label={english ? "Live conversation" : "实时对话"}>
+            {!conversationVisible ? (
+              <button type="button" className="digital-display-chat-reveal" onClick={revealConversation}>
+                {english ? "Show conversation" : "查看历史对话"}
+              </button>
+            ) : null}
             <div className="digital-display-chat-heading">
               <span>{english ? "LIVE CONVERSATION" : "实时对话"}</span>
               <span className="digital-display-chat-state">
@@ -207,7 +281,7 @@ export function DigitalHumanDisplay({
                 {isSpeaking ? (english ? " · Speaking" : " · 正在播报") : ""}
               </span>
             </div>
-            <div ref={chatFeedRef} className="digital-display-chat-feed" aria-live="polite">
+            <div ref={chatFeedRef} className="digital-display-chat-feed" style={chatFeedStyle} aria-live="polite" onScroll={updateScrollToBottomVisibility}>
               <div ref={chatFeedContentRef} className="digital-display-chat-feed-content">
               {exhibitionConfigNotice ? (
                 <div className="digital-display-chat-notice" role="status">{exhibitionConfigNotice}</div>
@@ -257,24 +331,49 @@ export function DigitalHumanDisplay({
                   </div>
                 </article>
               ) : null}
-              {visibleMessages.length === 0 && displaySubtitle ? (
+              {messages.length === 0 && displaySubtitle ? (
                 <div className="digital-display-chat-empty">{displaySubtitle}</div>
               ) : null}
-              {visibleMessages.map((message) => (
-                <div key={message.id} className={`digital-display-chat-line ${message.role === "user" ? "is-user" : "is-assistant"} ${message.relatedEntities?.length ? "has-entities" : ""}`}>
-                  <div className="digital-display-chat-line-copy">
-                    <span className="digital-display-chat-role">{message.role === "user" ? (english ? "Me" : "我") : (english ? "Digital Human" : "数字人")}</span>
-                    <p>{message.text || (english ? "Preparing an answer…" : "正在准备回答…")}</p>
+              {conversationRounds.map((round, roundIndex) => {
+                const isLatestRound = roundIndex === conversationRounds.length - 1;
+                return (
+                  <div
+                    key={round[0]?.id ?? roundIndex}
+                    ref={isLatestRound ? latestRoundRef : undefined}
+                    className={`digital-display-chat-round ${isLatestRound ? "is-latest" : ""}`}
+                  >
+                    {round.map((message) => (
+                      <div key={message.id} className={`digital-display-chat-line ${message.role === "user" ? "is-user" : "is-assistant"} ${message.relatedEntities?.length ? "has-entities" : ""}`}>
+                        <div className="digital-display-chat-line-copy">
+                          <span className="digital-display-chat-role">{message.role === "user" ? (english ? "Me" : "我") : (english ? "Digital Human" : "数字人")}</span>
+                          <p>{message.text || (english ? "Preparing an answer…" : "正在准备回答…")}</p>
+                        </div>
+                      </div>
+                    ))}
+                    {isLatestRound && showLiveSubtitle ? (
+                      <div className="digital-display-chat-line is-assistant is-live-line">
+                        <span className="digital-display-chat-role">{english ? "Digital Human" : "数字人"}</span>
+                        <p>{subtitle}</p>
+                      </div>
+                    ) : null}
                   </div>
-                </div>
-              ))}
-              {showLiveSubtitle ? (
-                <div className="digital-display-chat-line is-assistant is-live-line">
-                  <span className="digital-display-chat-role">{english ? "Digital Human" : "数字人"}</span>
-                  <p>{subtitle}</p>
+                );
+              })}
+              {conversationRounds.length === 0 && showLiveSubtitle ? (
+                <div ref={latestRoundRef} className="digital-display-chat-round is-latest">
+                  <div className="digital-display-chat-line is-assistant is-live-line">
+                    <span className="digital-display-chat-role">{english ? "Digital Human" : "数字人"}</span>
+                    <p>{subtitle}</p>
+                  </div>
                 </div>
               ) : null}
               </div>
+              {showScrollToBottom ? (
+                <button type="button" className="digital-display-scroll-bottom" onClick={() => scrollChatToBottom("smooth")}>
+                  <span aria-hidden>↓</span>
+                  {english ? "Back to latest" : "回到底部"}
+                </button>
+              ) : null}
             </div>
 
             <div className="digital-display-chat-suggestions" aria-label={english ? "Suggested questions" : "常见问题"}>
@@ -336,7 +435,7 @@ export function DigitalHumanDisplay({
             </div>
           </section>
 
-          {shoppingRegistration || navigationResult || visibleMessages.some((message) => message.relatedEntities?.length) ? (
+          {shoppingRegistration || navigationResult || presentationMessages.some((message) => message.relatedEntities?.length) ? (
             <section
               className={`digital-display-waist-panel ${shoppingRegistration ? "is-registration" : ""}`}
               aria-label={shoppingRegistration ? (english ? "Registration QR code" : "登记二维码") : (english ? "Exhibition content" : "展会内容展示")}
@@ -398,7 +497,7 @@ export function DigitalHumanDisplay({
                   </div>
                 </article>
               ) : null}
-              {!shoppingRegistration && !navigationResult ? visibleMessages.flatMap((message) =>
+              {!shoppingRegistration && !navigationResult ? presentationMessages.flatMap((message) =>
                 (message.relatedEntities ?? []).map((entity) => (
                   <ExhibitionEntityCard
                     key={`${message.id}-${entity.kind}-${entity.id}`}
