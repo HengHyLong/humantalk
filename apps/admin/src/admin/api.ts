@@ -35,6 +35,7 @@ import type {
   SystemMonitor,
   MonitorHistoryPoint,
   AlertEvent,
+  TerminalStatus,
   WelcomeConfig,
   ExplainFlow,
   ShoppingStrategy,
@@ -233,6 +234,8 @@ export interface AdminApiClient {
   getDashboard(): Promise<DashboardData>;
   listGifs(): Promise<GifAssetMeta[]>;
   createGif(input: Omit<GifAssetMeta, "id" | "createdAt">): Promise<GifAssetMeta>;
+  uploadGif(file: File, meta: { name: string; scene: string; tags: string[] }): Promise<GifAssetMeta>;
+  fetchGifBlobUrl(id: string): Promise<string>;
   updateGif(id: string, patch: Partial<GifAssetMeta>): Promise<GifAssetMeta>;
   deleteGif(id: string): Promise<void>;
   listVoiceConfigs(): Promise<VoiceAsset[]>;
@@ -321,6 +324,8 @@ export interface AdminApiClient {
   getSystemMonitor(): Promise<SystemMonitor>;
   listAlerts(): Promise<AlertEvent[]>;
   acknowledgeAlert(id: string, operator?: string): Promise<AlertEvent>;
+  updateTerminalStatus(id: string, status: TerminalStatus["status"]): Promise<TerminalStatus>;
+  requestFailover(input: { service: string; from: string; to: string }): Promise<void>;
   listLlmConfigs(): Promise<LlmConfig[]>;
   saveLlmConfig(item: LlmConfig): Promise<LlmConfig>;
   deleteLlmConfig(id: string): Promise<void>;
@@ -409,6 +414,8 @@ export class MockAdminApiClient implements AdminApiClient {
 
   async listGifs() { return readStore("gifs", DEFAULT_GIFS); }
   async createGif(input: Omit<GifAssetMeta, "id" | "createdAt">) { const item = { ...input, id: `gif-${Date.now()}`, createdAt: now() }; writeStore("gifs", [item, ...await this.listGifs()]); return item; }
+  async uploadGif(file: File, meta: { name: string; scene: string; tags: string[] }) { return this.createGif({ name: meta.name, kind: "gif", previewUrl: URL.createObjectURL(file), scene: meta.scene, tags: meta.tags, status: "active", width: 0, height: 0, frames: 0, durationMs: 0, fileName: file.name, sizeBytes: file.size }); }
+  async fetchGifBlobUrl(_id: string) { return ""; }
   async updateGif(id: string, patch: Partial<GifAssetMeta>) { const items = await this.listGifs(); const next = items.map((item) => item.id === id ? { ...item, ...patch } : item); writeStore("gifs", next); return next.find((item) => item.id === id) ?? items[0]; }
   async deleteGif(id: string) { writeStore("gifs", (await this.listGifs()).filter((item) => item.id !== id)); }
   async listVoiceConfigs() { return readStore<VoiceAsset[]>("voice-configs", []); }
@@ -610,6 +617,8 @@ export class MockAdminApiClient implements AdminApiClient {
   async getSystemMonitor() { const monitor = readStore<SystemMonitor>("system-monitor", DEFAULT_MONITOR); const refreshed = { ...monitor, refreshedAt: now() }; writeStore("system-monitor", refreshed); return refreshed; }
   async listAlerts() { return readStore<AlertEvent[]>("alerts", DEFAULT_ALERTS); }
   async acknowledgeAlert(id: string, operator = "当前用户") { const list = await this.listAlerts(); const existing = list.find((item) => item.id === id); if (!existing) throw new Error("告警不存在"); const saved = { ...existing, status: "acknowledged" as const, acknowledgedBy: operator, acknowledgedAt: now() }; writeStore("alerts", [saved, ...list.filter((item) => item.id !== id)]); return saved; }
+  async updateTerminalStatus(id: string, status: TerminalStatus["status"]) { const monitor = await this.getSystemMonitor(); const terminals = monitor.terminals.map((item) => item.id === id ? { ...item, status } : item); writeStore("system-monitor", { ...monitor, terminals }); return terminals.find((item) => item.id === id) ?? terminals[0]; }
+  async requestFailover(_input: { service: string; from: string; to: string }) { /* Mock 环境不执行真实切换 */ }
   async listLlmConfigs() { return readStore<LlmConfig[]>("llm-configs", []); }
   async saveLlmConfig(item: LlmConfig) { const saved = { ...item, id: item.id || `llm-${Date.now()}`, updatedAt: now(), createdAt: item.createdAt || now(), apiKeyConfigured: item.apiKeyConfigured || Boolean(item.apiKey) }; writeStore("llm-configs", [saved, ...(await this.listLlmConfigs()).filter((candidate) => candidate.id !== saved.id)]); return { ...saved, apiKey: "" }; }
   async deleteLlmConfig(id: string) { writeStore("llm-configs", (await this.listLlmConfigs()).filter((item) => item.id !== id)); }
@@ -879,9 +888,8 @@ export class FetchAdminApiClient implements AdminApiClient {
     };
   }
 
-  async listGifs() {
-    const items = await this.collection<JsonRecord>("assets", "gifs");
-    return items.map((item) => ({
+  private gif(item: JsonRecord): GifAssetMeta {
+    return {
       id: String(item.id || ""),
       name: String(item.name || "未命名动图"),
       kind: "gif" as const,
@@ -896,7 +904,23 @@ export class FetchAdminApiClient implements AdminApiClient {
       fileName: String(item.fileName || item.filename || ""),
       sizeBytes: Number(item.sizeBytes || item.size_bytes || 0),
       createdAt: String(item.createdAt || item.created_at || ""),
-    }));
+    };
+  }
+  async listGifs() {
+    const items = await this.collection<JsonRecord>("assets", "gifs");
+    return items.map((item) => this.gif(item));
+  }
+  async uploadGif(file: File, meta: { name: string; scene: string; tags: string[] }) {
+    const form = new FormData();
+    form.append("file", file);
+    const uploaded = await this.request<JsonRecord>("/admin/assets/gifs/upload", { method: "POST", body: form });
+    const saved = await this.saveCollection<JsonRecord>("assets", "gifs", { id: String(uploaded.id), name: meta.name, scene: meta.scene, tags: meta.tags });
+    return this.gif({ ...uploaded, ...saved });
+  }
+  async fetchGifBlobUrl(id: string) {
+    const response = await fetch(buildAdminFetchUrl(`/v1/admin/assets/gifs/${encodeURIComponent(id)}/file`), { headers: this.token() ? { Authorization: `Bearer ${this.token()}` } : {} });
+    if (!response.ok) throw new Error(`Gif 文件读取失败（${response.status}）`);
+    return URL.createObjectURL(await response.blob());
   }
   async createGif(input: Omit<GifAssetMeta, "id" | "createdAt">) { return this.saveCollection<GifAssetMeta>("assets", "gifs", input as JsonRecord); }
   async updateGif(id: string, patch: Partial<GifAssetMeta>) { return this.saveCollection<GifAssetMeta>("assets", "gifs", { ...patch, id }); }
@@ -1073,6 +1097,8 @@ export class FetchAdminApiClient implements AdminApiClient {
     return items.map((item) => ({ ...item, id: String(item.id), type: String(item.type || ""), severity: item.severity === "warning" ? "normal" : item.severity, target: String(item.target || item.object || ""), content: String(item.content || ""), status: item.status === "open" ? "active" : item.status, occurredAt: String(item.occurredAt || item.createdAt || item.created_at || "") })) as AlertEvent[];
   }
   async acknowledgeAlert(id: string, _operator?: string) { return this.request<AlertEvent>(`/admin/alerts/${encodeURIComponent(id)}/acknowledge`, { method: "POST" }); }
+  async updateTerminalStatus(id: string, status: TerminalStatus["status"]) { return this.request<TerminalStatus>(`/admin/ops/terminals/${encodeURIComponent(id)}`, { method: "PATCH", body: this.data({ status }) }); }
+  async requestFailover(input: { service: string; from: string; to: string }) { await this.request("/ops/failover", { method: "POST", body: this.data(input) }); }
   async listLlmConfigs() {
     const payload = await this.request<{ items?: LlmConfig[] }>("/admin/llm-configs");
     return payload.items || [];

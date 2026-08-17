@@ -655,6 +655,11 @@ def delete_collection(resource: str, record_id: str, request: Request, auth: dic
     before = _record(store, kind, record_id) or {}
     if not store.delete_record(kind, record_id):
         raise HTTPException(status_code=404, detail={"code": "RESOURCE_NOT_FOUND", "detail": "资源不存在"})
+    if kind == "gifs":
+        settings = getattr(request.app.state, "settings", None)
+        root = Path(getattr(settings, "admin_media_root", "./data/admin-assets")) / "gifs"
+        for match in root.glob(f"{record_id}.*"):
+            match.unlink(missing_ok=True)
     _audit(request, auth, action="delete", resource_type=kind, resource_id=record_id, before=before, after=None)
     return {"deleted": True, "id": record_id}
 
@@ -1492,6 +1497,21 @@ def services(request: Request, auth: dict[str, Any] = Depends(current_user)) -> 
 def terminals(request: Request, auth: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
     _require(get_store(request), auth, "system:ops")
     return {"items": get_store(request).list_records("terminals")}
+
+
+@router.patch("/admin/ops/terminals/{record_id}")
+def update_terminal_status(record_id: str, request: Request, body: RecordBody, auth: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    store = get_store(request)
+    _require(store, auth, "system:ops")
+    status = str(body.data.get("status", ""))
+    if status not in {"online", "offline", "disabled"}:
+        raise HTTPException(status_code=400, detail={"code": "INVALID_STATUS", "detail": "终端状态仅支持 online / offline / disabled"})
+    before = _record(store, "terminals", record_id)
+    if before is None:
+        raise HTTPException(status_code=404, detail={"code": "RESOURCE_NOT_FOUND", "detail": "终端不存在"})
+    saved = store.save_record("terminals", {**before, "status": status}, before.get("exhibitionId"))
+    _audit(request, auth, action="terminal-status", resource_type="terminal", resource_id=record_id, before={"status": before.get("status")}, after={"status": status})
+    return saved
 
 
 @router.post("/ops/failover")
