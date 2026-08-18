@@ -209,6 +209,8 @@ async def test_empty_retrieval_accumulates_same_normalized_miss(tmp_path) -> Non
             trace_id=f"trace-{turn_id}",
         )
         assert result.match_type == "fallback"
+        assert result.speak_mode == "agent"
+        assert result.answer is None
 
     misses = store.list_records("miss_pool", exhibition_id="expo-2026")
     assert len(misses) == 1

@@ -297,8 +297,9 @@ class ExhibitionQaService:
             )
 
         self._record_miss(exhibition_id, clean_question, turn_id, trace_id)
-        fallback = f"暂时没有检索到可靠答案。{self.human_channel}"
-        return QaDecision(match_type="fallback", answer=fallback, speak_mode="direct")
+        # 数据库关键词、官方问答和知识检索都未命中时，交给会话大模型
+        # 进行通用对话兜底；不要把用户输入截断成固定的人工服务台提示。
+        return QaDecision(match_type="fallback", answer=None, speak_mode="agent")
 
     def _match_official_qa(
         self, exhibition_id: str, question: str

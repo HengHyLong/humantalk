@@ -1870,6 +1870,34 @@ class FlashTalkRunner:
         task.add_done_callback(self.speech_tasks.discard)
         return task
 
+    def create_chat_task(
+        self,
+        prompt: str,
+        tts_voice: str | None = None,
+        *,
+        tts_provider: str | None = None,
+        tts_model: str | None = None,
+        language: str | None = None,
+        enqueue_unix: float | None = None,
+        knowledge_context: str | None = None,
+    ) -> asyncio.Task[None]:
+        """Queue a normal conversation through the LLM → TTS pipeline."""
+        del language
+        task = asyncio.create_task(
+            self._run_speak_task(
+                prompt,
+                tts_voice=tts_voice,
+                tts_provider=tts_provider,
+                tts_model=tts_model,
+                enqueue_unix=enqueue_unix,
+                knowledge_context=knowledge_context,
+                direct=False,
+            )
+        )
+        self.speech_tasks.add(task)
+        task.add_done_callback(self.speech_tasks.discard)
+        return task
+
     def create_speak_uploaded_pcm_task(
         self,
         pcm_path: str,

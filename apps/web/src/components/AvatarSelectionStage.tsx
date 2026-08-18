@@ -3,6 +3,7 @@ import type { AvatarSummary, PersonaSummary } from "../lib/api";
 import { buildApiUrl } from "../lib/api";
 import { modelLabel } from "../lib/modelLabels";
 import type { ModelConnectionBadge } from "../lib/modelStatus";
+import { useAutoDismiss } from "../lib/useAutoDismiss";
 
 const CUSTOM_REFERENCE_NAME_KEY = "opentalking-custom-reference-name";
 
@@ -134,6 +135,8 @@ export function AvatarSelectionStage({
     setCustomUploadState("idle");
     setCreatedCustomAvatar(null);
   };
+
+  useAutoDismiss(customUploadOpen, closeCustomUpload);
 
   const handleCustomUpload = async () => {
     const name = customName.trim();

@@ -44,6 +44,7 @@ import {
   QWEN_VOICE_CLONE_TARGET_OPTIONS,
 } from "../constants/ttsQwen";
 import { buildTTSPreviewPayload, requestDuoDialogPreview, requestTTSPreview } from "../lib/ttsPreview";
+import { useAutoDismiss } from "../lib/useAutoDismiss";
 
 export type VideoCreationAudioSource = "upload" | "tts_text" | "duo_dialog";
 type VideoCreationMode = "spoken_video" | "reference_video";
@@ -727,6 +728,8 @@ export function VideoCreationWorkspace({
     setDuoCloneTargetRole(null);
     setCloneOpen(false);
   }, [duoCloneTargetRole, onQwenModelChange, onQwenVoiceChange, onTtsProviderChange, onVoiceCloned]);
+
+  useAutoDismiss(cloneOpen, () => setCloneOpen(false));
 
   const addDuoDialogLine = useCallback(() => {
     setDuoDialogLines((current) => {

@@ -16,8 +16,8 @@ import { ChatInput } from "./ChatInput";
 import { ExhibitionEntityCard } from "./ExhibitionEntityCard";
 import { SceneStage } from "./SceneStage";
 
-const PRESENTATION_AUTO_CLOSE_MS = 45_000;
-const CONVERSATION_IDLE_HIDE_MS = 45_000;
+const PRESENTATION_AUTO_CLOSE_MS = 90_000;
+const CONVERSATION_IDLE_HIDE_MS = 90_000;
 
 function navigationImageUrl(value: string): string {
   const url = value.trim();
@@ -107,7 +107,6 @@ export function DigitalHumanDisplay({
 }: DigitalHumanDisplayProps) {
   const [draft, setDraft] = useState("");
   const [inputMode, setInputMode] = useState<"voice" | "keyboard">("voice");
-  const [presentationActivity, setPresentationActivity] = useState(0);
   const [conversationActivity, setConversationActivity] = useState(0);
   const [conversationVisible, setConversationVisible] = useState(true);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
@@ -226,7 +225,7 @@ export function DigitalHumanDisplay({
     if (!presentationKey || !onAutoClosePresentation) return;
     const timer = window.setTimeout(onAutoClosePresentation, PRESENTATION_AUTO_CLOSE_MS);
     return () => window.clearTimeout(timer);
-  }, [onAutoClosePresentation, presentationActivity, presentationKey]);
+  }, [onAutoClosePresentation, presentationKey]);
 
   const submit = () => {
     const text = draft.trim();
@@ -288,7 +287,7 @@ export function DigitalHumanDisplay({
                 <div className="digital-display-chat-notice" role="status">{exhibitionConfigNotice}</div>
               ) : null}
               {navigationResult ? (
-                <article className="digital-display-navigation-card" onPointerDown={() => setPresentationActivity((value) => value + 1)}>
+                <article className="digital-display-navigation-card">
                   <button
                     type="button"
                     className="digital-display-card-close"
@@ -440,7 +439,6 @@ export function DigitalHumanDisplay({
             <section
               className={`digital-display-waist-panel ${shoppingRegistration ? "is-registration" : ""}`}
               aria-label={shoppingRegistration ? (english ? "Registration QR code" : "登记二维码") : (english ? "Exhibition content" : "展会内容展示")}
-              onPointerDown={() => setPresentationActivity((value) => value + 1)}
             >
               {shoppingRegistration ? (
                 <article className="digital-display-registration-card" role="dialog" aria-modal="true" aria-label={english ? "Registration QR code" : "登记二维码"}>

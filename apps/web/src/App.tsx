@@ -113,6 +113,7 @@ import {
 } from "./constants/ttsQwen";
 import type { ConnectionStatus, ExhibitionEntityCard, MemoryLibrary, Message, QueueInfo } from "./types";
 import { matchExhibitionEntities } from "./lib/exhibitionEntityMatch";
+import { useAutoDismiss } from "./lib/useAutoDismiss";
 import { classifyRegistrationDecision, selectShoppingPresentationEntities } from "./lib/shoppingConversation";
 import { classifyContentClarification, classifyExplicitContentRequest } from "./lib/contentClarification";
 import { isEnglishConversation, type ConversationLanguage } from "./lib/conversationLanguage";
@@ -1086,6 +1087,7 @@ export default function App() {
     return false;
   });
   const [voiceCloneOpen, setVoiceCloneOpen] = useState(false);
+  useAutoDismiss(voiceCloneOpen, () => setVoiceCloneOpen(false));
   const [referenceSaving, setReferenceSaving] = useState(false);
   const [panelTab, setPanelTab] = useState<PanelTab>("chat");
   const [sessionPanelCollapsed, setSessionPanelCollapsed] = useState(() => {
@@ -1209,23 +1211,6 @@ export default function App() {
     }, tone === "error" ? 3000 : 3600);
     toastTimersRef.current.set(id, timer);
   }, []);
-
-  const pauseToast = useCallback((id: string) => {
-    const timer = toastTimersRef.current.get(id);
-    if (!timer) return;
-    window.clearTimeout(timer);
-    toastTimersRef.current.delete(id);
-  }, []);
-
-  const resumeToast = useCallback((id: string) => {
-    const toast = toasts.find((item) => item.id === id);
-    if (!toast || toastTimersRef.current.has(id)) return;
-    const timer = window.setTimeout(() => {
-      toastTimersRef.current.delete(id);
-      setToasts((prev) => prev.filter((item) => item.id !== id));
-    }, toast.tone === "error" ? 1500 : 1800);
-    toastTimersRef.current.set(id, timer);
-  }, [toasts]);
 
   const syncRuntimeConfigSelection = useCallback((next: RuntimeConfigResponse) => {
     const nextAsrProvider = normalizeAsrProvider(next.stt.provider, "dashscope");
@@ -3081,7 +3066,12 @@ export default function App() {
 
     const now = Date.now();
     const matched = matchWakeWord(text, wakeConfig.words);
-    if (!matched && now >= wakeAwakeUntilRef.current) return;
+    if (!matched && now >= wakeAwakeUntilRef.current) {
+      // 未命中唤醒词时仍保留普通对话兜底，交给展会问答/大模型链路处理，
+      // 避免把用户的正常语音直接丢弃。
+      await routeRecognizedText(text);
+      return;
+    }
 
     wakeAwakeUntilRef.current = now + wakeConfig.active_window_seconds * 1000;
     if (matched && !matched.remainder) {
@@ -4014,7 +4004,7 @@ export default function App() {
         </aside>
       </div>
       )}
-      <ToastStack toasts={toasts} onDismiss={dismissToast} onPause={pauseToast} onResume={resumeToast} />
+      <ToastStack toasts={toasts} onDismiss={dismissToast} />
     </div>
   );
 }

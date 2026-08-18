@@ -52,6 +52,11 @@ def test_worker_forwards_language_marker_to_chat_runner(tmp_path: Path) -> None:
     assert calls[0]["language"] == "en-US"
 
 
+def test_unified_app_registers_exhibition_qa_route() -> None:
+    paths = set(unified_main.create_app().openapi()["paths"])
+    assert "/exhibitions/{exhibition_id}/qa/query" in paths
+
+
 def test_normalize_voice_for_speak_accepts_elevenlabs_voice_id() -> None:
     voice, provider, model = sessions_routes._normalize_voice_for_speak(
         voice="eleven-voice-id",

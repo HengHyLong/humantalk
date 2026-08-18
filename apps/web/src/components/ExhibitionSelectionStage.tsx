@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { ExhibitionSummary } from "../lib/api";
+import { useAutoDismiss } from "../lib/useAutoDismiss";
 
 type ExhibitionSelectionStageProps = {
   exhibitions: ExhibitionSummary[];
@@ -38,6 +39,8 @@ export function ExhibitionSelectionStage({
       document.removeEventListener("keydown", closeOnEscape);
     };
   }, [open]);
+
+  useAutoDismiss(open, () => setOpen(false));
 
   return (
     <main className="flex min-h-screen w-full items-center justify-center bg-[radial-gradient(circle_at_top,#164e63_0%,#082f49_35%,#020617_100%)] px-5 py-8 text-white">

@@ -23,6 +23,7 @@ import {
   type SceneComposition,
 } from "../lib/api";
 import { modelLabel } from "../lib/modelLabels";
+import { useAutoDismiss } from "../lib/useAutoDismiss";
 import { MemoryPanel } from "./MemoryPanel";
 import type { MemoryLibrary } from "../types";
 
@@ -509,6 +510,10 @@ export function AssetLibraryWorkspace({
     setUploadKnowledgeFiles([]);
     if (uploadKnowledgeFileInputRef.current) uploadKnowledgeFileInputRef.current.value = "";
   }, [documentActionId]);
+
+  useAutoDismiss(createOpen, closeCreateKnowledgeDialog);
+  useAutoDismiss(filePoolUploadOpen, closeFilePoolUploadDialog);
+  useAutoDismiss(uploadOpen, closeUploadKnowledgeDialog);
 
   const toggleDocumentId = useCallback((
     current: string[],
