@@ -179,6 +179,53 @@ class LocalKnowledgeRetriever:
         )
 
 
+class AdminKnowledgeRetriever:
+    """Small deterministic fallback for knowledge imported through Admin.
+
+    The operational Excel import stores documents in the AdminStore, while the
+    optional local vector index is managed by a separate KnowledgeStore.  In a
+    mock/local deployment there may be no vector service at all, so use the
+    imported, published document text for lexical retrieval instead of turning
+    a valid import into ``QA_RETRIEVAL_FAILED``.
+    """
+
+    def __init__(self, store: AdminStore) -> None:
+        self.store = store
+
+    async def retrieve(self, *, exhibition_id: str, question: str) -> RetrievalResult:
+        query = normalize_question(question)
+        if not query:
+            return RetrievalResult(provider="admin")
+        sources: list[KnowledgeSource] = []
+        for item in self.store.list_records("documents", exhibition_id=exhibition_id):
+            status = str(item.get("status") or "published").lower()
+            if status not in {"published", "ready", "active"}:
+                continue
+            title = str(item.get("title") or item.get("name") or "展会知识").strip()
+            content = str(item.get("content") or item.get("text") or item.get("description") or "").strip()
+            if not content:
+                continue
+            haystack = normalize_question(f"{title} {content}")
+            query_bigrams = {query[index : index + 2] for index in range(max(0, len(query) - 1))}
+            matched = [query] if query in haystack else [term for term in query_bigrams if term in haystack]
+            query_keywords = [normalize_question(str(value)) for value in (item.get("keywords") or [])]
+            matched.extend(keyword for keyword in query_keywords if keyword and keyword in query)
+            if not matched:
+                continue
+            score = min(0.98, 0.72 + 0.08 * len(set(matched)))
+            sources.append(
+                KnowledgeSource(
+                    id=str(item.get("id") or uuid.uuid4().hex),
+                    title=title,
+                    content=content,
+                    score=score,
+                    document_id=str(item.get("id") or "") or None,
+                )
+            )
+        sources.sort(key=lambda source: (-source.score, source.title))
+        return RetrievalResult(sources=sources[:3], provider="admin")
+
+
 @dataclass(frozen=True)
 class QaDecision:
     match_type: str
@@ -253,6 +300,16 @@ class ExhibitionQaService:
                 score=score,
             )
 
+        if is_ambiguous_question(clean_question):
+            clarification = "请问您具体想咨询哪个展会、展商、展品、论坛或服务设施？"
+            return QaDecision(
+                match_type="clarification",
+                answer=clarification,
+                speak_mode="direct",
+                need_clarification=True,
+                clarification_question=clarification,
+            )
+
         try:
             retrieval = await self.retriever.retrieve(
                 exhibition_id=exhibition_id,
@@ -284,16 +341,6 @@ class ExhibitionQaService:
                 sources=retrieval.sources,
                 knowledge_context=build_grounding_context(retrieval.sources),
                 score=max(source.score for source in retrieval.sources),
-            )
-
-        if is_ambiguous_question(clean_question):
-            clarification = "请问您具体想咨询哪个展会、展商、展品、论坛或服务设施？"
-            return QaDecision(
-                match_type="clarification",
-                answer=clarification,
-                speak_mode="direct",
-                need_clarification=True,
-                clarification_question=clarification,
             )
 
         self._record_miss(exhibition_id, clean_question, turn_id, trace_id)

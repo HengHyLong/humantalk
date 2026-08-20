@@ -45,6 +45,17 @@ const STORAGE_PREFIX = "opentalking-admin-";
 const now = () => new Date().toISOString();
 const leadSourceName = (item: Lead) => item.sourceName || (item.source === "exhibit_survey" ? "展品调研二维码" : item.terminalName || "人工录入");
 export type EventImageResource = "exhibitors" | "exhibits" | "venues" | "points" | "routes";
+export type EventImportSummary = { total: number; errors: number; warnings: number; creates: number; updates: number };
+export type EventImportPreview = {
+  batchId: string;
+  exhibitionId: string;
+  filename: string;
+  summary: Record<string, EventImportSummary>;
+  conflicts: Array<{ kind: string; id: string; action: "create" | "update" }>;
+  errors: Array<{ sheet?: string; row?: number; field?: string; message: string }>;
+  warnings: Array<{ sheet?: string; row?: number; field?: string; message: string }>;
+  canCommit: boolean;
+};
 
 function readLocalImage(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -274,6 +285,9 @@ export interface AdminApiClient {
   deleteExhibition(id: string): Promise<void>;
   transitionExhibition(id: string, status: ExhibitionStatus): Promise<Exhibition>;
   uploadEventImages(files: File[], resource: EventImageResource): Promise<string[]>;
+  downloadEventImportTemplate(exhibitionId: string): Promise<Blob>;
+  previewEventImport(exhibitionId: string, file: File): Promise<EventImportPreview>;
+  commitEventImport(batchId: string): Promise<{ batchId: string; status: string; idempotent?: boolean; records?: Record<string, number>; assets?: number }>;
   listVenues(): Promise<EventVenue[]>;
   saveVenue(item: EventVenue): Promise<EventVenue>;
   deleteVenue(id: string): Promise<void>;
@@ -487,6 +501,9 @@ export class MockAdminApiClient implements AdminApiClient {
     return saved;
   }
   async uploadEventImages(files: File[]) { return Promise.all(files.map(readLocalImage)); }
+  async downloadEventImportTemplate(_exhibitionId: string): Promise<Blob> { throw new Error("Mock 模式不提供 Excel 模板下载"); }
+  async previewEventImport(_exhibitionId: string, _file: File): Promise<EventImportPreview> { throw new Error("Mock 模式不提供 Excel 导入预览"); }
+  async commitEventImport(_batchId: string): Promise<{ batchId: string; status: string; idempotent?: boolean; records?: Record<string, number>; assets?: number }> { throw new Error("Mock 模式不提供 Excel 导入提交"); }
   async deleteExhibition(id: string) {
     const [exhibitions, exhibitors, exhibits, venues, schedules, broadcasts, points] = await Promise.all([this.listExhibitions(), this.listExhibitors(), this.listExhibits(), this.listVenues(), this.listSchedules(), this.listBroadcasts(), this.listPoints()]);
     const venueIds = new Set(venues.filter((item) => item.exhibitionId === id).map((item) => item.id));
@@ -731,6 +748,12 @@ export class FetchAdminApiClient implements AdminApiClient {
     const response = await fetch(buildAdminFetchUrl(`/v1${path}`), { headers: this.token() ? { Authorization: `Bearer ${this.token()}` } : {} });
     if (!response.ok) throw new Error(`Admin API ${response.status}`);
     return response.text();
+  }
+
+  private async downloadBlob(path: string): Promise<Blob> {
+    const response = await fetch(buildAdminFetchUrl(`/v1${path}`), { headers: this.token() ? { Authorization: `Bearer ${this.token()}` } : {} });
+    if (!response.ok) throw new Error(`Admin API ${response.status}`);
+    return response.blob();
   }
 
   private async list<T>(path: string, params: Record<string, string | number | undefined> = {}): Promise<T[]> {
@@ -989,6 +1012,13 @@ export class FetchAdminApiClient implements AdminApiClient {
     const payload = await this.request<{ urls?: unknown }>("/admin/event/images/upload", { method: "POST", body: form });
     return stringArray(payload.urls);
   }
+  async downloadEventImportTemplate(exhibitionId: string) { return this.downloadBlob(`/admin/event/exhibitions/${encodeURIComponent(exhibitionId)}/import-template`); }
+  async previewEventImport(exhibitionId: string, file: File) {
+    const form = new FormData();
+    form.set("file", file, file.name);
+    return this.request<EventImportPreview>(`/admin/event/exhibitions/${encodeURIComponent(exhibitionId)}/import/preview`, { method: "POST", body: form });
+  }
+  async commitEventImport(batchId: string) { return this.request<{ batchId: string; status: string; idempotent?: boolean; records?: Record<string, number>; assets?: number }>("/admin/event/imports/commit", { method: "POST", body: JSON.stringify({ batchId }) }); }
   async listVenues() { return (await this.collection<JsonRecord>("event", "venues")).map((item) => this.venue(item)); }
   async saveVenue(item: EventVenue) { return this.saveCollection<EventVenue>("event", "venues", item as JsonRecord); }
   async deleteVenue(id: string) { await this.request(`/admin/event/venues/${encodeURIComponent(id)}`, { method: "DELETE" }); }

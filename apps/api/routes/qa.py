@@ -10,6 +10,7 @@ from apps.api.admin.security import get_store
 from apps.api.services import session_service
 from apps.api.services.exhibition_qa import (
     DifyKnowledgeRetriever,
+    AdminKnowledgeRetriever,
     ExhibitionQaService,
     LocalKnowledgeRetriever,
     KnowledgeRetrievalError,
@@ -143,9 +144,16 @@ async def query_exhibition_qa(
             score_threshold=float(_setting(settings, "qa_retrieval_score_threshold", 0.45)),
         )
     else:
-        retriever = LocalKnowledgeRetriever(
-            default_knowledge_store(),
-            _resolve_local_kb_ids(store, resolved_exhibition_id),
+        local_kb_ids = _resolve_local_kb_ids(store, resolved_exhibition_id)
+        imported_documents = store.list_records("documents", exhibition_id=resolved_exhibition_id)
+        # Event-import packages may contain published document text but no
+        # separately built vector index. Prefer that deterministic local
+        # fallback whenever such documents are present; otherwise retain the
+        # existing KnowledgeStore behavior for explicitly bound local KBs.
+        retriever = (
+            AdminKnowledgeRetriever(store)
+            if imported_documents
+            else LocalKnowledgeRetriever(default_knowledge_store(), local_kb_ids)
         )
 
     trace_id = str(getattr(request.state, "trace_id", "") or f"trace-{uuid.uuid4().hex[:16]}")

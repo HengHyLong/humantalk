@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import csv
 from difflib import SequenceMatcher
+import hashlib
 import io
 import json
+import mimetypes
 import re
 import secrets
 import time
@@ -19,6 +21,14 @@ from pydantic import BaseModel, Field, model_validator
 from .security import current_user, decode_token, get_store, issue_tokens, password_hasher, verify_password
 from .monitoring import collect_runtime_monitor
 from .store import AdminStore, utc_now
+from .event_import import (
+    SHEETS,
+    create_template,
+    extract_package,
+    normalized_image_urls,
+    parse_workbook,
+    public_preview,
+)
 from apps.api.routes.runtime_config import RuntimeConfigPayload, apply_runtime_config
 from opentalking.scene_assets import SceneAssetStore
 
@@ -53,6 +63,10 @@ class StatusBody(BaseModel):
 
 class LinkBody(BaseModel):
     ids: list[str] = Field(default_factory=list)
+
+
+class EventImportCommitBody(BaseModel):
+    batchId: str = Field(min_length=1, max_length=120)
 
 
 class NavigationBody(BaseModel):
@@ -835,6 +849,426 @@ def _validate_record(store: AdminStore, kind: str, data: dict[str, Any], record_
         data["wakeActiveSeconds"] = active_seconds
 
 
+EVENT_IMPORT_KINDS = ("exhibitors", "venues", "exhibits", "points", "routes", "schedules", "broadcasts", "knowledge_bases", "documents", "qa")
+
+
+def _event_import_root(request: Request) -> Path:
+    settings = getattr(request.app.state, "settings", None)
+    root = Path(getattr(settings, "admin_event_import_root", "./data/admin-event-imports"))
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def _import_sheet(kind: str) -> str:
+    return next((spec.title for spec in SHEETS if spec.kind == kind), kind)
+
+
+def _import_error(item: dict[str, Any], message: str, field: str | None = None) -> dict[str, Any]:
+    error = {"sheet": item.get("_sheet", ""), "row": item.get("_row", 0), "message": message}
+    if field:
+        error["field"] = field
+    return error
+
+
+def _resolve_import_reference(
+    records: dict[str, dict[str, Any]],
+    value: Any,
+    fields: tuple[str, ...],
+) -> str:
+    """Resolve an imported relation by system ID or a human-friendly key."""
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    if raw in records:
+        return raw
+    needle = raw.casefold()
+    for record_id, record in records.items():
+        for field in fields:
+            candidate = str(record.get(field) or "").strip()
+            if candidate and candidate.casefold() == needle:
+                return record_id
+    return raw
+
+
+def _validate_event_import(
+    store: AdminStore,
+    exhibition_id: str,
+    records: dict[str, list[dict[str, Any]]],
+    image_manifest: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    errors: list[dict[str, Any]] = []
+    warnings: list[dict[str, Any]] = []
+    if not store.get_record("exhibitions", exhibition_id):
+        return [{"sheet": "", "row": 0, "message": "展会不存在"}], []
+
+    known: dict[str, dict[str, dict[str, Any]]] = {}
+    for kind in EVENT_IMPORT_KINDS:
+        known[kind] = {str(item.get("id")): item for item in store.list_records(kind, exhibition_id=exhibition_id) if item.get("id")}
+    for kind, items in records.items():
+        if kind not in EVENT_IMPORT_KINDS:
+            continue
+        seen: set[str] = set()
+        for item in items:
+            record_id = str(item.get("id") or "").strip()
+            if not record_id:
+                errors.append(_import_error(item, "记录 ID 不能为空", "id"))
+                continue
+            if record_id in seen:
+                errors.append(_import_error(item, "同一工作表内存在重复记录 ID", "id"))
+            seen.add(record_id)
+            if record_id in known[kind] and known[kind][record_id].get("exhibitionId") not in (None, exhibition_id):
+                errors.append(_import_error(item, "该记录 ID 已属于其他展会", "id"))
+            item["id"] = record_id
+            supplied_exhibition_id = str(item.get("exhibitionId") or "").strip()
+            if not supplied_exhibition_id:
+                item["exhibitionId"] = exhibition_id
+            elif supplied_exhibition_id != exhibition_id:
+                errors.append(_import_error(item, "exhibition_id 必须等于当前展会 ID", "exhibition_id"))
+            known[kind][record_id] = item
+
+    # Normalize human-friendly relation values before route ordering and
+    # validation. New records may have auto-generated IDs, so names/codes are
+    # the practical way to reference them inside the same workbook.
+    for item in records.get("exhibits", []):
+        item["exhibitorId"] = _resolve_import_reference(known["exhibitors"], item.get("exhibitorId"), ("name", "boothCode"))
+    for item in records.get("points", []):
+        item["venueId"] = _resolve_import_reference(known["venues"], item.get("venueId"), ("name",))
+        item["exhibitorId"] = _resolve_import_reference(known["exhibitors"], item.get("exhibitorId"), ("name", "boothCode"))
+        item["exhibitId"] = _resolve_import_reference(known["exhibits"], item.get("exhibitId"), ("name",))
+    for item in records.get("schedules", []):
+        item["venueId"] = _resolve_import_reference(known["venues"], item.get("venueId"), ("name",))
+        item["pointId"] = _resolve_import_reference(known["points"], item.get("pointId"), ("code", "name"))
+
+    route_point_map: dict[str, list[tuple[int, str, dict[str, Any]]]] = {}
+    for item in records.get("route_points", []):
+        route_id = _resolve_import_reference(known["routes"], item.get("routeId"), ("name",))
+        point_id = _resolve_import_reference(known["points"], item.get("pointId"), ("code", "name"))
+        item["routeId"] = route_id
+        item["pointId"] = point_id
+        try:
+            order = int(float(item.get("sortOrder")))
+        except (TypeError, ValueError):
+            order = 0
+        if not route_id or not point_id or order < 1:
+            errors.append(_import_error(item, "路线 ID、点位 ID 和顺序均不能为空，顺序从 1 开始"))
+            continue
+        route_point_map.setdefault(route_id, []).append((order, point_id, item))
+    for route_id, links in route_point_map.items():
+        seen_points: set[str] = set()
+        for _, point_id, item in links:
+            if route_id not in known["routes"]:
+                errors.append(_import_error(item, f"路线不存在：{route_id}", "route_id"))
+            point = known["points"].get(point_id)
+            if not point:
+                errors.append(_import_error(item, f"点位不存在：{point_id}", "point_id"))
+            elif point_id in seen_points:
+                errors.append(_import_error(item, "同一路线不能重复关联同一点位", "point_id"))
+            seen_points.add(point_id)
+    for route in records.get("routes", []):
+        route_id = str(route.get("id") or "")
+        links = sorted(route_point_map.get(route_id, []), key=lambda item: item[0])
+        if links:
+            route["pointIds"] = [point_id for _, point_id, _ in links]
+        else:
+            existing_route = store.get_record("routes", route_id) or {}
+            route["pointIds"] = list(existing_route.get("pointIds") or [])
+        if len(route["pointIds"]) < 2:
+            errors.append(_import_error(route, "路线至少需要在路线点位表配置两个点位", "route_id"))
+        else:
+            route["venueId"] = str((known["points"].get(route["pointIds"][0]) or {}).get("venueId") or "")
+
+    knowledge_bases = {
+        str(item.get("id") or ""): item
+        for item in records.get("knowledge_bases", [])
+        if str(item.get("id") or "")
+    }
+    for item in records.get("knowledge_bases", []):
+        if not str(item.get("name") or "").strip():
+            errors.append(_import_error(item, "知识库名称不能为空", "name"))
+        item["status"] = str(item.get("status") or "active").strip().lower()
+        if item["status"] not in {"active", "inactive"}:
+            errors.append(_import_error(item, "知识库状态只能是 active 或 inactive", "status"))
+    existing_knowledge_bases = {
+        str(item.get("id") or ""): item
+        for item in store.list_records("knowledge_bases", exhibition_id=exhibition_id)
+        if str(item.get("id") or "")
+    }
+    knowledge_bases.update(existing_knowledge_bases)
+    for item in records.get("documents", []):
+        kb_id = str(item.get("knowledgeBaseId") or "").strip()
+        if kb_id not in knowledge_bases:
+            errors.append(_import_error(item, f"知识库不存在：{kb_id}", "knowledge_base_id"))
+        if not str(item.get("title") or "").strip():
+            errors.append(_import_error(item, "知识文档标题不能为空", "title"))
+        if not str(item.get("content") or "").strip():
+            errors.append(_import_error(item, "知识文档正文不能为空", "content"))
+        item["status"] = str(item.get("status") or "published").strip().lower()
+        if item["status"] not in {"published", "draft", "archived"}:
+            errors.append(_import_error(item, "知识文档状态只能是 published、draft 或 archived", "status"))
+        if isinstance(item.get("keywords"), str):
+            item["keywords"] = re.split(r"[,，、\n]", item["keywords"])
+        item["keywords"] = list(dict.fromkeys(str(value).strip() for value in (item.get("keywords") or []) if str(value).strip()))
+    for item in records.get("qa", []):
+        if not str(item.get("question") or "").strip():
+            errors.append(_import_error(item, "标准问题不能为空", "question"))
+        if not str(item.get("answer") or "").strip():
+            errors.append(_import_error(item, "官方答案不能为空", "answer"))
+        item["status"] = str(item.get("status") or "published").strip().lower()
+        if item["status"] not in {"published", "draft", "pending_review", "archived"}:
+            errors.append(_import_error(item, "问答状态不合法", "status"))
+        if isinstance(item.get("keywords"), str):
+            item["keywords"] = re.split(r"[,，、\n]", item["keywords"])
+        item["keywords"] = list(dict.fromkeys(str(value).strip() for value in (item.get("keywords") or []) if str(value).strip()))
+
+    for kind in EVENT_IMPORT_KINDS:
+        for item in records.get(kind, []):
+            existing_record = store.get_record(kind, str(item.get("id") or "")) or {}
+            supplied_fields = dict(item)
+            supplied_image_fields = {key: supplied_fields[key] for key in ("imageMode", "imageRefs", "imageUrls") if key in supplied_fields}
+            if existing_record:
+                # Upsert semantics preserve columns omitted from the workbook;
+                # explicitly supplied image controls are applied below.
+                item.update(existing_record)
+                item.update(supplied_fields)
+                if not supplied_image_fields:
+                    item["imageMode"] = "keep"
+                    item["imageRefs"] = []
+                    item["imageUrls"] = list(existing_record.get("imageUrls") or [])
+            image_mode = str(item.get("imageMode") or ("replace" if item.get("imageRefs") or item.get("imageUrls") else "keep")).lower()
+            if image_mode not in {"keep", "replace", "clear"}:
+                errors.append(_import_error(item, "图片策略只能是 keep、replace 或 clear", "image_mode"))
+            item["imageMode"] = image_mode
+            if image_mode == "keep" and existing_record:
+                item["imageUrls"] = list(existing_record.get("imageUrls") or [])
+            elif image_mode == "replace":
+                item["imageUrls"] = list(supplied_image_fields.get("imageUrls") or [])
+            try:
+                item["imageUrls"] = normalized_image_urls(item)
+            except ValueError as exc:
+                errors.append(_import_error(item, str(exc), "image_urls"))
+            if image_mode == "replace" and not item.get("imageRefs") and not item.get("imageUrls"):
+                errors.append(_import_error(item, "replace 策略至少需要一个 image_refs 或 image_urls", "image_refs"))
+            if image_mode == "keep" and (item.get("imageRefs") or item.get("imageUrls")):
+                warnings.append(_import_error(item, "keep 策略会忽略 image_refs/image_urls", "image_mode"))
+            if image_mode == "clear":
+                item["imageRefs"] = []
+                item["imageUrls"] = []
+            if kind == "exhibits":
+                item["exhibitorId"] = _resolve_import_reference(known["exhibitors"], item.get("exhibitorId"), ("name", "boothCode"))
+                exhibitor = known["exhibitors"].get(str(item.get("exhibitorId") or ""))
+                if not exhibitor or str(exhibitor.get("exhibitionId")) != exhibition_id:
+                    errors.append(_import_error(item, "展品关联的展商不存在或不属于当前展会", "exhibitor_id"))
+            if kind == "points":
+                item["venueId"] = _resolve_import_reference(known["venues"], item.get("venueId"), ("name",))
+                item["exhibitorId"] = _resolve_import_reference(known["exhibitors"], item.get("exhibitorId"), ("name", "boothCode"))
+                item["exhibitId"] = _resolve_import_reference(known["exhibits"], item.get("exhibitId"), ("name",))
+                venue = known["venues"].get(str(item.get("venueId") or ""))
+                if not venue or str(venue.get("exhibitionId")) != exhibition_id:
+                    errors.append(_import_error(item, "点位关联的场馆不存在或不属于当前展会", "venue_id"))
+                for field, related_kind, label in (("exhibitorId", "exhibitors", "exhibitor_id"), ("exhibitId", "exhibits", "exhibit_id")):
+                    value = str(item.get(field) or "").strip()
+                    if value and (value not in known[related_kind] or str(known[related_kind][value].get("exhibitionId")) != exhibition_id):
+                        errors.append(_import_error(item, f"{label} 关联记录不存在或不属于当前展会", label))
+            if kind == "documents":
+                item["exhibitionId"] = exhibition_id
+            if kind == "qa":
+                item["exhibitionId"] = exhibition_id
+            if kind == "schedules":
+                for field, related_kind, label in (("venueId", "venues", "venue_id"), ("pointId", "points", "point_id")):
+                    reference_fields = ("name",) if field == "venueId" else ("code", "name")
+                    item[field] = _resolve_import_reference(known[related_kind], item.get(field), reference_fields)
+                    value = str(item.get(field) or "").strip()
+                    if value and (value not in known[related_kind] or str(known[related_kind][value].get("exhibitionId")) != exhibition_id):
+                        errors.append(_import_error(item, f"{label} 关联记录不存在或不属于当前展会", label))
+    for filename in sorted({str(ref) for items in records.values() for item in items for ref in item.get("imageRefs", [])}):
+        if filename not in image_manifest:
+            errors.append({"sheet": "", "row": 0, "field": "image_refs", "message": f"附件不存在：{filename}"})
+    return errors, warnings
+
+
+def _materialize_import_images(request: Request, batch: dict[str, Any], records: dict[str, list[dict[str, Any]]]) -> list[dict[str, Any]]:
+    package_path = Path(str(batch.get("package_path") or ""))
+    image_root = package_path / "images"
+    settings = getattr(request.app.state, "settings", None)
+    service_store = SceneAssetStore(Path(getattr(settings, "scene_assets_dir", "./data/scene-assets")), seed_defaults=True)
+    cache: dict[str, str] = {}
+    created: list[dict[str, Any]] = []
+    for kind, items in records.items():
+        if kind == "route_points":
+            continue
+        for item in items:
+            if item.get("imageMode") == "clear":
+                item["imageUrls"] = []
+            elif item.get("imageMode") == "replace":
+                urls = list(item.get("imageUrls", []))
+                for filename in item.get("imageRefs", []):
+                    safe_name = Path(str(filename)).name
+                    source = (image_root / safe_name).resolve()
+                    try:
+                        source.relative_to(image_root.resolve())
+                    except ValueError as exc:
+                        raise ValueError(f"附件路径非法：{safe_name}") from exc
+                    content = source.read_bytes()
+                    digest = hashlib.sha256(content).hexdigest()
+                    if digest not in cache:
+                        mime = mimetypes.guess_type(safe_name)[0] or "application/octet-stream"
+                        saved = service_store.create_file(content=content, filename=safe_name, mime_type=mime, name=Path(safe_name).stem, category=f"event:{kind}")
+                        cache[digest] = str(saved["url"])
+                        created.append(saved)
+                    urls.append(cache[digest])
+                item["imageUrls"] = list(dict.fromkeys(urls))
+    return created
+
+
+def _build_import_runtime_config(store: AdminStore, exhibition_id: str, records: dict[str, list[dict[str, Any]]]) -> dict[str, Any] | None:
+    """Create a minimal runtime config for imported exhibitions when none exists.
+
+    The public Web client loads ``digital-human-config`` before it can match
+    navigation intent.  Excel imports intentionally focus on exhibition
+    content and routes, so bootstrap the runtime config from those routes while
+    preserving any config that an operator already created.
+    """
+    if store.get_record("runtime_configs", exhibition_id):
+        return None
+
+    def values(*raw_values: Any) -> list[str]:
+        result: list[str] = []
+        for raw in raw_values:
+            candidates = raw if isinstance(raw, (list, tuple)) else [raw]
+            for candidate in candidates:
+                text = str(candidate or "").strip()
+                if text and text not in result:
+                    result.append(text)
+        return result
+
+    navigation: list[str] = []
+    for route in records.get("routes", []):
+        if str(route.get("type") or "navigation") in {"navigation", "tour"} and str(route.get("status") or "") != "offline":
+            navigation.extend(values(route.get("name"), route.get("keywords"), route.get("aliases")))
+
+    content: list[str] = []
+    for kind in ("exhibitors", "exhibits", "venues", "points", "schedules"):
+        for item in records.get(kind, []):
+            content.extend(values(item.get("name"), item.get("title"), item.get("category"), item.get("aliases"), item.get("introductionKeywords")))
+    for item in records.get("documents", []):
+        content.extend(values(item.get("title"), item.get("keywords"), item.get("category")))
+    for item in records.get("qa", []):
+        content.extend(values(item.get("question"), item.get("keywords")))
+
+    return {
+        "id": exhibition_id,
+        "exhibitionId": exhibition_id,
+        "keywords": {
+            "navigation": list(dict.fromkeys(navigation)),
+            "exhibition_content": list(dict.fromkeys(content)),
+        },
+    }
+
+
+@router.get("/admin/event/exhibitions/{exhibition_id}/import-template")
+def event_import_template(exhibition_id: str, request: Request, auth: dict[str, Any] = Depends(current_user)) -> StreamingResponse:
+    store = get_store(request)
+    _require(store, auth, "event:import")
+    _record(store, "exhibitions", exhibition_id)
+    return StreamingResponse(
+        io.BytesIO(create_template()),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="event-import-template-{exhibition_id}.xlsx"'},
+    )
+
+
+@router.post("/admin/event/exhibitions/{exhibition_id}/import/preview")
+async def preview_event_import(exhibition_id: str, request: Request, file: UploadFile = File(...), auth: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    store = get_store(request)
+    _require(store, auth, "event:import")
+    _record(store, "exhibitions", exhibition_id)
+    payload = await file.read()
+    try:
+        workbook_bytes, images = extract_package(payload, file.filename or "data.xlsx")
+        records, parse_errors = parse_workbook(workbook_bytes, images)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail={"code": "IMPORT_FILE_INVALID", "detail": str(exc)}) from exc
+    batch_id = f"import-{uuid.uuid4().hex[:16]}"
+    batch_dir = _event_import_root(request) / batch_id
+    batch_dir.mkdir(parents=True, exist_ok=False)
+    (batch_dir / "data.xlsx").write_bytes(workbook_bytes)
+    if images:
+        (batch_dir / "images").mkdir(parents=True, exist_ok=True)
+        for filename, (content, _) in images.items():
+            (batch_dir / "images" / filename).write_bytes(content)
+    image_manifest = {filename: {"mimeType": mime, "size": len(content)} for filename, (content, mime) in images.items()}
+    validation_errors, warnings = _validate_event_import(store, exhibition_id, records, image_manifest)
+    preview = public_preview(batch_id, exhibition_id, file.filename or "data.xlsx", records, [*parse_errors, *validation_errors], warnings)
+    for kind, values in preview["summary"].items():
+        existing = {item.get("id") for item in store.list_records(kind, exhibition_id=exhibition_id)}
+        values["creates"] = sum(1 for item in records.get(kind, []) if item.get("id") not in existing)
+        values["updates"] = sum(1 for item in records.get(kind, []) if item.get("id") in existing)
+        values["warnings"] = sum(1 for warning in warnings if warning.get("sheet") == _import_sheet(kind))
+    preview["conflicts"] = [
+        {"kind": kind, "id": str(item.get("id") or ""), "action": "update" if item.get("id") in {existing_item.get("id") for existing_item in store.list_records(kind, exhibition_id=exhibition_id)} else "create"}
+        for kind, items in records.items() if kind in EVENT_IMPORT_KINDS for item in items
+    ]
+    store.save_event_import_batch({"id": batch_id, "exhibition_id": exhibition_id, "status": "previewed", "filename": file.filename or "data.xlsx", "package_path": str(batch_dir), "preview": preview, "records": records, "image_manifest": image_manifest, "created_by": auth["user"]["id"]})
+    _audit(request, auth, action="import_preview", resource_type="event_import", resource_id=batch_id, before=None, after=preview)
+    return preview
+
+
+@router.post("/admin/event/imports/commit")
+def commit_event_import(request: Request, body: EventImportCommitBody, auth: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    store = get_store(request)
+    _require(store, auth, "event:import")
+    batch = store.get_event_import_batch(body.batchId)
+    if not batch:
+        raise HTTPException(status_code=404, detail={"code": "IMPORT_BATCH_NOT_FOUND", "detail": "导入批次不存在或已过期"})
+    if batch["status"] == "committed":
+        return {"batchId": body.batchId, "status": "committed", "idempotent": True}
+    preview = batch.get("preview") or {}
+    if preview.get("errors"):
+        raise HTTPException(status_code=409, detail={"code": "IMPORT_HAS_ERRORS", "detail": "导入存在错误，修复后请重新上传", "errors": preview["errors"]})
+    records = batch.get("records") or {}
+    created_assets: list[dict[str, Any]] = []
+    try:
+        created_assets = _materialize_import_images(request, batch, records)
+        records_to_save = {kind: list(items) for kind, items in records.items()}
+        runtime_config = _build_import_runtime_config(store, str(batch.get("exhibition_id") or ""), records)
+        if runtime_config:
+            records_to_save["runtime_configs"] = [runtime_config]
+        store.save_records_atomic(records_to_save)
+    except Exception as exc:
+        settings = getattr(request.app.state, "settings", None)
+        service_store = SceneAssetStore(Path(getattr(settings, "scene_assets_dir", "./data/scene-assets")), seed_defaults=True)
+        for asset in created_assets:
+            service_store.delete_file(str(asset.get("id") or ""))
+        raise HTTPException(status_code=500, detail={"code": "IMPORT_COMMIT_FAILED", "detail": f"导入提交失败：{exc}"}) from exc
+    store.mark_event_import_committed(body.batchId)
+    result = {"batchId": body.batchId, "status": "committed", "records": {kind: len(items) for kind, items in records.items()}, "assets": len(created_assets)}
+    _audit(request, auth, action="import_commit", resource_type="event_import", resource_id=body.batchId, before=preview, after=result)
+    return result
+
+
+@router.get("/admin/event/exhibitions/{exhibition_id}/imports")
+def list_event_imports(exhibition_id: str, request: Request, auth: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    store = get_store(request)
+    _require(store, auth, "event:import")
+    _record(store, "exhibitions", exhibition_id)
+    return {"items": store.list_event_import_batches(exhibition_id)}
+
+
+@router.get("/admin/event/imports/{batch_id}/error-report")
+def event_import_error_report(batch_id: str, request: Request, auth: dict[str, Any] = Depends(current_user)) -> StreamingResponse:
+    store = get_store(request)
+    _require(store, auth, "event:import")
+    batch = store.get_event_import_batch(batch_id)
+    if not batch:
+        raise HTTPException(status_code=404, detail={"code": "IMPORT_BATCH_NOT_FOUND", "detail": "导入批次不存在或已过期"})
+    rows = [{"sheet": item.get("sheet", ""), "row": item.get("row", ""), "field": item.get("field", ""), "message": item.get("message", "")} for item in (batch.get("preview") or {}).get("errors", [])]
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=["sheet", "row", "field", "message"])
+    writer.writeheader()
+    writer.writerows(rows)
+    return StreamingResponse(iter([output.getvalue().encode("utf-8-sig")]), media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="{batch_id}-errors.csv"'})
+
+
 @router.get("/admin/event/{resource}")
 def list_event(resource: str, request: Request, page: int = 1, page_size: int = 9, exhibition_id: str | None = None, keyword: str | None = None, status_filter: str | None = Query(None, alias="status"), auth: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
     permission = RESOURCE_PERMISSIONS.get(resource)
@@ -1550,7 +1984,7 @@ def public_config(exhibition_id: str, request: Request) -> dict[str, Any]:
     route_keywords: list[str] = []
     route_fuzzy_keywords: list[str] = []
     for route in store.list_records("routes", exhibition_id=exhibition_id):
-        if route.get("status") == "offline" or route.get("type", "navigation") != "navigation":
+        if route.get("status") == "offline" or route.get("type", "navigation") not in {"navigation", "tour"}:
             continue
         for value in [route.get("name"), *route.get("keywords", []), *route.get("aliases", [])]:
             clean_value = str(value or "").strip()
@@ -1953,7 +2387,7 @@ def navigation(exhibition_id: str, request: Request, body: NavigationBody) -> di
     exhibitors = {item["id"]: item for item in store.list_records("exhibitors", exhibition_id=exhibition_id)}
     exhibits = {item["id"]: item for item in store.list_records("exhibits", exhibition_id=exhibition_id)}
     points = {item["id"]: item for item in store.list_records("points", exhibition_id=exhibition_id)}
-    routes = [item for item in store.list_records("routes", exhibition_id=exhibition_id) if item.get("status") != "offline" and item.get("type", "navigation") == "navigation"]
+    routes = [item for item in store.list_records("routes", exhibition_id=exhibition_id) if item.get("status") != "offline" and item.get("type", "navigation") in {"navigation", "tour"}]
     ranked: list[tuple[float, int, dict[str, Any], str]] = []
     for route in routes:
         best_score = 0.0

@@ -552,6 +552,8 @@ class Settings(BaseSettings):
     admin_refresh_token_days: int = 7
     admin_initialize_defaults: bool = True
     admin_media_root: str = "./data/admin-assets"
+    #: Excel 展会导入批次和临时图片附件目录
+    admin_event_import_root: str = "./data/admin-event-imports"
 
     #: CosyVoice 复刻时，百炼需拉取公网 URL；若留空则用请求的 Host 拼 URL（内网部署请填公网可达地址）
     public_base_url: str = ""

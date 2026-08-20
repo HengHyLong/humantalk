@@ -156,6 +156,21 @@ class AdminStore:
                     link_id TEXT NOT NULL,
                     PRIMARY KEY(owner_kind, owner_id, link_kind, link_id)
                 );
+                CREATE TABLE IF NOT EXISTS admin_event_import_batches (
+                    id TEXT PRIMARY KEY,
+                    exhibition_id TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    filename TEXT NOT NULL DEFAULT '',
+                    package_path TEXT NOT NULL DEFAULT '',
+                    preview_json TEXT NOT NULL DEFAULT '{}',
+                    records_json TEXT NOT NULL DEFAULT '{}',
+                    image_manifest_json TEXT NOT NULL DEFAULT '{}',
+                    created_by TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    committed_at TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_event_import_batches_exhibition ON admin_event_import_batches(exhibition_id, created_at);
                 """
             )
             conn.execute("INSERT OR IGNORE INTO admin_schema_version(version, applied_at) VALUES (?, ?)", (1, utc_now()))
@@ -174,6 +189,7 @@ class AdminStore:
             ("menu-event-venue", "menu-event", "event:venue", "场地管理", "menu", "/event/venue"),
             ("menu-event-point", "menu-event", "event:point", "点位管理", "menu", "/event/point"),
             ("menu-event-broadcast", "menu-event", "event:broadcast", "应急播报", "menu", "/event/broadcast"),
+            ("button-event-import", "menu-event-exhibition", "event:import", "导入展会数据", "button", ""),
             ("menu-interaction", None, "interaction", "交互管理", "menu", ""),
             ("menu-welcome", "menu-interaction", "interact:welcome", "欢迎配置", "menu", "/interact/welcome"),
             ("menu-explain", "menu-interaction", "interact:explain", "讲解流程", "menu", "/interact/explain"),
@@ -225,7 +241,7 @@ class AdminStore:
                     (role_id, code, name, description, now, now),
                 )
             all_permissions = [row[0] for row in conn.execute("SELECT id FROM admin_permissions")]
-            content_codes = {"dashboard:view", "event", "event:exhibition", "event:exhibitor", "event:exhibit", "event:venue", "event:point", "event:route", "event:schedule", "event:broadcast", "interaction", "interact:welcome", "interact:explain", "interact:shopping", "lead:view", "lead:view_sensitive", "lead:export", "lead:feedback", "asset", "asset:avatar", "asset:gif", "asset:voice", "asset:scene", "asset:idle", "knowledge", "knowledge:document", "knowledge:base", "knowledge:memory", "knowledge:qa", "knowledge:script", "knowledge:publish", "knowledge:miss"}
+            content_codes = {"dashboard:view", "event", "event:exhibition", "event:exhibitor", "event:exhibit", "event:venue", "event:point", "event:route", "event:schedule", "event:broadcast", "event:import", "interaction", "interact:welcome", "interact:explain", "interact:shopping", "lead:view", "lead:view_sensitive", "lead:export", "lead:feedback", "asset", "asset:avatar", "asset:gif", "asset:voice", "asset:scene", "asset:idle", "knowledge", "knowledge:document", "knowledge:base", "knowledge:memory", "knowledge:qa", "knowledge:script", "knowledge:publish", "knowledge:miss"}
             data_codes = {"dashboard:view", "report:export", "lead:view", "lead:export"}
             audit_codes = {"dashboard:view", "system", "system:audit", "audit:trace"}
             for role_code, codes in (("sys_admin", set(row[1] for row in permissions)), ("content_ops", content_codes), ("data_viewer", data_codes), ("security_audit", audit_codes), ("readonly", set(row[1] for row in permissions))):
@@ -288,6 +304,94 @@ class AdminStore:
     def get_links(self, owner_kind: str, owner_id: str, link_kind: str) -> list[str]:
         with self.connect() as conn:
             return [row[0] for row in conn.execute("SELECT link_id FROM admin_record_links WHERE owner_kind=? AND owner_id=? AND link_kind=? ORDER BY link_id", (owner_kind, owner_id, link_kind))]
+
+    def save_event_import_batch(self, batch: dict[str, Any]) -> dict[str, Any]:
+        now = utc_now()
+        payload = {
+            "id": str(batch["id"]),
+            "exhibition_id": str(batch.get("exhibition_id") or ""),
+            "status": str(batch.get("status") or "previewed"),
+            "filename": str(batch.get("filename") or ""),
+            "package_path": str(batch.get("package_path") or ""),
+            "preview_json": json.dumps(batch.get("preview") or {}, ensure_ascii=False),
+            "records_json": json.dumps(batch.get("records") or {}, ensure_ascii=False),
+            "image_manifest_json": json.dumps(batch.get("image_manifest") or {}, ensure_ascii=False),
+            "created_by": str(batch.get("created_by") or ""),
+            "created_at": str(batch.get("created_at") or now),
+            "updated_at": now,
+            "committed_at": batch.get("committed_at"),
+        }
+        with self.connect() as conn:
+            conn.execute(
+                """INSERT INTO admin_event_import_batches
+                (id,exhibition_id,status,filename,package_path,preview_json,records_json,image_manifest_json,created_by,created_at,updated_at,committed_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(id) DO UPDATE SET status=excluded.status,filename=excluded.filename,
+                package_path=excluded.package_path,preview_json=excluded.preview_json,records_json=excluded.records_json,
+                image_manifest_json=excluded.image_manifest_json,updated_at=excluded.updated_at,committed_at=excluded.committed_at""",
+                tuple(payload[key] for key in ("id", "exhibition_id", "status", "filename", "package_path", "preview_json", "records_json", "image_manifest_json", "created_by", "created_at", "updated_at", "committed_at")),
+            )
+        return payload
+
+    def get_event_import_batch(self, batch_id: str) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute("SELECT * FROM admin_event_import_batches WHERE id=?", (batch_id,)).fetchone()
+        if not row:
+            return None
+        item = dict(row)
+        for key in ("preview_json", "records_json", "image_manifest_json"):
+            try:
+                item[key[:-5] if key.endswith("_json") else key] = json.loads(item[key] or "{}")
+            except json.JSONDecodeError:
+                item[key[:-5] if key.endswith("_json") else key] = {}
+        return item
+
+    def list_event_import_batches(self, exhibition_id: str) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            rows = [dict(row) for row in conn.execute("SELECT id,exhibition_id,status,filename,created_by,created_at,updated_at,committed_at,preview_json FROM admin_event_import_batches WHERE exhibition_id=? ORDER BY created_at DESC", (exhibition_id,))]
+        result: list[dict[str, Any]] = []
+        for item in rows:
+            try:
+                preview = json.loads(item.pop("preview_json") or "{}")
+            except json.JSONDecodeError:
+                preview = {}
+            item["summary"] = preview.get("summary", {})
+            item["errorCount"] = len(preview.get("errors", []))
+            item["warningCount"] = len(preview.get("warnings", []))
+            result.append(item)
+        return result
+
+    def mark_event_import_committed(self, batch_id: str) -> None:
+        now = utc_now()
+        with self.connect() as conn:
+            conn.execute("UPDATE admin_event_import_batches SET status='committed',committed_at=?,updated_at=? WHERE id=?", (now, now, batch_id))
+
+    def save_records_atomic(self, records: dict[str, list[dict[str, Any]]]) -> None:
+        now = utc_now()
+        with self.connect() as conn:
+            for kind, items in records.items():
+                if kind == "route_points":
+                    continue
+                for raw in items:
+                    data = dict(raw)
+                    record_id = str(data.get("id") or "")
+                    if not record_id:
+                        raise ValueError(f"{kind} 缺少 id")
+                    data.pop("_sheet", None)
+                    data.pop("_row", None)
+                    data.pop("imageMode", None)
+                    data.pop("imageRefs", None)
+                    created = str(data.get("createdAt") or now)
+                    data["id"] = record_id
+                    data["createdAt"] = created
+                    data["updatedAt"] = now
+                    exhibition_id = data.get("exhibitionId")
+                    conn.execute(
+                        """INSERT INTO admin_records(kind,id,exhibition_id,data_json,created_at,updated_at)
+                        VALUES (?,?,?,?,?,?) ON CONFLICT(kind,id) DO UPDATE SET exhibition_id=excluded.exhibition_id,
+                        data_json=excluded.data_json,updated_at=excluded.updated_at""",
+                        (kind, record_id, exhibition_id, json.dumps(data, ensure_ascii=False), created, now),
+                    )
 
     def user_by_username(self, username: str) -> dict[str, Any] | None:
         with self.connect() as conn:

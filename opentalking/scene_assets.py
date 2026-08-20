@@ -236,6 +236,16 @@ class SceneAssetStore:
         _write_json(self.file_index_path, items)
         return item
 
+    def delete_file(self, file_id: str) -> bool:
+        """Remove a service file and its index entry when a higher-level transaction fails."""
+        items = _read_json(self.file_index_path, [])
+        next_items = [entry for entry in items if not (isinstance(entry, dict) and entry.get("id") == file_id)]
+        if len(next_items) == len(items):
+            return False
+        _write_json(self.file_index_path, next_items)
+        shutil.rmtree(self.files_dir / file_id, ignore_errors=True)
+        return True
+
     def file_path(self, file_id: str) -> Path | None:
         if not re.fullmatch(r"file-[\w\u4e00-\u9fff-]+", file_id or ""):
             return None

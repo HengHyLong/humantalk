@@ -25,6 +25,7 @@ export type PermissionCode =
   | "event:route"
   | "event:schedule"
   | "event:broadcast"
+  | "event:import"
   | "lead:view"
   | "lead:view_sensitive"
   | "lead:export"
