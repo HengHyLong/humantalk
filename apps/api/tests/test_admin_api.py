@@ -62,6 +62,32 @@ def test_exhibition_filter_and_relation_validation(tmp_path) -> None:
         assert invalid.status_code == 404
 
 
+def test_point_creation_infers_exhibition_from_venue(tmp_path) -> None:
+    with _client(tmp_path) as client:
+        headers = _login(client)
+        store = client.app.state.admin_store
+        store.save_record("venues", {"id": "venue-point-create", "exhibitionId": "expo-test", "name": "测试场馆"}, "expo-test")
+
+        response = client.post(
+            "/api/v1/admin/event/points",
+            headers=headers,
+            json={
+                "venueId": "venue-point-create",
+                "code": "P-NEW",
+                "name": "新增点位",
+                "type": "booth",
+                "floor": "1F",
+                "x": 50,
+                "y": 50,
+                "status": "draft",
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json()["exhibitionId"] == "expo-test"
+        assert response.json()["venueId"] == "venue-point-create"
+
+
 def test_welcome_wake_word_validation_and_public_config(tmp_path) -> None:
     with _client(tmp_path) as client:
         headers = _login(client)

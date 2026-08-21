@@ -747,6 +747,10 @@ def _validate_record(store: AdminStore, kind: str, data: dict[str, Any], record_
         venue = store.get_record("venues", str((first_point or {}).get("venueId") or data.get("venueId") or data.get("venue_id") or ""))
         if venue:
             data["exhibitionId"] = _event_exhibition_id(venue)
+    if kind == "points" and not _event_exhibition_id(data):
+        venue = store.get_record("venues", str(data.get("venueId") or data.get("venue_id") or ""))
+        if venue:
+            data["exhibitionId"] = _event_exhibition_id(venue)
     exhibition_id = _event_exhibition_id(data)
     if kind != "exhibitions" and exhibition_id and not store.get_record("exhibitions", exhibition_id):
         raise HTTPException(status_code=400, detail={"code": "EXHIBITION_NOT_FOUND", "detail": "所属展会不存在"})
