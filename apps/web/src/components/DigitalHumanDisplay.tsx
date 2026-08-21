@@ -143,7 +143,7 @@ export function DigitalHumanDisplay({
   const presentationActive = Boolean(presentationKey);
   const presentationDialogVisible = true;
   const chatPanelHidden = presentationActive || !conversationVisible;
-  const subtitleActive = Boolean(subtitle?.trim());
+  const subtitleActive = presentationActive && Boolean(subtitle?.trim());
   const showLiveSubtitle = Boolean(
     subtitle?.trim()
       && !(latestVisibleMessage?.role === "assistant" && latestVisibleMessage.text.trim() === subtitle.trim()),
@@ -186,6 +186,11 @@ export function DigitalHumanDisplay({
     setConversationActivity((value) => value + 1);
     window.requestAnimationFrame(() => scrollChatToBottom("smooth"));
   }, [scrollChatToBottom]);
+
+  const closePresentation = useCallback((onClose?: () => void) => {
+    onClose?.();
+    revealConversation();
+  }, [revealConversation]);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -305,7 +310,7 @@ export function DigitalHumanDisplay({
                   <button
                     type="button"
                     className="digital-display-card-close"
-                    onClick={onCloseNavigation}
+                    onClick={() => closePresentation(onCloseNavigation)}
                     aria-label={english ? "Close navigation directions" : "关闭路线指引"}
                     title={english ? "Close navigation directions" : "关闭路线指引"}
                   >
@@ -462,7 +467,7 @@ export function DigitalHumanDisplay({
                 >
               {shoppingRegistration ? (
                 <article className="digital-display-registration-card" role="dialog" aria-modal="true" aria-label={english ? "Registration QR code" : "登记二维码"}>
-                  <button type="button" onClick={onCloseShoppingRegistration} aria-label={english ? "Close registration QR code" : "关闭登记二维码"}>×</button>
+                  <button type="button" onClick={() => closePresentation(onCloseShoppingRegistration)} aria-label={english ? "Close registration QR code" : "关闭登记二维码"}>×</button>
                   <img src={shoppingRegistration.qrDataUrl} alt={english ? `${shoppingRegistration.title} registration QR code` : `${shoppingRegistration.title}登记二维码`} />
                   <div>
                     <strong>{shoppingRegistration.title}</strong>
@@ -476,7 +481,7 @@ export function DigitalHumanDisplay({
                   <button
                     type="button"
                     className="digital-display-card-close"
-                    onClick={onCloseNavigation}
+                    onClick={() => closePresentation(onCloseNavigation)}
                     aria-label={english ? "Close navigation directions" : "关闭路线指引"}
                     title={english ? "Close navigation directions" : "关闭路线指引"}
                   >
@@ -533,7 +538,7 @@ export function DigitalHumanDisplay({
                     key={`${message.id}-${entity.kind}-${entity.id}`}
                     entity={entity}
                     immersive
-                    onClose={onCloseEntity ? () => onCloseEntity(entity.id) : undefined}
+                    onClose={onCloseEntity ? () => closePresentation(() => onCloseEntity(entity.id)) : undefined}
                     closeLabel={english ? `Close ${entity.name}` : `关闭${entity.name}介绍`}
                   />
                 ));

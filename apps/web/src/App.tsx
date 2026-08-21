@@ -2959,10 +2959,13 @@ export default function App() {
         }
         pendingShoppingRegistrationRef.current = null;
         setShoppingRegistration({ ...registration, url, qrDataUrl });
-        enqueueSpeech(registration.spoken_text, text, pendingShopping.relatedEntities, true);
+        // The registration QR is the presentation for this turn. Reattaching
+        // the product entities here makes the product card reappear as soon as
+        // the QR dialog is closed, even when the user already dismissed it.
+        enqueueSpeech(registration.spoken_text, text, [], true);
       } catch (error) {
         console.warn("shopping registration failed", error);
-        enqueueSpeech(englishConversation ? "The registration QR code is temporarily unavailable. Please try again later." : "登记二维码暂时无法生成，请稍后再试。", text, pendingShopping.relatedEntities, true);
+        enqueueSpeech(englishConversation ? "The registration QR code is temporarily unavailable. Please try again later." : "登记二维码暂时无法生成，请稍后再试。", text, [], true);
       }
       return;
     }

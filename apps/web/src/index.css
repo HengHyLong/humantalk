@@ -200,7 +200,7 @@ body {
 .digital-display-chat-reveal { align-self: flex-end; border: 1px solid rgba(181, 232, 255, .4); border-radius: 999px; padding: 7px 12px; color: #dcf7ff; background: rgba(2, 45, 98, .72); font-size: 10px; cursor: pointer; backdrop-filter: blur(8px); }
 .digital-display-chat-reveal:hover { background: rgba(21, 111, 170, .78); }
 .digital-display-presentation-stack { position: absolute; top: 37%; left: 50%; z-index: 34; display: flex; width: min(860px, 92%); max-width: 100%; flex-direction: column; align-items: stretch; transform: translateX(-50%); }
-.digital-display-presentation-stack.is-registration { width: min(620px, 92%); }
+.digital-display-presentation-stack.is-registration { top: 50%; width: min(620px, 92%); transform: translate(-50%, -50%); }
 .digital-display-presentation-stack .digital-display-waist-panel { position: relative; top: auto; right: auto; bottom: auto; left: auto; width: 100%; max-width: none; flex: 0 0 auto; transform: none; }
 .digital-display-presentation-stack .digital-display-waist-panel.is-dialog-hidden { display: none; }
 .digital-display-live-subtitle { position: relative; z-index: 26; display: flex; max-width: min(780px, 90%); align-items: flex-start; gap: 8px; margin: 0 auto; pointer-events: none; }
@@ -333,7 +333,7 @@ body {
   .digital-display-waist-panel.is-registration .digital-display-registration-card { display: block; padding: 15px; text-align: center; }
   .digital-display-waist-panel.is-registration .digital-display-registration-card > img { width: min(68vw, 180px); height: auto; max-height: min(32vh, 180px); margin: 0 auto 12px; }
   .digital-display-presentation-stack { top: 55%; width: 94%; }
-  .digital-display-presentation-stack.is-registration { top: 55%; width: 94%; }
+  .digital-display-presentation-stack.is-registration { top: 50%; width: 94%; transform: translate(-50%, -50%); }
   .digital-display-presentation-stack .digital-display-waist-panel.is-registration { top: auto; }
   .digital-display-root { min-height: 100dvh; }
   .digital-display-header { top: 17px; left: 18px; right: 18px; }
