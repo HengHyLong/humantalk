@@ -30,7 +30,11 @@ export function Header({ eyebrow, title, description, action }: { eyebrow: strin
 export function Modal({ title, children, onClose, onSave, saveLabel = "保存", saving = false, error = "" }: { title: string; children: ReactNode; onClose: () => void; onSave?: () => void; saveLabel?: string; saving?: boolean; error?: string }) {
   const closeRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
-  useEffect(() => { const previous = document.activeElement as HTMLElement | null; dialogRef.current?.focus(); const onKey = (event: KeyboardEvent) => { if (event.key === "Escape" && !saving) onClose(); }; window.addEventListener("keydown", onKey); return () => { window.removeEventListener("keydown", onKey); previous?.focus?.(); }; }, [onClose, saving]);
+  const onCloseRef = useRef(onClose);
+  const savingRef = useRef(saving);
+  onCloseRef.current = onClose;
+  savingRef.current = saving;
+  useEffect(() => { const previous = document.activeElement as HTMLElement | null; dialogRef.current?.focus(); const onKey = (event: KeyboardEvent) => { if (event.key === "Escape" && !savingRef.current) onCloseRef.current(); }; window.addEventListener("keydown", onKey); return () => { window.removeEventListener("keydown", onKey); previous?.focus?.(); }; }, []);
   return <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/30 p-4 backdrop-blur-sm" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) onClose(); }}><div ref={dialogRef} tabIndex={-1} className="max-h-[90vh] w-full max-w-xl overflow-auto rounded-2xl border border-slate-200 bg-white p-6 shadow-xl outline-none" role="dialog" aria-modal="true" aria-labelledby="admin-modal-title"><div className="flex items-center justify-between gap-3"><h2 id="admin-modal-title" className="text-lg font-semibold text-slate-950">{title}</h2><button ref={closeRef} type="button" onClick={onClose} disabled={saving} aria-label="关闭弹窗" className="rounded-lg px-2 text-2xl leading-none text-slate-300 hover:bg-slate-100 hover:text-slate-600 disabled:opacity-40">×</button></div><div className="mt-5">{children}</div>{error ? <p className="mt-4 rounded-xl bg-rose-50 px-3 py-2 text-xs leading-5 text-rose-700" role="alert">{error}</p> : null}{onSave ? <div className="mt-6 flex justify-end gap-2"><Button variant="secondary" onClick={onClose} disabled={saving}>取消</Button><Button onClick={onSave} disabled={saving}>{saving ? "保存中…" : saveLabel}</Button></div> : null}</div></div>;
 }
 

@@ -35,7 +35,9 @@ export function useToast() { const context = useContext(ToastContext); if (!cont
 
 export function ConfirmDialog({ title, description, confirmLabel = "确认", onConfirm, onClose, danger = false, children, confirmDisabled = false }: { title: string; description: string; confirmLabel?: string; onConfirm: () => void; onClose: () => void; danger?: boolean; children?: ReactNode; confirmDisabled?: boolean }) {
   const confirmRef = useRef<HTMLButtonElement>(null);
-  useEffect(() => { confirmRef.current?.focus(); const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); }; window.addEventListener("keydown", onKey); return () => window.removeEventListener("keydown", onKey); }, [onClose]);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  useEffect(() => { confirmRef.current?.focus(); const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") onCloseRef.current(); }; window.addEventListener("keydown", onKey); return () => window.removeEventListener("keydown", onKey); }, []);
   return <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/30 p-4 backdrop-blur-sm" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-xl" role="dialog" aria-modal="true" aria-labelledby="confirm-dialog-title"><h2 id="confirm-dialog-title" className="text-base font-semibold text-slate-950">{title}</h2><p className="mt-2 text-sm leading-6 text-slate-500">{description}</p>{children ? <div className="mt-4">{children}</div> : null}<div className="mt-6 flex justify-end gap-2"><button type="button" onClick={onClose} className="rounded-xl border border-slate-200 px-3.5 py-2 text-xs font-semibold text-slate-600">取消</button><button ref={confirmRef} type="button" disabled={confirmDisabled} onClick={onConfirm} className={`rounded-xl px-3.5 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40 ${danger ? "bg-rose-600 hover:bg-rose-700" : "bg-cyan-600 hover:bg-cyan-700"}`}>{confirmLabel}</button></div></div></div>;
 }
 
