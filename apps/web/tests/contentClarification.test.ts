@@ -8,6 +8,8 @@ test("explicit route wording always takes navigation priority", () => {
     "机器人展区路线",
     "怎么去机器人展区",
     "如何去机器人展区",
+    "我想去机器人展区",
+    "我要去机器人展区",
     "机器人展区怎么走",
     "介绍一下去机器人展区的路线",
   ]) {

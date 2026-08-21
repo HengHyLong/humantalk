@@ -13,6 +13,7 @@ export function classifyExplicitContentRequest(value: string): ContentClarificat
 
   const routeSignals = [
     "路线", "怎么去", "如何去", "怎么走", "如何走", "导航", "带我去", "带路",
+    "我想去", "想去", "我要去", "要去",
     "前往", "去往", "route", "directions", "navigation", "navigate", "howtoget",
     "howdoigetto", "takemeto",
   ];
