@@ -21,7 +21,7 @@ export function Footer({ copy, language, navItems, onNavigate }: FooterProps) {
             <a className="focus-ring rounded-lg" href={trafficHref} aria-label="Open traffic dashboard">
               <img
                 src="/images/logo.png"
-                alt="OpenTalking logo"
+                alt="四川博览集团数字人 Logo"
                 className="h-12 w-12 rounded-lg border border-indigo-100 bg-white object-contain p-1 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
               />
             </a>

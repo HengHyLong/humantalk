@@ -505,9 +505,9 @@ async def test_llm_config(record_id: str, request: Request, auth: dict[str, Any]
             )
             response.raise_for_status()
     except httpx.HTTPStatusError as exc:
-        raise HTTPException(status_code=502, detail={"code": "LLM_TEST_FAILED", "detail": f"模型服务返回 HTTP {exc.response.status_code}"}) from exc
+        raise HTTPException(status_code=502, detail={"code": "LLM_TEST_FAILED", "detail": "模型服务暂时不可用，请稍后重试"}) from exc
     except Exception as exc:
-        raise HTTPException(status_code=502, detail={"code": "LLM_TEST_FAILED", "detail": f"模型服务连接失败：{exc}"}) from exc
+        raise HTTPException(status_code=502, detail={"code": "LLM_TEST_FAILED", "detail": "模型服务暂时不可用，请稍后重试"}) from exc
     latency_ms = round((time.perf_counter() - started) * 1000)
     _audit(request, auth, action="test", resource_type="llm_config", resource_id=record_id, before=None, after={"success": True, "latencyMs": latency_ms})
     return {"success": True, "latencyMs": latency_ms, "message": "连接成功"}
@@ -629,7 +629,7 @@ async def upload_event_images(
                 category=f"event:{resource}",
             )
         except ValueError as exc:
-            raise HTTPException(status_code=400, detail={"code": "UNSUPPORTED_FILE", "detail": str(exc)}) from exc
+            raise HTTPException(status_code=400, detail={"code": "UNSUPPORTED_FILE", "detail": "文件格式不受支持，请上传平台要求的文件类型"}) from exc
         uploaded.append(saved)
     _audit(request, auth, action="upload", resource_type="service_file", resource_id=str(uploaded[0]["id"]), before=None, after={"resource": resource, "items": uploaded})
     return {"urls": [item["url"] for item in uploaded], "items": uploaded}
@@ -1187,7 +1187,7 @@ async def preview_event_import(exhibition_id: str, request: Request, file: Uploa
         workbook_bytes, images = extract_package(payload, file.filename or "data.xlsx")
         records, parse_errors = parse_workbook(workbook_bytes, images)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail={"code": "IMPORT_FILE_INVALID", "detail": str(exc)}) from exc
+        raise HTTPException(status_code=400, detail={"code": "IMPORT_FILE_INVALID", "detail": "导入文件无法解析，请检查模板和文件内容后重试"}) from exc
     batch_id = f"import-{uuid.uuid4().hex[:16]}"
     batch_dir = _event_import_root(request) / batch_id
     batch_dir.mkdir(parents=True, exist_ok=False)
@@ -1239,7 +1239,7 @@ def commit_event_import(request: Request, body: EventImportCommitBody, auth: dic
         service_store = SceneAssetStore(Path(getattr(settings, "scene_assets_dir", "./data/scene-assets")), seed_defaults=True)
         for asset in created_assets:
             service_store.delete_file(str(asset.get("id") or ""))
-        raise HTTPException(status_code=500, detail={"code": "IMPORT_COMMIT_FAILED", "detail": f"导入提交失败：{exc}"}) from exc
+        raise HTTPException(status_code=500, detail={"code": "IMPORT_COMMIT_FAILED", "detail": "导入提交失败，请稍后重试"}) from exc
     store.mark_event_import_committed(body.batchId)
     result = {"batchId": body.batchId, "status": "committed", "records": {kind: len(items) for kind, items in records.items()}, "assets": len(created_assets)}
     _audit(request, auth, action="import_commit", resource_type="event_import", resource_id=body.batchId, before=preview, after=result)
@@ -2086,7 +2086,7 @@ def public_exhibition_entities(exhibition_id: str, request: Request) -> dict[str
     schedules = store.list_records("schedules", exhibition_id=exhibition_id)
     items: list[dict[str, Any]] = []
 
-    def append_entity(*, entity_id: str, kind: str, name: str, description: Any, images: list[str], details: list[tuple[str, Any]], keywords: list[Any], source: dict[str, Any]) -> None:
+    def append_entity(*, entity_id: str, kind: str, name: str, description: Any, images: list[str], details: list[tuple[str, Any]], keywords: list[Any], source: dict[str, Any], parent_id: str | None = None) -> None:
         clean_name = str(name or "").strip()
         if not clean_name:
             return
@@ -2097,6 +2097,7 @@ def public_exhibition_entities(exhibition_id: str, request: Request) -> dict[str
         items.append({
             "id": entity_id,
             "kind": kind,
+            "parent_id": parent_id,
             "name": clean_name,
             "description": _public_description(description),
             "image_urls": images,
@@ -2130,7 +2131,7 @@ def public_exhibition_entities(exhibition_id: str, request: Request) -> dict[str
             entity_id=str(item["id"]), kind="exhibit", name=str(item.get("name", "")), description=item.get("description"),
             images=_public_image_urls(item, exhibitor),
             details=[("展商", (exhibitor or {}).get("name")), ("类别", item.get("category")), ("型号", item.get("modelNo"))],
-            keywords=[item.get("modelNo")], source=item,
+            keywords=[item.get("modelNo")], source=item, parent_id=str(item.get("exhibitorId") or "") or None,
         )
     for item in venues.values():
         append_entity(

@@ -365,9 +365,7 @@ function Header() {
   return (
     <header className="flex h-14 shrink-0 items-center justify-between border-b border-slate-200 bg-white px-4">
       <div className="flex min-w-0 items-center gap-3">
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-slate-950 text-cyan-300">
-          <Icon name="spark" />
-        </div>
+        <img src="/brand-logo.png" alt="四川博览集团数字人 Logo" className="h-9 w-9 shrink-0 rounded-lg object-cover" />
         <div className="min-w-0">
           <p className="truncate text-sm font-semibold text-slate-950">OpenTalking Studio</p>
           <p className="truncate text-xs text-slate-500">实时数字人工作台原型</p>

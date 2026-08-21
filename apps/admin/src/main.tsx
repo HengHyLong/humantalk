@@ -4,6 +4,7 @@ import App from "./App";
 import "./index.css";
 import { StudioPrototype } from "./prototype/StudioPrototype";
 import { AdminApp } from "./admin/AdminApp";
+import { AdminErrorBoundary, ToastProvider } from "./admin/ui";
 
 const showStudioPrototype = new URLSearchParams(window.location.search).get("prototype") === "studio";
 const showLegacyStudio = import.meta.env.VITE_APP_MODE === "studio"
@@ -11,6 +12,6 @@ const showLegacyStudio = import.meta.env.VITE_APP_MODE === "studio"
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    {showStudioPrototype ? <StudioPrototype /> : showLegacyStudio ? <App /> : <AdminApp />}
+    {showStudioPrototype ? <StudioPrototype /> : showLegacyStudio ? <App /> : <ToastProvider><AdminErrorBoundary><AdminApp /></AdminErrorBoundary></ToastProvider>}
   </React.StrictMode>
 );

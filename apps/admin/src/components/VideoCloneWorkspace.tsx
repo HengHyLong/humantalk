@@ -657,7 +657,7 @@ export function VideoCloneWorkspace({
                   <img
                     src={buildApiUrl(`/avatars/${encodeURIComponent(avatar.id)}/preview`)}
                     alt={avatar.name ?? avatar.id}
-                    className="h-12 w-12 rounded-md border border-slate-200 object-cover"
+                    className="h-12 w-12 rounded-md border border-slate-200 object-contain"
                   />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-sm font-semibold text-slate-900">{avatar.name ?? avatar.id}</span>

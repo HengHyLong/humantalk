@@ -1018,13 +1018,13 @@ export function VideoCreationWorkspace({
                   {avatar.has_preview_video ? (
                     <video
                       src={buildApiUrl(`/avatars/${encodeURIComponent(avatar.id)}/preview-video`)}
-                      className="h-12 w-12 rounded-md border border-slate-200 object-cover"
+                      className="h-12 w-12 rounded-md border border-slate-200 object-contain"
                       muted
                       playsInline
                       preload="metadata"
                     />
                   ) : (
-                    <img src={buildApiUrl(`/avatars/${encodeURIComponent(avatar.id)}/preview`)} alt={avatar.name ?? avatar.id} className="h-12 w-12 rounded-md border border-slate-200 object-cover" />
+                    <img src={buildApiUrl(`/avatars/${encodeURIComponent(avatar.id)}/preview`)} alt={avatar.name ?? avatar.id} className="h-12 w-12 rounded-md border border-slate-200 object-contain" />
                   )}
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-sm font-semibold text-slate-900">{avatar.name ?? avatar.id}</span>
@@ -1182,7 +1182,7 @@ export function VideoCreationWorkspace({
                 <div className="mt-4 flex items-center gap-3 rounded-lg border border-slate-200 bg-white p-3">
                   {selectedAvatar ? (
                     <>
-                      <img src={buildApiUrl(`/avatars/${encodeURIComponent(selectedAvatar.id)}/preview`)} alt={selectedAvatar.name ?? selectedAvatar.id} className="h-16 w-16 rounded-md border border-slate-200 object-cover" />
+                      <img src={buildApiUrl(`/avatars/${encodeURIComponent(selectedAvatar.id)}/preview`)} alt={selectedAvatar.name ?? selectedAvatar.id} className="h-16 w-16 rounded-md border border-slate-200 object-contain" />
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-sm font-semibold text-slate-900">{selectedAvatar.name ?? selectedAvatar.id}</span>
                         <span className="block text-xs text-slate-500">FlashTalk 使用内部低能量驱动音频生成参考视频</span>
@@ -1619,7 +1619,7 @@ export function VideoCreationWorkspace({
                   <img
                     src={buildApiUrl(`/avatars/${encodeURIComponent(selectedAvatar.id)}/preview`)}
                     alt={selectedAvatar.name ?? selectedAvatar.id}
-                    className="absolute inset-0 h-full w-full object-fill"
+                    className="absolute inset-0 h-full w-full object-contain"
                   />
                 </div>
               ) : null}

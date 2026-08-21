@@ -38,7 +38,7 @@ export function Navbar({
         >
           <img
             src="/images/logo.png"
-            alt="OpenTalking logo"
+            alt="四川博览集团数字人 Logo"
             className="h-10 w-10 rounded-lg border border-indigo-100 bg-white object-contain p-1 shadow-sm"
           />
           <span>

@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { buildApiUrl, type AvatarSummary } from "../lib/api";
 import { DEFAULT_VOICES, adminApi } from "./api";
 import { canAccess, canUseButton, roleLabel } from "./policy";
@@ -33,6 +33,8 @@ import type {
   SceneBinding,
   ScriptTemplate,
 } from "./types";
+import { toUiError } from "./errors";
+import { ErrorState as SharedErrorState, LoadingSkeleton, useToast } from "./ui";
 
 type AdminPath = string;
 
@@ -73,6 +75,9 @@ const MENU_GROUPS: MenuItem[] = [
       { id: "knowledge-document", label: "文档资料", path: "/knowledge/document", permission: "knowledge:document" },
       { id: "knowledge-base", label: "知识库", path: "/knowledge/base", permission: "knowledge:base" },
       { id: "knowledge-memory", label: "记忆库", path: "/knowledge/memory", permission: "knowledge:memory" },
+      { id: "knowledge-qa", label: "问答知识", path: "/knowledge/qa", permission: "knowledge:qa" },
+      { id: "knowledge-script", label: "官方话术", path: "/knowledge/script", permission: "knowledge:script" },
+      { id: "knowledge-package", label: "发布审核", path: "/knowledge/package", permission: "knowledge:publish" },
     ],
   },
   {
@@ -131,12 +136,14 @@ const PAGE_LABELS: Record<string, string> = {
 };
 
 const GROUP_LABELS: Record<string, string> = { event: "展会运营", lead: "展会运营", asset: "数字人中心", knowledge: "知识中心", interact: "交互管理", system: "系统管理" };
-const ADMIN_API_MODE = import.meta.env.VITE_ADMIN_API_MODE ?? "real";
+const ADMIN_API_MODE = import.meta.env?.VITE_ADMIN_API_MODE ?? "real";
+const BRAND_LOGO_SRC = "/brand-logo.png";
 
 function useAdminPath(): [AdminPath, (next: string) => void] {
-  const [path, setPath] = useState(() => window.location.pathname || "/dashboard");
+  const normalizedPath = () => { if (window.location.pathname === "/") window.history.replaceState({}, "", "/dashboard"); return window.location.pathname || "/dashboard"; };
+  const [path, setPath] = useState(normalizedPath);
   useEffect(() => {
-    const onPopState = () => setPath(window.location.pathname || "/dashboard");
+    const onPopState = () => setPath(normalizedPath());
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
   }, []);
@@ -169,7 +176,7 @@ function Icon({ name, className = "h-4 w-4" }: { name: string; className?: strin
 }
 
 function Logo() {
-  return <div className="flex items-center gap-3"><div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-950 text-cyan-300 shadow-sm"><Icon name="sparkle" /></div><div><p className="text-sm font-bold tracking-tight text-slate-950">四川博览集团数字人</p><p className="text-[11px] text-slate-500">项目运营管理后台</p></div></div>;
+  return <div className="flex items-center gap-3"><img src={BRAND_LOGO_SRC} alt="四川博览集团数字人 Logo" className="h-10 w-10 rounded-xl object-cover shadow-sm" /><div><p className="text-sm font-bold tracking-tight text-slate-950">四川博览集团数字人</p><p className="text-[11px] text-slate-500">项目运营管理后台</p></div></div>;
 }
 
 function Badge({ children, tone = "slate" }: { children: ReactNode; tone?: "slate" | "cyan" | "green" | "amber" | "rose" | "violet" }) {
@@ -228,14 +235,16 @@ function DashboardPage({ navigate }: { navigate: (path: string) => void }) {
       ]);
       setSnapshot({ data, exhibitions, venues, points, exhibitors, exhibits, schedules, documents, qa, scripts, packages });
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "首页统计数据加载失败");
+      setError(toUiError(caught).message);
     } finally {
       setRefreshing(false);
     }
   };
   useEffect(() => { void load(); }, []);
 
-  const data = snapshot?.data;
+  if (!snapshot) return <div className="p-6 xl:p-8">{error ? <SharedErrorState title="概览数据暂时不可用" description={error} onRetry={() => void load()} /> : <LoadingSkeleton rows={5} />}</div>;
+
+  const data = snapshot.data;
   const exhibitions = snapshot?.exhibitions ?? [];
   const venues = snapshot?.venues ?? [];
   const points = snapshot?.points ?? [];
@@ -265,8 +274,8 @@ function DashboardPage({ navigate }: { navigate: (path: string) => void }) {
     { label: "已结束", value: exhibitions.filter((item) => item.status === "teardown").length, tone: "violet" as const },
   ];
 
-  return <div className="p-6 xl:p-8"><PageHeader eyebrow="Management Analytics" title="运营分析" description="从展会运营、内容资产和发布状态三个维度掌握当前管理后台情况。" actions={<><Button variant="secondary" onClick={() => void load()} disabled={refreshing}>{refreshing ? "刷新中…" : "刷新数据"}</Button><Button onClick={() => navigate("/knowledge/base")}><Icon name="arrow" />处理待办</Button></>} />
-    {error ? <div className="mb-5 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-700">{error}</div> : null}
+  return <div className="p-6 xl:p-8"><PageHeader eyebrow="运营分析" title="运营分析" description="从展会运营、内容资产和发布状态三个维度掌握当前管理后台情况。" actions={<><Button variant="secondary" onClick={() => void load()} disabled={refreshing}>{refreshing ? "刷新中…" : "刷新数据"}</Button><Button onClick={() => navigate("/knowledge/base")}><Icon name="arrow" />处理待办</Button></>} />
+    {error ? <div className="mb-5 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-700" role="alert">{error}</div> : null}
     <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">{(data?.metrics ?? []).map((metric) => <Card key={metric.id} className="p-5"><div className="flex items-start justify-between"><span className="text-xs font-medium text-slate-500">{metric.label}</span><span className={`h-2.5 w-2.5 rounded-full ${metric.tone === "green" ? "bg-emerald-400" : metric.tone === "amber" ? "bg-amber-400" : metric.tone === "rose" ? "bg-rose-400" : metric.tone === "violet" ? "bg-violet-400" : "bg-cyan-400"}`} /></div><p className="mt-4 text-2xl font-semibold tracking-tight text-slate-950">{metric.value}</p><p className="mt-2 text-[11px] font-medium text-slate-400">{metric.trend}</p></Card>)}</div>
     <div className="mt-6 grid gap-6 xl:grid-cols-[1.25fr_0.75fr]"><Card className="!bg-slate-950 !text-white overflow-hidden"><div className="flex flex-wrap items-start justify-between gap-4 border-b border-white/10 px-5 py-5"><div><h2 className="mt-2 text-xl font-semibold">{currentExhibition?.name ?? "暂无运营中的展会"}</h2><p className="mt-1 text-xs text-slate-400">{currentExhibition ? `${currentExhibition.startDate} 至 ${currentExhibition.endDate} · ${currentExhibition.code}` : "请先在展会运营中配置并推进展会状态。"}</p></div><Badge tone={currentExhibition ? "green" : "amber"}>{currentExhibitionStatus}</Badge></div><div className="grid grid-cols-2 gap-4 p-5 sm:grid-cols-4"><div><p className="text-xs text-slate-400">运营展会</p><p className="mt-2 text-2xl font-semibold">{activeExhibitions}<span className="ml-1 text-sm font-normal text-slate-500">/ {exhibitions.length}</span></p></div><div><p className="text-xs text-slate-400">展商</p><p className="mt-2 text-2xl font-semibold">{exhibitors.length}</p></div><div><p className="text-xs text-slate-400">展品</p><p className="mt-2 text-2xl font-semibold">{exhibits.length}</p></div><div><p className="text-xs text-slate-400">活动排期</p><p className="mt-2 text-2xl font-semibold">{schedules.length}</p></div></div></Card><Card className="p-5"><div className="flex items-center justify-between"><div><h2 className="text-sm font-semibold text-slate-900">知识发布完成度</h2><p className="mt-1 text-xs text-slate-400">问答与发布包已发布占比</p></div><Badge tone={publishRate >= 80 ? "green" : publishRate >= 50 ? "amber" : "rose"}>{publishRate}%</Badge></div><div className="mt-5 flex items-center gap-5"><div className="relative flex h-28 w-28 shrink-0 items-center justify-center rounded-full" style={{ background: `conic-gradient(#0e9fba 0 ${publishRate}%, #e2e8f0 ${publishRate}% 100%)` }}><div className="flex h-20 w-20 flex-col items-center justify-center rounded-full bg-white"><span className="text-xl font-semibold text-slate-900">{publishRate}%</span><span className="text-[10px] text-slate-400">已发布</span></div></div><div className="min-w-0 flex-1 space-y-3 text-xs"><div className="flex items-center justify-between"><span className="text-slate-400">已发布内容</span><span className="font-semibold text-slate-800">{publishCompleted} / {publishTotal}</span></div><div className="flex items-center justify-between"><span className="text-slate-400">待审问答</span><span className="font-semibold text-amber-600">{pendingQa}</span></div><div className="flex items-center justify-between"><span className="text-slate-400">待审发布包</span><span className="font-semibold text-amber-600">{pendingPackages}</span></div></div></div></Card></div>
     <div className="mt-6 grid gap-6 xl:grid-cols-[1.1fr_0.9fr]"><Card className="p-5"><div className="flex items-center justify-between"><div><h2 className="text-sm font-semibold text-slate-900">运营资源结构</h2><p className="mt-1 text-xs text-slate-400">当前后台已建档资源数量</p></div><Badge tone="cyan">{exhibitorCoverage}% 展商有展品</Badge></div><div className="mt-6 space-y-5"><AnalysisBar label="展商" value={exhibitors.length} total={resourceMax} tone="cyan" /><AnalysisBar label="展品" value={exhibits.length} total={resourceMax} tone="violet" /><AnalysisBar label="场馆" value={venues.length} total={resourceMax} tone="green" /><AnalysisBar label="地图点位" value={points.length} total={resourceMax} tone="amber" /><AnalysisBar label="活动排期" value={schedules.length} total={resourceMax} tone="cyan" /></div></Card><Card className="p-5"><div className="flex items-center justify-between"><div><h2 className="text-sm font-semibold text-slate-900">展会状态分布</h2><p className="mt-1 text-xs text-slate-400">按当前生命周期统计</p></div><Badge tone="slate">{exhibitions.length} 个展会</Badge></div><div className="mt-6 space-y-5">{exhibitionStatuses.map((item) => <AnalysisBar key={item.label} label={item.label} value={item.value} total={Math.max(exhibitions.length, 1)} tone={item.tone} />)}</div><div className="mt-6 rounded-xl bg-slate-50 p-3 text-xs leading-5 text-slate-500">内容资料：{documents.length} 份文档 · {qa.length} 条问答 · {scripts.length} 套话术。{processingDocuments > 0 ? <span className="text-amber-700"> 当前有 {processingDocuments} 份文档仍在处理。</span> : null}</div></Card></div>
@@ -278,7 +287,7 @@ export function AvatarPage() {
   const [selected, setSelected] = useState("");
   const [loading, setLoading] = useState(true);
   useEffect(() => { void openTalkingClient.listAvatars().then((items) => { setAvatars(items); setSelected(items[0]?.id ?? ""); }).catch(() => setAvatars([])).finally(() => setLoading(false)); }, []);
-  return <div className="p-6 xl:p-8"><PageHeader eyebrow="Digital Human Center" title="数字人形象" description="管理可用于展会服务的数字人形象，并绑定 OpenTalking avatar_id。" actions={<Button variant="secondary"><Icon name="upload" />导入形象</Button>} />{loading ? <Card className="p-8"><EmptyState title="正在读取形象" description="正在从 OpenTalking 获取可用形象。" /></Card> : avatars.length === 0 ? <Card className="p-8"><EmptyState title="暂无可用形象" description="请先确认 OpenTalking 服务已启动，或从本地导入数字人形象。" /></Card> : <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">{avatars.map((avatar) => { const active = avatar.id === selected; return <Card key={avatar.id} className={`overflow-hidden transition ${active ? "border-cyan-400 ring-4 ring-cyan-50" : ""}`}><div className="relative h-52 bg-slate-100">{avatar.has_preview_video ? <video src={buildApiUrl(`/avatars/${encodeURIComponent(avatar.id)}/preview-video`)} className="h-full w-full object-cover" autoPlay muted loop playsInline preload="metadata" /> : <img src={openTalkingClient.previewUrl(avatar.id)} alt={avatar.name || avatar.id} className="h-full w-full object-cover" onError={(event) => { event.currentTarget.style.display = "none"; }} />}<div className="absolute left-3 top-3"><Badge tone={active ? "cyan" : "slate"}>{active ? "当前绑定" : avatar.is_custom ? "自定义" : "系统形象"}</Badge></div></div><div className="p-4"><div className="flex items-start justify-between gap-3"><div><h3 className="font-semibold text-slate-900">{avatar.name || avatar.id}</h3><p className="mt-1 text-xs text-slate-400">avatar_id：{avatar.id}</p></div><Badge tone="green">{avatar.model_type}</Badge></div><div className="mt-4 flex gap-2"><Button variant={active ? "primary" : "secondary"} onClick={() => setSelected(avatar.id)} className="flex-1">{active ? "已绑定" : "绑定形象"}</Button><Button variant="ghost">查看详情</Button></div></div></Card>; })}</div>}</div>;
+  return <div className="p-6 xl:p-8"><PageHeader eyebrow="Digital Human Center" title="数字人形象" description="管理可用于展会服务的数字人形象，并绑定 OpenTalking avatar_id。" actions={<Button variant="secondary"><Icon name="upload" />导入形象</Button>} />{loading ? <Card className="p-8"><EmptyState title="正在读取形象" description="正在从 OpenTalking 获取可用形象。" /></Card> : avatars.length === 0 ? <Card className="p-8"><EmptyState title="暂无可用形象" description="请先确认 OpenTalking 服务已启动，或从本地导入数字人形象。" /></Card> : <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">{avatars.map((avatar) => { const active = avatar.id === selected; return <Card key={avatar.id} className={`overflow-hidden transition ${active ? "border-cyan-400 ring-4 ring-cyan-50" : ""}`}><div className="relative flex h-52 items-center justify-center bg-slate-100 p-3">{avatar.has_preview_video ? <video src={buildApiUrl(`/avatars/${encodeURIComponent(avatar.id)}/preview-video`)} className="h-full w-full object-contain" autoPlay muted loop playsInline preload="metadata" /> : <img src={openTalkingClient.previewUrl(avatar.id)} alt={avatar.name || avatar.id} className="h-full w-full object-contain" onError={(event) => { event.currentTarget.style.display = "none"; }} />}<div className="absolute left-3 top-3"><Badge tone={active ? "cyan" : "slate"}>{active ? "当前绑定" : avatar.is_custom ? "自定义" : "系统形象"}</Badge></div></div><div className="p-4"><div className="flex items-start justify-between gap-3"><div><h3 className="font-semibold text-slate-900">{avatar.name || avatar.id}</h3><p className="mt-1 text-xs text-slate-400">avatar_id：{avatar.id}</p></div><Badge tone="green">{avatar.model_type}</Badge></div><div className="mt-4 flex gap-2"><Button variant={active ? "primary" : "secondary"} onClick={() => setSelected(avatar.id)} className="flex-1">{active ? "已绑定" : "绑定形象"}</Button><Button variant="ghost">查看详情</Button></div></div></Card>; })}</div>}</div>;
 }
 
 export function GifPage() {
@@ -369,8 +378,8 @@ function LoginScreen({ onLogin }: { onLogin: (username: string, password: string
   const [password, setPassword] = useState("Admin@123456");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const submit = async (event: FormEvent) => { event.preventDefault(); setLoading(true); setError(""); try { await onLogin(username, password); } catch (caught) { setError(caught instanceof Error ? caught.message : "登录失败"); } finally { setLoading(false); } };
-  return <div className="flex min-h-screen items-center justify-center bg-[#f3f7f9] px-5"><div className="grid w-full max-w-5xl overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-xl shadow-slate-200/70 lg:grid-cols-[1.1fr_0.9fr]"><div className="hidden bg-slate-950 p-12 text-white lg:block"><div className="flex h-full flex-col justify-between"><div><div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-cyan-500/15 text-cyan-300"><Icon name="sparkle" /></div><p className="mt-8 text-xs font-semibold uppercase tracking-[0.2em] text-cyan-300">四川博览集团数字人</p><h1 className="mt-3 max-w-md text-4xl font-semibold leading-tight">让每一次展会交互，都可运营、可追踪、可复用。</h1><p className="mt-5 max-w-md text-sm leading-7 text-slate-400">统一管理展会内容、数字人资产、知识发布与实时联调，让数字人服务真正进入运营闭环。</p></div><p className="text-xs text-slate-500">四川博览集团数字人项目 · Admin v0.1</p></div></div><form onSubmit={submit} className="p-8 sm:p-12"><Logo /><div className="mt-12"><p className="text-xs font-semibold uppercase tracking-[0.16em] text-cyan-600">Welcome back</p><h2 className="mt-2 text-2xl font-semibold text-slate-950">登录管理后台</h2><p className="mt-2 text-sm text-slate-500">使用运营账号进入项目管理工作区。</p></div><div className="mt-8 space-y-4"><label className="block text-xs font-semibold text-slate-600">用户名<input value={username} onChange={(event) => setUsername(event.target.value)} className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-cyan-400 focus:ring-4 focus:ring-cyan-50" /></label><label className="block text-xs font-semibold text-slate-600">密码<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-cyan-400 focus:ring-4 focus:ring-cyan-50" /></label>{error ? <p className="rounded-xl bg-rose-50 px-3 py-2 text-xs text-rose-600">{error}</p> : null}<Button type="submit" className="mt-2 w-full py-3" disabled={loading}>{loading ? "登录中…" : "进入管理后台"}<Icon name="arrow" /></Button></div><p className="mt-6 text-center text-xs text-slate-400">原型账号：admin / Admin@123456</p></form></div></div>;
+  const submit = async (event: FormEvent) => { event.preventDefault(); setLoading(true); setError(""); try { await onLogin(username, password); } catch (caught) { setError(toUiError(caught).message); } finally { setLoading(false); } };
+  return <div className="flex min-h-screen items-center justify-center bg-[#f3f7f9] px-5"><div className="grid w-full max-w-5xl overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-xl shadow-slate-200/70 lg:grid-cols-[1.1fr_0.9fr]"><div className="hidden bg-slate-950 p-12 text-white lg:block"><div className="flex h-full flex-col justify-between"><div><img src={BRAND_LOGO_SRC} alt="四川博览集团数字人 Logo" className="h-12 w-12 rounded-2xl object-cover" /><p className="mt-8 text-xs font-semibold uppercase tracking-[0.2em] text-cyan-300">四川博览集团数字人</p><h1 className="mt-3 max-w-md text-4xl font-semibold leading-tight">让每一次展会交互，都可运营、可追踪、可复用。</h1><p className="mt-5 max-w-md text-sm leading-7 text-slate-400">统一管理展会内容、数字人资产、知识发布与实时联调，让数字人服务真正进入运营闭环。</p></div><p className="text-xs text-slate-500">四川博览集团数字人项目 · 管理后台</p></div></div><form onSubmit={submit} className="p-8 sm:p-12"><Logo /><div className="mt-12"><p className="text-xs font-semibold uppercase tracking-[0.16em] text-cyan-600">管理后台</p><h2 className="mt-2 text-2xl font-semibold text-slate-950">登录管理后台</h2><p className="mt-2 text-sm text-slate-500">使用运营账号进入项目管理工作区。</p></div><div className="mt-8 space-y-4"><label className="block text-xs font-semibold text-slate-600">用户名<input value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-cyan-400 focus:ring-4 focus:ring-cyan-50" /></label><label className="block text-xs font-semibold text-slate-600">密码<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-cyan-400 focus:ring-4 focus:ring-cyan-50" /></label>{error ? <p className="rounded-xl bg-rose-50 px-3 py-2 text-xs text-rose-600" role="alert">{error}</p> : null}<Button type="submit" className="mt-2 w-full py-3" disabled={loading}>{loading ? "登录中…" : "进入管理后台"}<Icon name="arrow" /></Button></div></form></div></div>;
 }
 
 function hasVisibleMenuItem(user: AdminUser, item: MenuItem): boolean {
@@ -426,7 +435,7 @@ function Sidebar({ user, path, navigate, collapsed, onCollapse, mobileOpen, onCl
 
   return <aside aria-label="主菜单" className={`${collapsed ? "lg:w-[88px]" : "lg:w-[300px]"} fixed inset-y-0 left-0 z-50 flex w-[320px] shrink-0 -translate-x-full flex-col border-r border-slate-200 bg-white shadow-xl transition-all duration-200 lg:static lg:translate-x-0 lg:shadow-none ${mobileOpen ? "translate-x-0" : ""}`}>
     <div className="flex h-[84px] shrink-0 items-center justify-between border-b border-slate-100 px-6">
-      {collapsed ? <div className="mx-auto flex h-9 w-9 items-center justify-center rounded-xl bg-slate-950 text-cyan-300"><Icon name="sparkle" /></div> : <Logo />}
+      {collapsed ? <img src={BRAND_LOGO_SRC} alt="四川博览集团数字人 Logo" className="mx-auto h-9 w-9 rounded-xl object-cover" /> : <Logo />}
       <button type="button" onClick={onClose} aria-label="关闭菜单" className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700 lg:hidden"><span className="text-xl leading-none">×</span></button>
     </div>
     <div className="flex-1 overflow-y-auto px-4 py-5">
@@ -461,9 +470,11 @@ function NavButton({ item, path, navigate, collapsed, level }: { item: MenuItem;
   return <button type="button" disabled={disabled} onClick={() => item.path && navigate(item.path)} title={disabled ? `${item.label}（规划中）` : item.label} className={`group flex w-full items-center rounded-xl px-3 py-2.5 text-left text-sm font-semibold transition ${collapsed ? "justify-center" : `gap-3 ${level === 1 ? "pl-5" : "pl-4"}`} ${active ? "border-l-4 border-cyan-500 bg-cyan-50 text-cyan-700 shadow-sm" : disabled ? "cursor-not-allowed text-slate-300" : "border-l-4 border-transparent text-slate-600 hover:border-cyan-200 hover:bg-white hover:text-slate-900"}`}><span className={active ? "text-cyan-600" : "text-slate-400"}><Icon name={menuIconName(item.id)} className="h-5 w-5" /></span>{collapsed ? null : <><span className="flex-1">{item.label}</span>{disabled ? <span className="text-xs font-normal text-slate-300">Soon</span> : active ? <span className="h-2 w-2 rounded-full bg-cyan-500" /> : null}</>}</button>;
 }
 
-function MobileNav({ user, path, navigate }: { user: AdminUser; path: string; navigate: (path: string) => void }) { const links = flattenMenu(MENU_GROUPS).filter((item) => hasVisibleMenuItem(user, item)).slice(0, 6); return <div className="flex gap-1 overflow-x-auto border-b border-slate-200 bg-white px-3 py-2 lg:hidden">{links.map((item) => <button type="button" key={item.id} onClick={() => item.path && navigate(item.path)} className={`whitespace-nowrap rounded-lg px-3 py-2 text-xs font-semibold ${path === item.path ? "bg-cyan-50 text-cyan-700" : "text-slate-500"}`}>{item.label}</button>)}</div>; }
+function MobileNav({ user, path, navigate }: { user: AdminUser; path: string; navigate: (path: string) => void }) { const links = flattenMenu(MENU_GROUPS).filter((item) => hasVisibleMenuItem(user, item)); return <div className="flex gap-1 overflow-x-auto border-b border-slate-200 bg-white px-3 py-2 lg:hidden">{links.map((item) => <button type="button" key={item.id} onClick={() => item.path && navigate(item.path)} className={`whitespace-nowrap rounded-lg px-3 py-2 text-xs font-semibold ${path === item.path ? "bg-cyan-50 text-cyan-700" : "text-slate-500"}`}>{item.label}</button>)}</div>; }
 
 export function AdminApp() {
+  const { pushToast } = useToast();
+  const seenErrors = useRef(new Set<string>());
   const [path, navigate] = useAdminPath();
   const [user, setUser] = useState<AdminUser | null>(() => {
     try {
@@ -479,11 +490,19 @@ export function AdminApp() {
   const [mobileOpen, setMobileOpen] = useState(false);
   useEffect(() => { window.localStorage.setItem("opentalking-admin-sidebar-collapsed", String(collapsed)); }, [collapsed]);
   useEffect(() => {
-    const onAuthExpired = () => setUser(null);
+    const onAuthExpired = () => { setUser(null); pushToast("登录状态已失效，请重新登录", "error"); };
     window.addEventListener("opentalking-admin-auth-expired", onAuthExpired);
-    return () => window.removeEventListener("opentalking-admin-auth-expired", onAuthExpired);
-  }, []);
+    const report = (input: unknown) => { const uiError = toUiError(input); const key = `${uiError.code}:${uiError.message}`; if (seenErrors.current.has(key)) return; seenErrors.current.add(key); window.setTimeout(() => seenErrors.current.delete(key), 3000); pushToast(uiError.message, "error"); };
+    const onError = (event: ErrorEvent) => report(event.error || event.message);
+    const onRejection = (event: PromiseRejectionEvent) => { event.preventDefault(); report(event.reason); };
+    const onClientError = (event: Event) => report((event as CustomEvent).detail);
+    window.addEventListener("error", onError);
+    window.addEventListener("unhandledrejection", onRejection);
+    window.addEventListener("opentalking-admin-client-error", onClientError);
+    return () => { window.removeEventListener("opentalking-admin-auth-expired", onAuthExpired); window.removeEventListener("error", onError); window.removeEventListener("unhandledrejection", onRejection); window.removeEventListener("opentalking-admin-client-error", onClientError); };
+  }, [pushToast]);
   useEffect(() => { setMobileOpen(false); }, [path]);
+  useEffect(() => { if (user && path === "/") navigate("/dashboard"); }, [path, user]);
   const login = async (username: string, password: string) => { const result = await adminApi.login(username, password); setUser(result.user); window.localStorage.setItem("opentalking-admin-session", JSON.stringify(result)); navigate("/dashboard"); };
   const logout = () => { window.localStorage.removeItem("opentalking-admin-session"); setUser(null); };
   if (!user) return <LoginScreen onLogin={login} />;

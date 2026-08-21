@@ -112,7 +112,8 @@ import {
   TTS_PROVIDER_STORAGE_KEY,
 } from "./constants/ttsQwen";
 import type { ConnectionStatus, ExhibitionEntityCard, MemoryLibrary, Message, QueueInfo } from "./types";
-import { matchExhibitionEntities } from "./lib/exhibitionEntityMatch";
+import { matchExhibitionEntities, selectExhibitionEntity } from "./lib/exhibitionEntityMatch";
+import { readExhibitionEntityCache, writeExhibitionEntityCache } from "./lib/exhibitionCache";
 import { useAutoDismiss } from "./lib/useAutoDismiss";
 import { classifyRegistrationDecision, selectShoppingPresentationEntities } from "./lib/shoppingConversation";
 import { classifyContentClarification, classifyExplicitContentRequest } from "./lib/contentClarification";
@@ -142,6 +143,20 @@ type PendingContentClarification = {
   prompt: string;
   retryPrompt: string;
 };
+
+type PendingExhibitionFollowup =
+  | {
+      stage: "exhibitor_products" | "product_selection";
+      exhibitor: ExhibitionEntityCard;
+      products: ExhibitionEntityCard[];
+    };
+
+function ensureExhibitorContactPrompt(prompt: string, english: boolean): string {
+  const text = prompt.trim();
+  if (!text) return english ? "Would you like to register? The exhibitor will contact you later." : "您是否有意愿登记？登记后展商会主动联系您。";
+  if (english ? /contact/i.test(text) : /联系/.test(text)) return text;
+  return `${text}\n${english ? "After registration, the exhibitor will contact you." : "登记后展商会主动联系您。"}`;
+}
 
 export type ShoppingRegistrationCard = ShoppingRegistrationResult & {
   url: string;
@@ -832,6 +847,7 @@ function pickInitialModel(
 }
 
 const SERVER_AUDIO_RENDERERS = new Set(["flashtalk", "flashhead", "fasterliveportrait", "quicktalk", "musetalk", "wav2lip"]);
+const SUBTITLE_HOLD_MS = 6_000;
 
 function isFlashRenderer(model: string): boolean {
   return SERVER_AUDIO_RENDERERS.has(model);
@@ -950,9 +966,8 @@ export default function App() {
   const streamingAssistantMsgIdRef = useRef<string | null>(null);
   /** Local placeholder shown immediately after the user sends text, before worker SSE arrives. */
   const pendingAssistantMsgIdRef = useRef<string | null>(null);
-  /** 首帧已进入 WebRTC 后再叠字幕（与口型对齐）；旧版 Worker 无 speech.media_started 时用定时回退 */
-  const subtitleMediaReadyRef = useRef(false);
   const subtitleFallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const subtitleHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Data
   const [avatars, setAvatars] = useState<AvatarSummary[]>([]);
@@ -966,6 +981,7 @@ export default function App() {
   const [modelStatuses, setModelStatuses] = useState<ModelStatus[]>([]);
   const [avatarId, setAvatarId] = useState(() => readStoredAvatarId() ?? "singer");
   const [model, setModel] = useState("mock");
+  const modelRef = useRef(model);
   const [selectedPersonaId, setSelectedPersonaId] = useState<string>(() => {
     try {
       return window.localStorage.getItem(SELECTED_PERSONA_STORAGE_KEY) ?? "";
@@ -994,6 +1010,10 @@ export default function App() {
   const configuredExhibitionId = selectedExhibitionId || getConfiguredExhibitionId();
   const selectedExhibition = exhibitions.find((item) => item.id === selectedExhibitionId) ?? null;
 
+  useEffect(() => {
+    modelRef.current = model;
+  }, [model]);
+
   // Connection
   const [connection, setConnection] = useState<ConnectionStatus>("idle");
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -1014,12 +1034,16 @@ export default function App() {
   const [navigationResult, setNavigationResult] = useState<NavigationResult | null>(null);
   const [shoppingRegistration, setShoppingRegistration] = useState<ShoppingRegistrationCard | null>(null);
   const pendingShoppingRegistrationRef = useRef<PendingShoppingRegistration | null>(null);
+  const pendingExhibitionFollowupRef = useRef<PendingExhibitionFollowup | null>(null);
+  const [exhibitionFollowupStage, setExhibitionFollowupStage] = useState<PendingExhibitionFollowup["stage"] | null>(null);
   const pendingContentClarificationRef = useRef<PendingContentClarification | null>(null);
   const wakeAwakeUntilRef = useRef(0);
 
   useEffect(() => {
     wakeAwakeUntilRef.current = 0;
     pendingShoppingRegistrationRef.current = null;
+    pendingExhibitionFollowupRef.current = null;
+    setExhibitionFollowupStage(null);
     pendingContentClarificationRef.current = null;
     setShoppingRegistration(null);
   }, [configuredExhibitionId, sessionId]);
@@ -1052,11 +1076,29 @@ export default function App() {
   const clearSubtitleState = useCallback(() => {
     setCurrentSubtitle("");
     subtitleAccRef.current = "";
-    subtitleMediaReadyRef.current = false;
+    clearSubtitleFallbackTimer();
+    if (subtitleHideTimerRef.current !== null) {
+      clearTimeout(subtitleHideTimerRef.current);
+      subtitleHideTimerRef.current = null;
+    }
+    streamingAssistantMsgIdRef.current = null;
+    pendingAssistantMsgIdRef.current = null;
+    setIsSpeaking(false);
+  }, [clearSubtitleFallbackTimer]);
+
+  const finishSubtitleState = useCallback((finalText = "") => {
+    const normalizedFinalText = finalText.trim();
+    if (normalizedFinalText) setCurrentSubtitle(normalizedFinalText);
+    subtitleAccRef.current = "";
     clearSubtitleFallbackTimer();
     streamingAssistantMsgIdRef.current = null;
     pendingAssistantMsgIdRef.current = null;
     setIsSpeaking(false);
+    if (subtitleHideTimerRef.current !== null) clearTimeout(subtitleHideTimerRef.current);
+    subtitleHideTimerRef.current = window.setTimeout(() => {
+      subtitleHideTimerRef.current = null;
+      setCurrentSubtitle("");
+    }, SUBTITLE_HOLD_MS);
   }, [clearSubtitleFallbackTimer]);
 
   const appendAssistantError = useCallback((message: string) => {
@@ -2083,12 +2125,18 @@ export default function App() {
 
   useEffect(() => {
     if (!exhibitionConfirmed || !selectedExhibitionId) return;
+    let disposed = false;
     setExhibitionBindingsReady(false);
     setExhibitionEntities([]);
     setConnection("connecting");
     void (async () => {
       try {
-        const [av, mo, health, , initialRuntimeConfig, entityResponse] = await Promise.all([
+        const cachedEntities = await readExhibitionEntityCache(selectedExhibitionId);
+        if (!disposed && cachedEntities?.items.length) {
+          setExhibitionEntities(cachedEntities.items);
+        }
+        const entityRequest = listExhibitionEntities(selectedExhibitionId);
+        const [av, mo, health, , initialRuntimeConfig] = await Promise.all([
           apiGet<AvatarSummary[]>("/avatars"),
           apiGet<{ models: string[]; statuses?: ModelStatus[]; default_model?: string | null }>("/models"),
           apiGet<HealthResponse>("/health"),
@@ -2097,12 +2145,23 @@ export default function App() {
             console.warn("load runtime config during init failed", error);
             return null;
           }),
-          listExhibitionEntities(selectedExhibitionId),
         ]);
+        if (!cachedEntities?.items.length) {
+          const entityResponse = await entityRequest;
+          if (!disposed) setExhibitionEntities(entityResponse.items ?? []);
+          void writeExhibitionEntityCache(selectedExhibitionId, entityResponse.items ?? []);
+        } else {
+          void entityRequest.then((entityResponse) => {
+            if (!disposed) setExhibitionEntities(entityResponse.items ?? []);
+            void writeExhibitionEntityCache(selectedExhibitionId, entityResponse.items ?? []);
+          }).catch((error) => {
+            console.warn("refresh exhibition entity cache failed", error);
+          });
+        }
+        if (disposed) return;
         setRuntimeStatus(health);
         setAvatars(av);
         setModels(mo.models);
-        setExhibitionEntities(entityResponse.items ?? []);
         if (initialRuntimeConfig) {
           setRuntimeConfig(initialRuntimeConfig);
           syncRuntimeConfigSelection(initialRuntimeConfig);
@@ -2151,7 +2210,7 @@ export default function App() {
             );
           }
           const requestedModel = selectedExhibition?.bound_model?.trim() || pickInitialModel(
-            model,
+            modelRef.current,
             mo.models,
             statuses,
             initialAvatar,
@@ -2167,13 +2226,17 @@ export default function App() {
         setExhibitionBindingsReady(true);
         setConnection("idle");
       } catch (error) {
+        if (disposed) return;
         console.warn("load exhibition bindings failed", error);
         setExhibitionBindingsReady(false);
         setConnection("error");
         notify("会展绑定的数字人配置加载失败，请返回 Admin 检查形象和驱动模型。", "error");
       }
     })();
-  }, [exhibitionConfirmed, loadVoices, model, notify, selectedExhibition, selectedExhibitionId, syncRuntimeConfigSelection]);
+    return () => {
+      disposed = true;
+    };
+  }, [exhibitionConfirmed, loadVoices, notify, selectedExhibition, selectedExhibitionId, syncRuntimeConfigSelection]);
 
   // ---------- SSE ----------
   useEffect(() => {
@@ -2256,7 +2319,6 @@ export default function App() {
         });
       }
       if (ev === "speech.media_started") {
-        subtitleMediaReadyRef.current = true;
         clearSubtitleFallbackTimer();
         flushSubtitleDisplay();
         flushSubtitleMessage();
@@ -2265,10 +2327,10 @@ export default function App() {
         const t = (data as { text?: string }).text;
         if (!t) return;
         subtitleAccRef.current += t;
-        if (subtitleMediaReadyRef.current) {
-          flushSubtitleDisplay();
-          flushSubtitleMessage();
-        }
+        setIsSpeaking(true);
+        // 字幕片段到达即显示，避免等待可选的 speech.media_started 事件。
+        flushSubtitleDisplay();
+        flushSubtitleMessage();
       }
       if (ev === "speech.ended") {
         const d = data && typeof data === "object" ? (data as { text?: string }) : {};
@@ -2276,7 +2338,7 @@ export default function App() {
         const streamed = subtitleAccRef.current.trim();
         const finalText = fromEvent || streamed;
         const msgId = streamingAssistantMsgIdRef.current;
-        clearSubtitleState();
+        finishSubtitleState(finalText);
         if (msgId) {
           if (finalText) {
             setMessages((prev) => {
@@ -2304,7 +2366,7 @@ export default function App() {
       }
     });
     return stop;
-  }, [appendAssistantError, clearSubtitleFallbackTimer, clearSubtitleState, flushSubtitleDisplay, flushSubtitleMessage, notify, sessionId]);
+  }, [appendAssistantError, clearSubtitleFallbackTimer, clearSubtitleState, finishSubtitleState, flushSubtitleDisplay, flushSubtitleMessage, notify, sessionId]);
 
   // Resolves when FlashTalk slot is acquired (session.queued position=0)
   const slotAcquiredRef = useRef<(() => void) | null>(null);
@@ -2730,6 +2792,125 @@ export default function App() {
     const relatedEntities = matchExhibitionEntities(text, exhibitionEntities);
     const explicitContentRequest = classifyExplicitContentRequest(text);
 
+    const pendingExhibition = pendingExhibitionFollowupRef.current;
+    if (pendingExhibition) {
+      if (pendingExhibition.stage === "exhibitor_products") {
+        const decision = classifyRegistrationDecision(
+          text,
+          englishConversation ? ["yes", "sure", "show", "products", "okay"] : ["想了解", "想看", "要看", "好的", "可以", "好啊", "有兴趣"],
+          englishConversation ? ["no", "not now", "cancel", "no thanks"] : ["不想", "不用", "暂时不用", "不需要", "不要", "没有"],
+        );
+        if (decision === "confirm") {
+          if (!pendingExhibition.products.length) {
+            pendingExhibitionFollowupRef.current = null;
+            setExhibitionFollowupStage(null);
+            enqueueSpeech(
+              englishConversation ? "The exhibitor has not configured a product list yet. You can continue exploring other exhibitors." : "该展商暂未配置可展示的展品资料，您还可以继续了解其他展商。",
+              text,
+              [pendingExhibition.exhibitor],
+              true,
+            );
+            return;
+          }
+          pendingExhibitionFollowupRef.current = { ...pendingExhibition, stage: "product_selection" };
+          setExhibitionFollowupStage("product_selection");
+          enqueueSpeech(
+            englishConversation
+              ? `Here are the products from ${pendingExhibition.exhibitor.name}. Which one would you like to learn about?`
+              : `好的，下面是${pendingExhibition.exhibitor.name}的相关展品。您想了解哪一个？`,
+            text,
+            pendingExhibition.products,
+            true,
+          );
+          return;
+        }
+        if (decision === "decline") {
+          pendingExhibitionFollowupRef.current = null;
+          setExhibitionFollowupStage(null);
+          enqueueSpeech(
+            englishConversation ? "Okay, you can continue exploring the exhibition." : "好的，您还可以继续了解展会中的其他内容。",
+            text,
+            [pendingExhibition.exhibitor],
+            true,
+          );
+          return;
+        }
+        enqueueSpeech(
+          englishConversation
+            ? `Would you like to see the products from ${pendingExhibition.exhibitor.name}? Please answer yes or no.`
+            : `您还想了解${pendingExhibition.exhibitor.name}的相关展品吗？请回答“想了解”或“暂时不用”。`,
+          text,
+          [pendingExhibition.exhibitor],
+          true,
+        );
+        return;
+      }
+
+      const selectedProduct = selectExhibitionEntity(text, pendingExhibition.products);
+      if (!selectedProduct) {
+        enqueueSpeech(
+          englishConversation ? "Please tell me the product name or say first, second, or third." : "请说出展品名称，也可以说“第一个”“第二个”或“第三个”。",
+          text,
+          pendingExhibition.products,
+          true,
+        );
+        return;
+      }
+      pendingExhibitionFollowupRef.current = null;
+      setExhibitionFollowupStage(null);
+      try {
+        const shopping = await queryExhibitionShopping(configuredExhibitionId, {
+          text: selectedProduct.name,
+          session_id: sessionId,
+          language: conversationLanguage,
+        });
+        const introduction = selectedProduct.spoken_text?.trim()
+          || selectedProduct.description.trim()
+          || (englishConversation ? `Here is the introduction to ${selectedProduct.name}.` : `为您介绍${selectedProduct.name}。`);
+        if (shopping.matched && shopping.strategy_id) {
+          const registrationEntities = exhibitionEntities.filter((entity) =>
+            (shopping.related_entity_ids ?? shopping.exhibit_ids ?? []).includes(entity.id),
+          );
+          const presentedEntities = registrationEntities.some((entity) => entity.id === selectedProduct.id)
+            ? [selectedProduct]
+            : [selectedProduct, ...registrationEntities.filter((entity) => entity.id !== selectedProduct.id)];
+          pendingShoppingRegistrationRef.current = {
+            strategyId: shopping.strategy_id,
+            exhibitId: selectedProduct.id,
+            title: shopping.title?.trim() || (englishConversation ? "Exhibition registration" : "展品登记"),
+            retryPrompt: shopping.confirmation_retry_prompt?.trim() || (englishConversation ? "Please answer yes or no to registration." : "请回答是否愿意登记。"),
+            confirmKeywords: shopping.confirm_keywords?.length ? shopping.confirm_keywords : (englishConversation ? ["yes", "okay", "register", "agree"] : ["愿意", "需要", "好的", "可以", "同意", "登记"]),
+            declineKeywords: shopping.decline_keywords?.length ? shopping.decline_keywords : (englishConversation ? ["no", "not now", "cancel"] : ["不愿意", "不需要", "不用", "暂不", "取消", "不登记"]),
+            relatedEntities: presentedEntities,
+          };
+          setLastVoiceIntent("shopping");
+          setShoppingRegistration(null);
+          enqueueSpeech(
+            [introduction, ensureExhibitorContactPrompt(shopping.registration_prompt || "", englishConversation)].join("\n"),
+            text,
+            presentedEntities,
+            true,
+          );
+          return;
+        }
+        enqueueSpeech(
+          `${introduction}\n${englishConversation ? "This exhibit has not configured a registration form yet." : "如您有意愿登记，当前展品暂未配置登记表单，请联系现场工作人员。"}`,
+          text,
+          [selectedProduct],
+          true,
+        );
+      } catch (error) {
+        console.warn("selected exhibit shopping query failed", error);
+        enqueueSpeech(
+          `${selectedProduct.spoken_text?.trim() || selectedProduct.description.trim() || `为您介绍${selectedProduct.name}。`}\n${englishConversation ? "Would you like the exhibitor to contact you later?" : "您是否有意愿登记，后续由展商主动联系？"}`,
+          text,
+          [selectedProduct],
+          true,
+        );
+      }
+      return;
+    }
+
     const pendingShopping = pendingShoppingRegistrationRef.current;
     if (pendingShopping && explicitContentRequest !== "unknown") {
       pendingShoppingRegistrationRef.current = null;
@@ -2922,6 +3103,26 @@ export default function App() {
         || entity.kind === "exhibitor"
       ))
       : undefined;
+    const matchedExhibitor = relatedEntities.find((entity) => entity.kind === "exhibitor");
+    if (matchedExhibitor && (match.intent === "exhibition_content" || explicitContentRequest === "entity")) {
+      const products = exhibitionEntities.filter((entity) => (
+        entity.kind === "exhibit"
+        && (entity.parent_id === matchedExhibitor.id
+          || entity.details.some((detail) => detail.label === "展商" && detail.value === matchedExhibitor.name))
+      ));
+      pendingExhibitionFollowupRef.current = { stage: "exhibitor_products", exhibitor: matchedExhibitor, products };
+      setExhibitionFollowupStage("exhibitor_products");
+      const introduction = matchedExhibitor.spoken_text?.trim()
+        || matchedExhibitor.description.trim()
+        || (englishConversation ? `Here is the introduction to ${matchedExhibitor.name}.` : `为您介绍${matchedExhibitor.name}。`);
+      enqueueSpeech(
+        `${introduction}\n${englishConversation ? `Would you like to learn about the products from ${matchedExhibitor.name}?` : `您还想了解${matchedExhibitor.name}的相关展品吗？`}`,
+        text,
+        [matchedExhibitor],
+        true,
+      );
+      return;
+    }
     if (explicitIntroductionEntity && explicitIntroductionEntity.kind !== "exhibit") {
         const introductionText = explicitIntroductionEntity.spoken_text?.trim()
           || explicitIntroductionEntity.description.trim()
@@ -2943,7 +3144,10 @@ export default function App() {
         const entityIds = new Set(shopping.related_entity_ids ?? shopping.exhibit_ids ?? []);
         const shoppingEntities = exhibitionEntities.filter((entity) => entityIds.has(entity.id));
         const presentedShoppingEntities = selectShoppingPresentationEntities(explicitIntroductionEntity, shoppingEntities);
-        const registrationPrompt = shopping.registration_prompt?.trim() || (englishConversation ? "Would you like me to display the registration QR code?" : "需要为您弹出登记二维码吗？");
+        const registrationPrompt = ensureExhibitorContactPrompt(
+          shopping.registration_prompt || "",
+          englishConversation,
+        );
         pendingShoppingRegistrationRef.current = {
           strategyId: shopping.strategy_id,
           exhibitId: presentedShoppingEntities.length === 1 ? presentedShoppingEntities[0].id : undefined,
@@ -2955,8 +3159,10 @@ export default function App() {
         };
         setLastVoiceIntent("shopping");
         setShoppingRegistration(null);
-        const introduction = explicitIntroductionEntity?.spoken_text?.trim()
-          || explicitIntroductionEntity?.description.trim()
+        const introductionEntity = presentedShoppingEntities.find((entity) => entity.kind === "exhibit")
+          || explicitIntroductionEntity;
+        const introduction = introductionEntity?.spoken_text?.trim()
+          || introductionEntity?.description.trim()
           || shopping.spoken_text?.trim();
         enqueueSpeech([introduction, registrationPrompt].filter(Boolean).join("\n"), text, presentedShoppingEntities, true);
         return;
@@ -2967,6 +3173,18 @@ export default function App() {
 
     const introductionEntity = relatedEntities.find((entity) => entity.kind === "venue" || entity.kind === "point" || entity.kind === "exhibit" || entity.kind === "exhibitor");
     if (introductionEntity) {
+      if (introductionEntity.kind === "exhibitor") {
+        const products = exhibitionEntities.filter((entity) => (
+          entity.kind === "exhibit"
+          && (entity.parent_id === introductionEntity.id
+            || entity.details.some((detail) => detail.label === "展商" && detail.value === introductionEntity.name))
+        ));
+        pendingExhibitionFollowupRef.current = { stage: "exhibitor_products", exhibitor: introductionEntity, products };
+        setExhibitionFollowupStage("exhibitor_products");
+        const introduction = introductionEntity.spoken_text?.trim() || introductionEntity.description.trim() || `为您介绍${introductionEntity.name}。`;
+        enqueueSpeech(`${introduction}\n您还想了解${introductionEntity.name}的相关展品吗？`, text, [introductionEntity], true);
+        return;
+      }
       const introductionText = introductionEntity.spoken_text?.trim() || introductionEntity.description.trim();
       if (introductionText) {
         enqueueSpeech(introductionText, text, [introductionEntity], true);
@@ -3206,6 +3424,12 @@ export default function App() {
     setExhibitionBindingsReady(false);
     setExhibitionConfigNotice(null);
   }, []);
+
+  const conversationSuggestions = exhibitionFollowupStage === "exhibitor_products"
+    ? (englishConversation ? ["Yes, show products", "Not now"] : ["想了解相关展品", "暂时不用"])
+    : exhibitionFollowupStage === "product_selection"
+      ? (englishConversation ? ["First product", "Second product", "Third product"] : ["第一个", "第二个", "第三个"])
+      : undefined;
 
   const handleExhibitionConfirm = useCallback(() => {
     if (!selectedExhibition?.bound_avatar_id) {
@@ -3640,7 +3864,9 @@ export default function App() {
               : message
           )))}
           onAutoClosePresentation={handleAutoClosePresentation}
+          exhibitionProductList={exhibitionFollowupStage === "product_selection"}
           exhibitionConfigNotice={exhibitionConfigNotice}
+          suggestions={conversationSuggestions}
           language={conversationLanguage}
           onLanguageChange={setConversationLanguage}
           onNotify={notify}

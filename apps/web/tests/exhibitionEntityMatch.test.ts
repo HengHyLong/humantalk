@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { matchExhibitionEntities } from "../src/lib/exhibitionEntityMatch";
+import { matchExhibitionEntities, selectExhibitionEntity } from "../src/lib/exhibitionEntityMatch";
 import type { ExhibitionEntityCard } from "../src/types";
 
 const entity: ExhibitionEntityCard = {
@@ -63,4 +63,15 @@ test("entity matcher recognizes a specific leading part of the official name", (
   };
 
   assert.equal(matchExhibitionEntities("介绍协作机器人", [terminal, workstation])[0]?.id, workstation.id);
+});
+
+test("entity selector supports ordinal product choices after an exhibitor list is shown", () => {
+  const products = [
+    { ...entity, id: "product-1", name: "智能终端" },
+    { ...entity, id: "product-2", name: "协作机械臂" },
+    { ...entity, id: "product-3", name: "巡检机器人" },
+  ];
+
+  assert.equal(selectExhibitionEntity("第二个", products)?.id, "product-2");
+  assert.equal(selectExhibitionEntity("我想了解巡检机器人", products)?.id, "product-3");
 });

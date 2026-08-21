@@ -265,7 +265,7 @@ export function AvatarSelectionStage({
                       <div className="aspect-[4/3] bg-slate-100">
                         <AvatarPreviewImage
                           avatar={avatar}
-                          className="h-full w-full object-cover transition duration-200 group-hover:scale-[1.02]"
+                          className="h-full w-full object-contain transition duration-200 group-hover:scale-[1.02]"
                         />
                       </div>
                       <div className="px-3 py-2">
@@ -437,7 +437,7 @@ export function AvatarSelectionStage({
               >
                 <span className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-white text-2xl font-light text-cyan-700">
                     {customPreviewUrl ? (
-                    isVideoFile(customFile) ? <video src={customPreviewUrl} muted loop autoPlay playsInline className="h-full w-full object-cover" /> : <img src={customPreviewUrl} alt="" className="h-full w-full object-cover" />
+                    isVideoFile(customFile) ? <video src={customPreviewUrl} muted loop autoPlay playsInline className="h-full w-full object-contain" /> : <img src={customPreviewUrl} alt="" className="h-full w-full object-contain" />
                   ) : (
                     "+"
                   )}

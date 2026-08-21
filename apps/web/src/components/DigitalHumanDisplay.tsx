@@ -14,6 +14,8 @@ import type { TtsProviderExtended } from "../constants/ttsBailian";
 import type { ConnectionStatus, Message } from "../types";
 import { ChatInput } from "./ChatInput";
 import { ExhibitionEntityCard } from "./ExhibitionEntityCard";
+import { ExhibitionProductList } from "./ExhibitionProductList";
+import { LiveSubtitle } from "./LiveSubtitle";
 import { SceneStage } from "./SceneStage";
 
 const PRESENTATION_AUTO_CLOSE_MS = 90_000;
@@ -58,8 +60,10 @@ type DigitalHumanDisplayProps = {
   onCloseShoppingRegistration?: () => void;
   onCloseEntity?: (entityId: string) => void;
   onAutoClosePresentation?: () => void;
+  exhibitionProductList?: boolean;
   voiceIntent?: VoiceIntent | null;
   exhibitionConfigNotice?: string | null;
+  suggestions?: string[];
   language: ConversationLanguage;
   onLanguageChange: (language: ConversationLanguage) => void;
 };
@@ -100,8 +104,10 @@ export function DigitalHumanDisplay({
   onCloseShoppingRegistration,
   onCloseEntity,
   onAutoClosePresentation,
+  exhibitionProductList = false,
   voiceIntent = null,
   exhibitionConfigNotice = null,
+  suggestions: suggestionItems,
   language,
   onLanguageChange,
 }: DigitalHumanDisplayProps) {
@@ -118,7 +124,7 @@ export function DigitalHumanDisplay({
   const live = connection === "live" || connection === "expiring";
   const busy = connection === "connecting" || connection === "queued";
   const english = isEnglishConversation(language);
-  const suggestions = english ? ["Venue navigation", "Book a meeting", "Conference services", "About the exhibition"] : ["展馆导航", "预约洽谈", "会议服务", "关于展览"];
+  const suggestions = suggestionItems ?? (english ? ["Venue navigation", "Book a meeting", "Conference services", "About the exhibition"] : ["展馆导航", "预约洽谈", "会议服务", "关于展览"]);
   const displaySubtitle = subtitle?.trim() || (messages.length === 0 ? (english ? "You can ask me the following questions" : "你可以问我以下问题哦") : "");
   const latestVisibleMessage = messages[messages.length - 1];
   const presentationMessages = selectCurrentEntityPresentation(messages);
@@ -134,6 +140,10 @@ export function DigitalHumanDisplay({
       : visibleEntityPresentationKey
         ? `entities:${visibleEntityPresentationKey}`
         : "";
+  const presentationActive = Boolean(presentationKey);
+  const presentationDialogVisible = true;
+  const chatPanelHidden = presentationActive || !conversationVisible;
+  const subtitleActive = Boolean(subtitle?.trim());
   const showLiveSubtitle = Boolean(
     subtitle?.trim()
       && !(latestVisibleMessage?.role === "assistant" && latestVisibleMessage.text.trim() === subtitle.trim()),
@@ -268,8 +278,12 @@ export function DigitalHumanDisplay({
             ))}
           </aside>
 
-          <section className={`digital-display-chat-panel ${conversationVisible ? "" : "is-conversation-hidden"}`} aria-label={english ? "Live conversation" : "实时对话"}>
-            {!conversationVisible ? (
+          <section
+            className={`digital-display-chat-panel ${chatPanelHidden ? "is-conversation-hidden" : ""} ${presentationActive ? "is-presentation-hidden" : ""} ${subtitleActive ? "is-subtitle-active" : ""}`}
+            data-prompt={english ? "Ask another question" : "继续提问"}
+            aria-label={english ? "Live conversation" : "实时对话"}
+          >
+            {!conversationVisible && !presentationActive ? (
               <button type="button" className="digital-display-chat-reveal" onClick={revealConversation}>
                 {english ? "Show conversation" : "查看历史对话"}
               </button>
@@ -384,7 +398,8 @@ export function DigitalHumanDisplay({
               ))}
             </div>
 
-            <div className="digital-display-chat-input">
+            {!subtitleActive ? (
+            <div className="digital-display-chat-input" data-prompt={english ? "Ask another question" : "继续提问"}>
               {inputMode === "voice" ? (
                 <ChatInput
                   compact
@@ -433,13 +448,18 @@ export function DigitalHumanDisplay({
                 {inputMode === "voice" ? (english ? "Keyboard" : "键盘输入") : (english ? "Voice" : "语音输入")}
               </button>
             </div>
+            ) : null}
           </section>
 
-          {shoppingRegistration || navigationResult || presentationMessages.some((message) => message.relatedEntities?.length) ? (
-            <section
-              className={`digital-display-waist-panel ${shoppingRegistration ? "is-registration" : ""}`}
-              aria-label={shoppingRegistration ? (english ? "Registration QR code" : "登记二维码") : (english ? "Exhibition content" : "展会内容展示")}
-            >
+          {presentationActive ? (
+            <div className={`digital-display-presentation-stack ${shoppingRegistration ? "is-registration" : ""}`}>
+              <LiveSubtitle text={subtitle ?? ""} english={english} />
+              {shoppingRegistration || navigationResult || presentationMessages.some((message) => message.relatedEntities?.length) ? (
+                <section
+                  className={`digital-display-waist-panel ${shoppingRegistration ? "is-registration" : ""} ${presentationDialogVisible ? "" : "is-dialog-hidden"}`}
+                  aria-hidden={!presentationDialogVisible}
+                  aria-label={shoppingRegistration ? (english ? "Registration QR code" : "登记二维码") : (english ? "Exhibition content" : "展会内容展示")}
+                >
               {shoppingRegistration ? (
                 <article className="digital-display-registration-card" role="dialog" aria-modal="true" aria-label={english ? "Registration QR code" : "登记二维码"}>
                   <button type="button" onClick={onCloseShoppingRegistration} aria-label={english ? "Close registration QR code" : "关闭登记二维码"}>×</button>
@@ -496,8 +516,19 @@ export function DigitalHumanDisplay({
                   </div>
                 </article>
               ) : null}
-              {!shoppingRegistration && !navigationResult ? presentationMessages.flatMap((message) =>
-                (message.relatedEntities ?? []).map((entity) => (
+              {!shoppingRegistration && !navigationResult ? presentationMessages.flatMap((message) => {
+                const entities = message.relatedEntities ?? [];
+                if (exhibitionProductList && entities.length) {
+                  return [
+                    <ExhibitionProductList
+                      key={`${message.id}-product-list`}
+                      products={entities}
+                      immersive
+                      english={english}
+                    />,
+                  ];
+                }
+                return entities.map((entity) => (
                   <ExhibitionEntityCard
                     key={`${message.id}-${entity.kind}-${entity.id}`}
                     entity={entity}
@@ -505,9 +536,11 @@ export function DigitalHumanDisplay({
                     onClose={onCloseEntity ? () => onCloseEntity(entity.id) : undefined}
                     closeLabel={english ? `Close ${entity.name}` : `关闭${entity.name}介绍`}
                   />
-                )),
+                ));
+              }) : null}
+                </section>
               ) : null}
-            </section>
+            </div>
           ) : null}
 
           {!live && !busy ? (

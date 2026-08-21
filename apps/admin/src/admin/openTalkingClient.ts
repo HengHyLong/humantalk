@@ -43,7 +43,10 @@ export type OpenTalkingClient = {
 };
 
 export const openTalkingClient: OpenTalkingClient = {
-  listAvatars: () => apiGet<AvatarSummary[]>("/avatars"),
+  listAvatars: () => apiGet<AvatarSummary[] | { items?: AvatarSummary[]; avatars?: AvatarSummary[] }>("/avatars").then((response) => {
+    if (Array.isArray(response)) return response;
+    return response.items ?? response.avatars ?? [];
+  }),
   listModels: () => apiGet<{ models?: string[]; default_model?: string | null }>("/models").then((response) => ({
     models: response.models ?? [],
     defaultModel: response.default_model ?? null,

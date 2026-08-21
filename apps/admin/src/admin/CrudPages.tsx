@@ -1,7 +1,9 @@
-import { useEffect, useState, type MouseEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { ApiError, apiGet, buildApiUrl, type AvatarSummary, type SceneBackgroundAsset, type SceneComposition } from "../lib/api";
 import { DEFAULT_VOICES, adminApi } from "./api";
+import { toUiError } from "./errors";
 import { openTalkingClient } from "./openTalkingClient";
+import { EmptyState, ErrorState, LoadingSkeleton } from "./ui";
 import type { GifAssetMeta, IdleContent, KnowledgeDocument, KnowledgeQa, MissPoolItem, PublishPackage, ScriptTemplate, VoiceAsset } from "./types";
 
 type Tone = "slate" | "cyan" | "green" | "amber" | "rose" | "violet";
@@ -25,9 +27,14 @@ export function Card({ children, className = "" }: { children: ReactNode; classN
 
 export function Header({ eyebrow, title, description, action }: { eyebrow: string; title: string; description: string; action?: ReactNode }) { return <div className="mb-5 flex flex-wrap items-end justify-between gap-4"><div><p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-cyan-600">{eyebrow}</p><h1 className="mt-1 text-2xl font-semibold tracking-tight text-slate-950">{title}</h1><p className="mt-1 text-sm text-slate-500">{description}</p></div>{action ? <div>{action}</div> : null}</div>; }
 
-export function Modal({ title, children, onClose, onSave, saveLabel = "保存" }: { title: string; children: ReactNode; onClose: () => void; onSave?: () => void; saveLabel?: string }) { return <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/30 p-4 backdrop-blur-sm"><Card className="max-h-[90vh] w-full max-w-xl overflow-auto p-6"><div className="flex items-center justify-between gap-3"><h2 className="text-lg font-semibold text-slate-950">{title}</h2><button type="button" onClick={onClose} className="text-2xl leading-none text-slate-300 hover:text-slate-600">×</button></div><div className="mt-5">{children}</div>{onSave ? <div className="mt-6 flex justify-end gap-2"><Button variant="secondary" onClick={onClose}>取消</Button><Button onClick={onSave}>{saveLabel}</Button></div> : null}</Card></div>; }
+export function Modal({ title, children, onClose, onSave, saveLabel = "保存", saving = false, error = "" }: { title: string; children: ReactNode; onClose: () => void; onSave?: () => void; saveLabel?: string; saving?: boolean; error?: string }) {
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { const previous = document.activeElement as HTMLElement | null; dialogRef.current?.focus(); const onKey = (event: KeyboardEvent) => { if (event.key === "Escape" && !saving) onClose(); }; window.addEventListener("keydown", onKey); return () => { window.removeEventListener("keydown", onKey); previous?.focus?.(); }; }, [onClose, saving]);
+  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/30 p-4 backdrop-blur-sm" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) onClose(); }}><div ref={dialogRef} tabIndex={-1} className="max-h-[90vh] w-full max-w-xl overflow-auto rounded-2xl border border-slate-200 bg-white p-6 shadow-xl outline-none" role="dialog" aria-modal="true" aria-labelledby="admin-modal-title"><div className="flex items-center justify-between gap-3"><h2 id="admin-modal-title" className="text-lg font-semibold text-slate-950">{title}</h2><button ref={closeRef} type="button" onClick={onClose} disabled={saving} aria-label="关闭弹窗" className="rounded-lg px-2 text-2xl leading-none text-slate-300 hover:bg-slate-100 hover:text-slate-600 disabled:opacity-40">×</button></div><div className="mt-5">{children}</div>{error ? <p className="mt-4 rounded-xl bg-rose-50 px-3 py-2 text-xs leading-5 text-rose-700" role="alert">{error}</p> : null}{onSave ? <div className="mt-6 flex justify-end gap-2"><Button variant="secondary" onClick={onClose} disabled={saving}>取消</Button><Button onClick={onSave} disabled={saving}>{saving ? "保存中…" : saveLabel}</Button></div> : null}</div></div>;
+}
 
-export function Field({ label, value, onChange, placeholder, textarea = false }: { label: string; value: string; onChange: (value: string) => void; placeholder?: string; textarea?: boolean }) { return <label className="block text-xs font-semibold text-slate-600">{label}{textarea ? <textarea rows={5} value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} className="mt-2 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm font-normal text-slate-800 outline-none focus:border-cyan-400" /> : <input value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} className="mt-2 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm font-normal text-slate-800 outline-none focus:border-cyan-400" />}</label>; }
+export function Field({ label, value, onChange, placeholder, textarea = false, error = "", required = false }: { label: string; value: string; onChange: (value: string) => void; placeholder?: string; textarea?: boolean; error?: string; required?: boolean }) { const fieldId = `field-${label}`; return <label htmlFor={fieldId} className="block text-xs font-semibold text-slate-600">{label}{required ? <span className="ml-1 text-rose-500" aria-hidden="true">*</span> : null}{textarea ? <textarea id={fieldId} rows={5} value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} aria-invalid={Boolean(error)} aria-describedby={error ? `${fieldId}-error` : undefined} className={`mt-2 w-full rounded-xl border px-3 py-2.5 text-sm font-normal text-slate-800 outline-none focus:border-cyan-400 ${error ? "border-rose-300" : "border-slate-200"}`} /> : <input id={fieldId} value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} aria-invalid={Boolean(error)} aria-describedby={error ? `${fieldId}-error` : undefined} className={`mt-2 w-full rounded-xl border px-3 py-2.5 text-sm font-normal text-slate-800 outline-none focus:border-cyan-400 ${error ? "border-rose-300" : "border-slate-200"}`} />}{error ? <span id={`${fieldId}-error`} className="mt-1 block text-[11px] font-normal text-rose-600">{error}</span> : null}</label>; }
 
 export function Detail({ title, rows, onClose }: { title: string; rows: Array<[string, ReactNode]>; onClose: () => void }) { return <Modal title={title} onClose={onClose}><dl className="divide-y divide-slate-100 rounded-xl border border-slate-200">{rows.map(([label, value]) => <div key={label} className="grid grid-cols-[120px_1fr] gap-3 px-4 py-3 text-xs"><dt className="text-slate-400">{label}</dt><dd className="break-words text-slate-700">{value}</dd></div>)}</dl></Modal>; }
 
@@ -56,19 +63,26 @@ function customAvatarFileError(file: File): string | null {
 }
 
 function AvatarCardPreview({ avatar }: { avatar: AvatarSummary }) {
+  const [failed, setFailed] = useState(false);
+  useEffect(() => setFailed(false), [avatar.id, avatar.has_preview_video]);
+  if (failed) {
+    return <div className="flex h-full w-full flex-col items-center justify-center bg-gradient-to-br from-slate-100 via-white to-cyan-50 p-4 text-center" role="img" aria-label={`${avatar.name || avatar.id}预览不可用`}><div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white text-2xl text-cyan-500 shadow-sm">✦</div><p className="mt-3 text-xs font-semibold text-slate-600">预览暂不可用</p><p className="mt-1 max-w-[14rem] truncate text-[11px] text-slate-400">{avatar.name || avatar.id}</p></div>;
+  }
+  const onPreviewError = () => setFailed(true);
   return avatar.has_preview_video ? (
     <video
       src={buildApiUrl(`/avatars/${encodeURIComponent(avatar.id)}/preview-video`)}
-      className="h-full w-full object-cover"
+      className="h-full w-full object-contain"
       autoPlay
       muted
       loop
       playsInline
       preload="metadata"
-      onError={(event) => { event.currentTarget.style.display = "none"; }}
+      aria-label={avatar.name || avatar.id}
+      onError={onPreviewError}
     />
   ) : (
-    <img src={openTalkingClient.previewUrl(avatar.id)} alt={avatar.name || avatar.id} className="h-full w-full object-cover" onError={(event) => { event.currentTarget.style.display = "none"; }} />
+    <img src={openTalkingClient.previewUrl(avatar.id)} alt={avatar.name || avatar.id} className="h-full w-full object-contain" onError={onPreviewError} />
   );
 }
 
@@ -88,20 +102,39 @@ export function EnhancedAvatarPage({ onDebug }: { onDebug?: (avatarId: string) =
   const [avatars, setAvatars] = useState<AvatarSummary[]>([]);
   const [models, setModels] = useState<string[]>([]);
   const [selected, setSelected] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const [form, setForm] = useState<{ file: File | null; waitingGif: File | null; speakingGif: File | null; name: string; baseAvatarId: string; model: string; removeBackground: boolean }>({ file: null, waitingGif: null, speakingGif: null, name: "", baseAvatarId: "", model: "", removeBackground: false });
   const [error, setError] = useState("");
   const avatarPagination = usePagination(avatars);
-  const reload = () => void Promise.all([openTalkingClient.listAvatars(), openTalkingClient.listModels()]).then(([items, modelResponse]) => {
-    setAvatars(items);
-    setModels(Array.from(new Set([...modelResponse.models, "gif"])));
-    setSelected((current) => current || items[0]?.id || "");
-    setForm((current) => ({
-      ...current,
-      // OpenTalking 现行接口仍需要模板 avatar_id；这里自动使用系统形象，运营人员无需选择。
-      baseAvatarId: current.baseAvatarId || items.find((avatar) => !avatar.is_custom)?.id || "",
-      model: current.model || modelResponse.defaultModel || modelResponse.models[0] || "",
-    }));
-  }).catch((requestError) => setError(requestError instanceof ApiError ? requestError.message : "无法读取真实后端的形象和模型列表，请检查服务状态。"));
+  const reload = useCallback(() => {
+    setLoading(true);
+    setLoadError("");
+    void Promise.allSettled([openTalkingClient.listAvatars(), openTalkingClient.listModels()]).then(([avatarResult, modelResult]) => {
+      if (avatarResult.status === "rejected") {
+        throw avatarResult.reason;
+      }
+      const items = avatarResult.value;
+      setAvatars(items);
+      if (modelResult.status === "fulfilled") {
+        const modelResponse = modelResult.value;
+        setModels(Array.from(new Set([...modelResponse.models, "gif"])));
+        setForm((current) => ({
+          ...current,
+          model: current.model || modelResponse.defaultModel || modelResponse.models[0] || "",
+        }));
+      } else {
+        setModels([]);
+        setError(toUiError(modelResult.reason).message);
+      }
+      setSelected((current) => current || items[0]?.id || "");
+      setForm((current) => ({
+        ...current,
+        // OpenTalking 现行接口仍需要模板 avatar_id；这里自动使用系统形象，运营人员无需选择。
+        baseAvatarId: current.baseAvatarId || items.find((avatar) => !avatar.is_custom)?.id || "",
+      }));
+    }).catch((requestError) => setLoadError(toUiError(requestError).message)).finally(() => setLoading(false));
+  }, []);
   useEffect(reload, []);
   const add = async () => {
     if (!form.name.trim()) {
@@ -158,7 +191,8 @@ export function EnhancedAvatarPage({ onDebug }: { onDebug?: (avatarId: string) =
       setError("删除失败：系统形象不可删除，或后端未允许删除该自定义形象。");
     }
   };
-  return <div className="p-6 xl:p-8"><Header eyebrow="数字人中心 / 真实后端" title="数字人形象" description="从 OpenTalking 读取形象和模型；新增时自动使用系统模板，支持图片或视频源文件。GIF 类型需要同时上传等待聆听和张嘴讲话两张动图。" action={<Button onClick={() => setForm((current) => ({ ...current, name: current.name || "新数字人", baseAvatarId: current.baseAvatarId || avatars.find((avatar) => !avatar.is_custom)?.id || "", model: current.model || models[0] || "" }))}>+ 导入形象</Button>} />{error ? <p className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-700">{error}</p> : null}{form.name ? <Modal title="导入数字人形象" onClose={() => { setForm((current) => ({ ...current, file: null, waitingGif: null, speakingGif: null, name: "", removeBackground: false })); setError(""); }} onSave={() => void add()} saveLabel="上传并创建"><Field label="形象名称" value={form.name} onChange={(value) => setForm({ ...form, name: value })} placeholder="例如：古装美女" /><label className="mt-4 block text-xs font-semibold text-slate-600">模型<select value={form.model} onChange={(event) => setForm({ ...form, model: event.target.value })} className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-normal"><option value="">使用后端默认模型</option>{models.map((model) => <option key={model} value={model}>{model === "gif" ? "gif（等待聆听 + 张嘴讲话）" : model}</option>)}</select></label>{form.model === "gif" ? <div className="mt-4 space-y-3"><p className="rounded-xl bg-violet-50 px-4 py-3 text-xs leading-5 text-violet-700">GIF 形象由两张动图组成，系统会在聆听和讲话状态之间切换。每张文件限制 20MB。</p><p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-700">当前远程 OpenTalking 尚未在 /models 注册 gif；前端已按 waiting_gif / speaking_gif 字段准备提交，后端扩展后即可正式落库。</p><label className="block rounded-xl border border-dashed border-violet-300 bg-violet-50 p-5 text-center text-xs text-violet-700">上传等待聆听动图<input type="file" accept=".gif,image/gif" className="sr-only" onChange={(event) => setForm({ ...form, waitingGif: event.target.files?.[0] ?? null })} />{form.waitingGif ? <p className="mt-2 font-semibold">{form.waitingGif.name}</p> : null}</label><label className="block rounded-xl border border-dashed border-violet-300 bg-violet-50 p-5 text-center text-xs text-violet-700">上传张嘴讲话动图<input type="file" accept=".gif,image/gif" className="sr-only" onChange={(event) => setForm({ ...form, speakingGif: event.target.files?.[0] ?? null })} />{form.speakingGif ? <p className="mt-2 font-semibold">{form.speakingGif.name}</p> : null}</label></div> : <div className="mt-4"><label className="block rounded-xl border border-dashed border-cyan-300 bg-cyan-50 p-5 text-center text-xs text-cyan-700">选择图片或视频（图片 ≤ 10MB，视频 ≤ 200MB）<input type="file" accept="image/jpeg,image/png,image/webp,video/mp4,video/webm,video/quicktime,video/x-msvideo,.mov,.avi" className="sr-only" onChange={(event) => setForm({ ...form, file: event.target.files?.[0] ?? null })} />{form.file ? <p className="mt-2 font-semibold">{form.file.name}{isCustomAvatarVideo(form.file) ? " · 视频源" : " · 图片源"}</p> : null}</label><label className={`mt-4 flex items-center gap-2 text-xs font-semibold text-slate-600 ${isCustomAvatarVideo(form.file) ? "opacity-50" : ""}`}><input type="checkbox" checked={form.removeBackground} disabled={isCustomAvatarVideo(form.file)} onChange={(event) => setForm({ ...form, removeBackground: event.target.checked })} className="h-4 w-4 rounded border-slate-300 text-cyan-600" />上传时抠除背景（视频源不支持）</label></div>}</Modal> : null}<div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">{avatarPagination.pageItems.map((avatar) => <Card key={avatar.id} className={`overflow-hidden ${selected === avatar.id ? "border-cyan-400 ring-4 ring-cyan-50" : ""}`}><div className="relative flex h-64 items-center justify-center bg-slate-100 p-3"><AvatarCardPreview avatar={avatar} /><div className="absolute left-3 top-3"><Badge tone={selected === avatar.id ? "cyan" : "slate"}>{selected === avatar.id ? "当前绑定" : avatar.is_custom ? "自定义" : "系统形象"}</Badge></div></div><div className="p-4"><div className="flex items-start justify-between gap-2"><div><h3 className="font-semibold text-slate-900">{avatar.name || avatar.id}</h3><p className="mt-1 text-xs text-slate-400">{avatar.id}</p></div><Badge tone="green">{avatar.model_type}</Badge></div><div className="mt-4 flex gap-2"><Button variant={selected === avatar.id ? "primary" : "secondary"} onClick={() => setSelected(avatar.id)} className="flex-1">{selected === avatar.id ? "已绑定" : "绑定"}</Button><Button variant="ghost" onClick={() => onDebug?.(avatar.id)}>直接调试</Button>{avatar.is_custom ? <Button variant="danger" onClick={() => void remove(avatar)}>删除</Button> : null}</div></div></Card>)}</div><Pagination page={avatarPagination.page} pageCount={avatarPagination.pageCount} total={avatars.length} onChange={avatarPagination.setPage} /></div>;
+  const importModal = form.name ? <Modal title="导入数字人形象" onClose={() => { setForm((current) => ({ ...current, file: null, waitingGif: null, speakingGif: null, name: "", removeBackground: false })); setError(""); }} onSave={() => void add()} saveLabel="上传并创建"><Field label="形象名称" value={form.name} onChange={(value) => setForm({ ...form, name: value })} placeholder="例如：古装美女" /><label className="mt-4 block text-xs font-semibold text-slate-600">模型<select value={form.model} onChange={(event) => setForm({ ...form, model: event.target.value })} className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-normal"><option value="">使用后端默认模型</option>{models.map((model) => <option key={model} value={model}>{model === "gif" ? "gif（等待聆听 + 张嘴讲话）" : model}</option>)}</select></label>{form.model === "gif" ? <div className="mt-4 space-y-3"><p className="rounded-xl bg-violet-50 px-4 py-3 text-xs leading-5 text-violet-700">GIF 形象由两张动图组成，系统会在聆听和讲话状态之间切换。每张文件限制 20MB。</p><label className="block rounded-xl border border-dashed border-violet-300 bg-violet-50 p-5 text-center text-xs text-violet-700">上传等待聆听动图<input type="file" accept=".gif,image/gif" className="sr-only" onChange={(event) => setForm({ ...form, waitingGif: event.target.files?.[0] ?? null })} />{form.waitingGif ? <p className="mt-2 font-semibold">{form.waitingGif.name}</p> : null}</label><label className="block rounded-xl border border-dashed border-violet-300 bg-violet-50 p-5 text-center text-xs text-violet-700">上传张嘴讲话动图<input type="file" accept=".gif,image/gif" className="sr-only" onChange={(event) => setForm({ ...form, speakingGif: event.target.files?.[0] ?? null })} />{form.speakingGif ? <p className="mt-2 font-semibold">{form.speakingGif.name}</p> : null}</label></div> : <div className="mt-4"><label className="block rounded-xl border border-dashed border-cyan-300 bg-cyan-50 p-5 text-center text-xs text-cyan-700">选择图片或视频（图片 ≤ 10MB，视频 ≤ 200MB）<input type="file" accept="image/jpeg,image/png,image/webp,video/mp4,video/webm,video/quicktime,video/x-msvideo,.mov,.avi" className="sr-only" onChange={(event) => setForm({ ...form, file: event.target.files?.[0] ?? null })} />{form.file ? <p className="mt-2 font-semibold">{form.file.name}{isCustomAvatarVideo(form.file) ? " · 视频源" : " · 图片源"}</p> : null}</label><label className={`mt-4 flex items-center gap-2 text-xs font-semibold text-slate-600 ${isCustomAvatarVideo(form.file) ? "opacity-50" : ""}`}><input type="checkbox" checked={form.removeBackground} disabled={isCustomAvatarVideo(form.file)} onChange={(event) => setForm({ ...form, removeBackground: event.target.checked })} className="h-4 w-4 rounded border-slate-300 text-cyan-600" />上传时抠除背景（视频源不支持）</label></div>}</Modal> : null;
+  return <div className="p-6 xl:p-8"><Header eyebrow="数字人中心 / 真实后端" title="数字人形象" description="从 OpenTalking 读取形象和模型；新增时自动使用系统模板，支持图片或视频源文件。GIF 类型需要同时上传等待聆听和张嘴讲话两张动图。" action={<Button onClick={() => setForm((current) => ({ ...current, name: current.name || "新数字人", baseAvatarId: current.baseAvatarId || avatars.find((avatar) => !avatar.is_custom)?.id || "", model: current.model || models[0] || "" }))}>+ 导入形象</Button>} />{error ? <p className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-700" role="alert">{error}</p> : null}{importModal}{loading ? <Card className="p-8"><LoadingSkeleton rows={4} /></Card> : loadError ? <ErrorState title="数字人形象暂时无法加载" description={loadError} onRetry={reload} /> : !avatars.length ? <Card className="p-8"><EmptyState title="暂无可用形象" description="当前 OpenTalking 没有返回可用形象，请先确认形象资产目录和服务配置。" /></Card> : <><div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">{avatarPagination.pageItems.map((avatar) => <Card key={avatar.id} className={`overflow-hidden ${selected === avatar.id ? "border-cyan-400 ring-4 ring-cyan-50" : ""}`}><div className="relative flex h-64 items-center justify-center bg-slate-100 p-3"><AvatarCardPreview avatar={avatar} /><div className="absolute left-3 top-3"><Badge tone={selected === avatar.id ? "cyan" : "slate"}>{selected === avatar.id ? "当前绑定" : avatar.is_custom ? "自定义" : "系统形象"}</Badge></div></div><div className="p-4"><div className="flex items-start justify-between gap-2"><div><h3 className="font-semibold text-slate-900">{avatar.name || avatar.id}</h3><p className="mt-1 text-xs text-slate-400">{avatar.id}</p></div><Badge tone="green">{avatar.model_type}</Badge></div><div className="mt-4 flex gap-2"><Button variant={selected === avatar.id ? "primary" : "secondary"} onClick={() => setSelected(avatar.id)} className="flex-1">{selected === avatar.id ? "已绑定" : "绑定"}</Button><Button variant="ghost" onClick={() => onDebug?.(avatar.id)}>直接调试</Button>{avatar.is_custom ? <Button variant="danger" onClick={() => void remove(avatar)}>删除</Button> : null}</div></div></Card>)}</div><Pagination page={avatarPagination.page} pageCount={avatarPagination.pageCount} total={avatars.length} onChange={avatarPagination.setPage} /></> }</div>;
 }
 
 function GifThumb({ item }: { item: GifAssetMeta }) {

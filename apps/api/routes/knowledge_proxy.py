@@ -3,11 +3,11 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import JSONResponse
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
-from apps.api.admin.security import current_user
+from apps.api.admin.security import current_user, get_store
 from opentalking.agent.context_builder import default_knowledge_store
 from opentalking.agent.dify_index import DifyKnowledgeError, DifyKnowledgeIndex
 
@@ -175,6 +175,7 @@ async def create_knowledge_base(
 
 @router.get("/documents", response_model=None)
 async def list_knowledge_documents(
+    request: Request,
     knowledge_base_id: str | None = Query(default=None),
     knowledgeBaseId: str | None = Query(default=None),
     exhibition_id: str | None = Query(default=None),
@@ -189,6 +190,12 @@ async def list_knowledge_documents(
     kb_id = _scope_value(knowledge_base_id, knowledgeBaseId)
     try:
         index = _dify_index()
+        if not kb_id:
+            # Dashboard summaries may not have a selected knowledge base yet.
+            # Use the server-side default alias without exposing Dify dataset IDs.
+            kb_id = index.default_knowledge_base_id
+            if not kb_id:
+                kb_id = next(iter(index.knowledge_base_records()), "")
         record = index.validate_scope(
             kb_id=kb_id,
             exhibition_id=_scope_value(exhibition_id, exhibitionId),
@@ -196,7 +203,26 @@ async def list_knowledge_documents(
         )
         payload = index.list_documents(kb_id=kb_id, page=page, limit=limit)
     except DifyKnowledgeError as exc:
-        return _handle_error(exc, trace_id)
+        # The Admin UI also uses this path for the local document catalog. When
+        # Dify is not configured, serve the local AdminStore records instead of
+        # turning the whole dashboard into a 503. Dify upload/retrieve routes
+        # remain strict and still report provider unavailability.
+        if str(exc) != "当前知识库提供方不是 Dify" or request is None:
+            return _handle_error(exc, trace_id)
+        store = get_store(request)
+        items = store.list_records(
+            "documents",
+            exhibition_id=_scope_value(exhibition_id, exhibitionId) or None,
+        )
+        start = (page - 1) * limit
+        return {
+            "items": items[start : start + limit],
+            "total": len(items),
+            "page": page,
+            "page_size": limit,
+            "provider": "admin",
+            "trace_id": trace_id,
+        }
     return {
         "items": payload.get("data", []) if isinstance(payload.get("data"), list) else [],
         "total": int(payload.get("total", 0) or 0),

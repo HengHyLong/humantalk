@@ -1,4 +1,5 @@
 import { ROLE_BUTTON_PERMISSIONS, ROLE_PERMISSIONS } from "./policy";
+import { AdminRequestError, toSafeRequestError } from "./errors";
 import { EDGE_ZH_VOICES } from "../constants/edgeZhVoices";
 import type {
   AdminUser,
@@ -718,41 +719,46 @@ export class FetchAdminApiClient implements AdminApiClient {
 
   private async request<T>(path: string, init: RequestInit = {}, tokenOverride?: string): Promise<T> {
     const token = tokenOverride ?? this.token();
-    const response = await fetch(buildAdminFetchUrl(`/v1${path}`), {
-      ...init,
-      headers: {
-        ...(init.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        ...init.headers,
-      },
-    });
+    let response: Response;
+    try {
+      response = await fetch(buildAdminFetchUrl(`/v1${path}`), {
+        ...init,
+        headers: {
+          ...(init.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          ...init.headers,
+        },
+      });
+    } catch (error) {
+      throw new AdminRequestError(error instanceof Error ? error.message : "Network request failed", { code: "NETWORK_ERROR" });
+    }
     if (response.status === 401 && path !== "/auth/login") {
       window.localStorage.removeItem(`${STORAGE_PREFIX}token`);
       window.localStorage.removeItem("opentalking-admin-session");
       window.dispatchEvent(new CustomEvent("opentalking-admin-auth-expired"));
     }
     if (!response.ok) {
-      let detail = `Admin API ${response.status}`;
+      let payload: unknown = null;
       try {
-        const payload = await response.json() as JsonRecord;
-        const body = payload.detail ?? payload;
-        detail = typeof body === "string" ? body : body.detail || body.code || detail;
+        payload = await response.json();
       } catch { /* keep status fallback */ }
-      throw new Error(detail);
+      throw toSafeRequestError(response.status, payload, response.headers.get("X-Trace-Id") || response.headers.get("X-Request-Id") || undefined);
     }
     if (response.status === 204) return undefined as T;
     return response.json() as Promise<T>;
   }
 
   private async download(path: string): Promise<string> {
-    const response = await fetch(buildAdminFetchUrl(`/v1${path}`), { headers: this.token() ? { Authorization: `Bearer ${this.token()}` } : {} });
-    if (!response.ok) throw new Error(`Admin API ${response.status}`);
+    let response: Response;
+    try { response = await fetch(buildAdminFetchUrl(`/v1${path}`), { headers: this.token() ? { Authorization: `Bearer ${this.token()}` } : {} }); } catch (error) { throw new AdminRequestError(error instanceof Error ? error.message : "Network request failed", { code: "NETWORK_ERROR" }); }
+    if (!response.ok) { let payload: unknown = null; try { payload = await response.json(); } catch { /* safe fallback */ } throw toSafeRequestError(response.status, payload, response.headers.get("X-Trace-Id") || undefined); }
     return response.text();
   }
 
   private async downloadBlob(path: string): Promise<Blob> {
-    const response = await fetch(buildAdminFetchUrl(`/v1${path}`), { headers: this.token() ? { Authorization: `Bearer ${this.token()}` } : {} });
-    if (!response.ok) throw new Error(`Admin API ${response.status}`);
+    let response: Response;
+    try { response = await fetch(buildAdminFetchUrl(`/v1${path}`), { headers: this.token() ? { Authorization: `Bearer ${this.token()}` } : {} }); } catch (error) { throw new AdminRequestError(error instanceof Error ? error.message : "Network request failed", { code: "NETWORK_ERROR" }); }
+    if (!response.ok) { let payload: unknown = null; try { payload = await response.json(); } catch { /* safe fallback */ } throw toSafeRequestError(response.status, payload, response.headers.get("X-Trace-Id") || undefined); }
     return response.blob();
   }
 
@@ -1145,9 +1151,12 @@ export class FetchAdminApiClient implements AdminApiClient {
   async testLlmConfig(id: string) { return this.request<LlmConnectionTestResult>(`/admin/llm-configs/${encodeURIComponent(id)}/test`, { method: "POST" }); }
 }
 
-// 管理端生产运行统一使用 FastAPI；所有配置和业务数据都通过 API 写入 SQLite。
-// 保留 MockAdminApiClient 仅供旧代码兼容，但不允许运行时切换到 mock 存储。
-export const adminApi: AdminApiClient = new FetchAdminApiClient();
+export function createAdminApiClient(mode: "mock" | "real"): AdminApiClient {
+  return mode === "mock" ? new MockAdminApiClient() : new FetchAdminApiClient();
+}
+
+const configuredApiMode = import.meta.env?.VITE_ADMIN_API_MODE;
+export const adminApi: AdminApiClient = createAdminApiClient(configuredApiMode === "mock" ? "mock" : "real");
 
 export const DEFAULT_VOICES: VoiceAsset[] = EDGE_ZH_VOICES.map((voice) => ({
   id: `voice-edge-${voice.id}`,

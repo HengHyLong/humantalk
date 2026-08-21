@@ -264,6 +264,7 @@ def test_public_exhibition_entities_include_display_fields_and_image_fallbacks(t
         assert "星河" in items["exhibitor-public"]["fuzzy_keywords"]
         assert items["exhibitor-public"]["spoken_text"] == "星河科技专注智能制造解决方案。"
         assert items["exhibit-public"]["image_urls"] == ["/scene-assets/exhibitor.jpg"]
+        assert items["exhibit-public"]["parent_id"] == "exhibitor-public"
         assert not any(detail["value"] == "13800138000" for item in items.values() for detail in item["details"])
 
 

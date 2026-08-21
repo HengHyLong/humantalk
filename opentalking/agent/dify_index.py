@@ -58,14 +58,15 @@ class DifyKnowledgeIndex:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key.strip()
         self.dataset_id = dataset_id.strip()
+        self.default_knowledge_base_id = default_knowledge_base_id.strip()
         self.dataset_map = self._parse_string_map(dataset_map)
         self._configured_registry = self._parse_registry(registry)
-        if self.dataset_id and default_knowledge_base_id.strip():
+        if self.dataset_id and self.default_knowledge_base_id:
             self._configured_registry.setdefault(
-                default_knowledge_base_id.strip(),
+                self.default_knowledge_base_id,
                 {
-                    "knowledge_base_id": default_knowledge_base_id.strip(),
-                    "name": default_knowledge_base_id.strip(),
+                    "knowledge_base_id": self.default_knowledge_base_id,
+                    "name": self.default_knowledge_base_id,
                     "exhibition_id": default_exhibition_id.strip(),
                     "namespace_id": default_namespace_id.strip(),
                     "dify_dataset_id": self.dataset_id,
@@ -443,16 +444,17 @@ class DifyKnowledgeIndex:
             raw = source.strip()
             if not raw:
                 return {}
-            path = Path(raw)
-            if path.is_file():
+            # Prefer inline JSON.  Calling Path.is_file() on a long JSON
+            # environment value can raise ``OSError: File name too long``.
+            try:
+                payload = json.loads(raw)
+            except json.JSONDecodeError:
                 try:
+                    path = Path(raw)
+                    if not path.is_file():
+                        return {}
                     payload = json.loads(path.read_text(encoding="utf-8"))
                 except (OSError, json.JSONDecodeError):
-                    return {}
-            else:
-                try:
-                    payload = json.loads(raw)
-                except json.JSONDecodeError:
                     return {}
         if not isinstance(payload, dict):
             return {}

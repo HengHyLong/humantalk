@@ -49,8 +49,7 @@ def _request_user(request: Request) -> tuple[str | None, str]:
 
 class AdminTraceMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):  # type: ignore[no-untyped-def]
-        if not request.url.path.startswith(_AUDITED_PREFIXES):
-            return await call_next(request)
+        audited = request.url.path.startswith(_AUDITED_PREFIXES)
         trace_id = request.headers.get("X-Trace-Id") or f"trace-{uuid.uuid4().hex[:16]}"
         request.state.trace_id = trace_id
         request.state.audit_started = time.perf_counter()
@@ -66,7 +65,7 @@ class AdminTraceMiddleware(BaseHTTPMiddleware):
             if response is not None:
                 response.headers["X-Trace-Id"] = trace_id
                 response.headers["X-Request-Duration-Ms"] = str(duration_ms)
-            if not getattr(request.state, "audit_written", False):
+            if audited and not getattr(request.state, "audit_written", False):
                 user_id, username = _request_user(request)
                 action, resource_type, resource_id = _audit_target(request.url.path, request.method)
                 try:

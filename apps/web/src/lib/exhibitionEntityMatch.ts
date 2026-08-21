@@ -73,3 +73,20 @@ export function matchExhibitionEntities(text: string, entities: ExhibitionEntity
     .slice(0, 3)
     .map((candidate) => candidate.entity);
 }
+
+/**
+ * 在“请选择哪一个展品”的追问中支持名称、型号和第一个/第二个等自然表达。
+ */
+export function selectExhibitionEntity(text: string, entities: ExhibitionEntityCard[]): ExhibitionEntityCard | undefined {
+  const matched = matchExhibitionEntities(text, entities)[0];
+  if (matched) return matched;
+
+  const normalized = normalizeEntityKeyword(text);
+  const ordinal = normalized.match(/(?:第)?([一二三四五六七八九十]|[1-9])个?/);
+  if (ordinal) {
+    const indexMap: Record<string, number> = { 一: 0, 二: 1, 三: 2, 四: 3, 五: 4, 六: 5, 七: 6, 八: 7, 九: 8, 十: 9 };
+    const index = indexMap[ordinal[1]] ?? Number(ordinal[1]) - 1;
+    if (Number.isInteger(index) && index >= 0 && index < entities.length) return entities[index];
+  }
+  return undefined;
+}

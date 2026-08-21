@@ -5,7 +5,7 @@ title: OpenTalking
 # OpenTalking
 
 <p align="center">
-  <img src="/opentalking/assets/images/logo_white.png" alt="OpenTalking logo" width="200">
+  <img src="/opentalking/assets/images/logo_white.png" alt="四川博览集团数字人 Logo" width="200">
 </p>
 
 <p align="center">

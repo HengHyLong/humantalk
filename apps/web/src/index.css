@@ -193,10 +193,23 @@ body {
 .digital-display-chat-panel.is-conversation-hidden .digital-display-chat-heading,
 .digital-display-chat-panel.is-conversation-hidden .digital-display-chat-feed,
 .digital-display-chat-panel.is-conversation-hidden .digital-display-chat-suggestions { display: none; }
+.digital-display-chat-panel.is-presentation-hidden { right: 5%; bottom: 3%; left: 5%; max-height: none; border-color: rgba(159, 228, 255, .25); padding: 6px; background: rgba(2, 30, 76, .34); box-shadow: 0 12px 28px rgba(1, 16, 58, .18); }
+.digital-display-chat-panel.is-subtitle-active { display: none; }
+.digital-display-chat-panel.is-presentation-hidden .digital-display-chat-input { border-color: rgba(181, 232, 255, .4); background: rgba(2, 30, 76, .72); }
+.digital-display-chat-panel.is-presentation-hidden .digital-display-chat-input::before { align-self: center; flex: 0 0 auto; color: rgba(218, 247, 255, .84); content: attr(data-prompt); font-size: 10px; font-weight: 700; white-space: nowrap; }
 .digital-display-chat-reveal { align-self: flex-end; border: 1px solid rgba(181, 232, 255, .4); border-radius: 999px; padding: 7px 12px; color: #dcf7ff; background: rgba(2, 45, 98, .72); font-size: 10px; cursor: pointer; backdrop-filter: blur(8px); }
 .digital-display-chat-reveal:hover { background: rgba(21, 111, 170, .78); }
-.digital-display-waist-panel { position: absolute; left: 50%; top: 47%; transform: translateX(-50%); z-index: 24; display: flex; align-items: stretch; gap: 10px; width: min(860px, 92%); max-height: 30vh; padding: 8px; overflow-x: auto; overflow-y: auto; border: 1px solid rgba(168, 235, 255, .35); border-radius: 14px; background: rgba(1, 35, 86, .55); box-shadow: 0 14px 30px rgba(0, 19, 63, .24); backdrop-filter: blur(10px); scrollbar-width: thin; scrollbar-color: rgba(183, 237, 255, .5) transparent; }
-.digital-display-waist-panel.is-registration { width: min(620px, 92%); max-height: none; overflow: visible; border-color: rgba(151, 239, 221, .5); background: rgba(1, 31, 73, .82); }
+.digital-display-presentation-stack { position: absolute; top: 37%; left: 50%; z-index: 34; display: flex; width: min(860px, 92%); max-width: 100%; flex-direction: column; align-items: stretch; transform: translateX(-50%); }
+.digital-display-presentation-stack.is-registration { width: min(620px, 92%); }
+.digital-display-presentation-stack .digital-display-waist-panel { position: relative; top: auto; right: auto; bottom: auto; left: auto; width: 100%; max-width: none; flex: 0 0 auto; transform: none; }
+.digital-display-presentation-stack .digital-display-waist-panel.is-dialog-hidden { display: none; }
+.digital-display-live-subtitle { position: relative; z-index: 26; display: flex; max-width: min(780px, 90%); align-items: flex-start; gap: 8px; margin: 0 auto; pointer-events: none; }
+.digital-display-live-subtitle span { flex: 0 0 auto; border: 1px solid rgba(185, 237, 255, .38); border-radius: 999px; padding: 3px 8px; color: rgba(223, 248, 255, .92); background: rgba(2, 49, 112, .72); font-size: 9px; line-height: 1.45; }
+.digital-display-live-subtitle p { min-width: 0; max-width: 100%; margin: 0; border: 1px solid rgba(173, 243, 255, .38); border-radius: 10px; padding: 8px 12px; color: #f5fdff; background: rgba(7, 104, 163, .78); box-shadow: 0 10px 24px rgba(0, 18, 58, .22); font-size: clamp(13px, 1.55vw, 18px); line-height: 1.5; text-align: center; backdrop-filter: blur(8px); }
+.digital-display-live-subtitle.is-presentation-subtitle { position: relative; right: auto; bottom: auto; left: auto; transform: none; }
+.digital-display-presentation-stack .digital-display-live-subtitle { width: 100%; max-width: none; margin: 0 auto 20px; }
+.digital-display-waist-panel { position: absolute; left: 50%; top: 47%; transform: translateX(-50%); z-index: 24; display: flex; align-items: stretch; gap: 10px; width: min(860px, 92%); max-height: 30vh; padding: 8px; overflow-x: auto; overflow-y: auto; border: 1px solid rgba(168, 235, 255, .35); border-radius: 14px; background: transparent; box-shadow: none; backdrop-filter: blur(10px); scrollbar-width: thin; scrollbar-color: rgba(183, 237, 255, .5) transparent; }
+.digital-display-waist-panel.is-registration { width: min(620px, 92%); max-height: none; overflow: visible; border-color: rgba(168, 235, 255, .35); background: transparent; }
 .digital-display-waist-panel.is-registration .digital-display-registration-card { width: 100%; min-width: 0; grid-template-columns: clamp(132px, 36%, 220px) minmax(0, 1fr); padding: 18px; }
 .digital-display-waist-panel.is-registration .digital-display-registration-card > img { width: 100%; height: auto; max-width: 220px; max-height: min(28vh, 220px); aspect-ratio: 1; justify-self: center; object-fit: contain; }
 .digital-display-waist-panel.is-registration .digital-display-registration-card strong { font-size: 17px; }
@@ -205,7 +218,7 @@ body {
 .digital-display-waist-panel .digital-display-navigation-card,
 .digital-display-waist-panel .exhibition-entity-card.is-immersive { width: min(100%, 420px); min-width: 0; flex: 1 1 250px; max-height: 29vh; }
 .digital-display-waist-panel .digital-display-navigation-card img,
-.digital-display-waist-panel .exhibition-entity-card.is-immersive > img { width: 100%; min-width: 0; max-width: 100%; min-height: 0; object-fit: contain; object-position: center; background: rgba(1, 30, 70, .5); }
+.digital-display-waist-panel .exhibition-entity-card.is-immersive > img { width: 100%; min-width: 0; max-width: 100%; min-height: 0; object-fit: contain; object-position: center; background: transparent; }
 .digital-display-waist-panel .digital-display-navigation-card img { height: auto; max-height: min(18vh, 180px); }
 .digital-display-waist-panel .exhibition-entity-card.is-immersive > img { height: 100%; max-height: 29vh; }
 .digital-display-chat-heading { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; color: rgba(230, 249, 255, .8); font-size: 10px; letter-spacing: .16em; }
@@ -216,21 +229,21 @@ body {
 .digital-display-scroll-bottom { position: sticky; bottom: 4px; z-index: 4; display: inline-flex; align-self: center; align-items: center; gap: 5px; border: 1px solid rgba(177, 235, 255, .48); border-radius: 999px; padding: 6px 11px; color: #e7faff; background: rgba(2, 45, 98, .9); box-shadow: 0 7px 18px rgba(0, 18, 58, .28); font-size: 10px; cursor: pointer; backdrop-filter: blur(8px); }
 .digital-display-scroll-bottom:hover { background: rgba(24, 124, 184, .94); }
 .digital-display-chat-notice { align-self: stretch; border: 1px solid rgba(255, 218, 144, .28); border-radius: 9px; padding: 7px 9px; color: rgba(255, 240, 199, .9); background: rgba(117, 82, 23, .2); font-size: 10px; line-height: 1.5; }
-.digital-display-navigation-card { position: relative; align-self: stretch; overflow: hidden; border: 1px solid rgba(168, 235, 255, .38); border-radius: 12px; background: rgba(2, 50, 108, .42); }
+.digital-display-navigation-card { position: relative; align-self: stretch; overflow: hidden; border: 1px solid rgba(168, 235, 255, .38); border-radius: 12px; background: transparent; box-shadow: none; backdrop-filter: blur(10px); }
 .digital-display-card-close,
 .exhibition-entity-card-close { position: absolute; top: 7px; right: 8px; z-index: 3; display: grid; width: 28px; height: 28px; place-items: center; border: 1px solid rgba(193, 239, 255, .28); border-radius: 999px; color: #effcff; background: rgba(1, 31, 73, .72); box-shadow: 0 4px 12px rgba(0, 18, 54, .24); font-size: 19px; line-height: 1; cursor: pointer; transition: border-color .16s ease, background .16s ease, transform .16s ease; }
 .digital-display-card-close:hover,
 .exhibition-entity-card-close:hover { border-color: rgba(215, 248, 255, .7); background: rgba(5, 69, 126, .94); transform: scale(1.05); }
 .digital-display-card-close:focus-visible,
 .exhibition-entity-card-close:focus-visible { outline: 2px solid #8ceaff; outline-offset: 2px; }
-.digital-display-navigation-card img { display: block; width: 100%; height: auto; max-width: 100%; max-height: 180px; object-fit: contain; background: rgba(1, 30, 70, .5); }
+.digital-display-navigation-card img { display: block; width: 100%; height: auto; max-width: 100%; max-height: 180px; object-fit: contain; background: transparent; }
 .digital-display-navigation-copy { padding: 9px 10px; color: rgba(239, 251, 255, .94); font-size: 10px; line-height: 1.55; }
 .digital-display-navigation-copy strong { display: block; font-size: 11px; }
 .digital-display-navigation-copy p { margin: 3px 0 0; color: rgba(205, 236, 255, .78); }
 .digital-display-navigation-copy .digital-display-navigation-summary { color: rgba(239, 251, 255, .9); }
 .digital-display-navigation-copy .digital-display-navigation-route { color: rgba(205, 236, 255, .78); }
 .digital-display-navigation-copy ol { margin: 5px 0 0; padding-left: 18px; color: rgba(224, 245, 255, .88); }
-.digital-display-registration-card { position: relative; display: grid; align-items: center; gap: 12px; grid-template-columns: 116px minmax(0, 1fr); align-self: stretch; border: 1px solid rgba(151, 239, 221, .55); border-radius: 14px; padding: 12px; color: #efffff; background: rgba(3, 88, 104, .72); box-shadow: 0 14px 34px rgba(0, 25, 62, .3); }
+.digital-display-registration-card { position: relative; display: grid; align-items: center; gap: 12px; grid-template-columns: 116px minmax(0, 1fr); align-self: stretch; border: 1px solid rgba(168, 235, 255, .35); border-radius: 14px; padding: 12px; color: #efffff; background: transparent; box-shadow: none; backdrop-filter: blur(10px); }
 .digital-display-registration-card > button { position: absolute; top: 7px; right: 8px; border: 0; color: rgba(231, 254, 255, .78); background: transparent; font-size: 18px; cursor: pointer; }
 .digital-display-registration-card > img { display: block; width: min(100%, 116px); height: auto; max-width: 100%; aspect-ratio: 1; border-radius: 9px; object-fit: contain; background: #fff; }
 .digital-display-registration-card strong { display: block; padding-right: 18px; font-size: 13px; }
@@ -258,8 +271,8 @@ body {
 .exhibition-entity-card dl div { display: flex; min-width: 0; align-items: center; gap: 5px; border-radius: 8px; padding: 5px 8px; }
 .exhibition-entity-card dt, .exhibition-entity-card dd { margin: 0; font-size: 10px; line-height: 1.45; }
 .exhibition-entity-card dd { min-width: 0; overflow: hidden; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
-.exhibition-entity-card > img { display: block; width: 100%; max-width: 100%; height: clamp(145px, 23vh, 230px); object-fit: contain; background: rgba(1, 30, 70, .5); }
-.exhibition-entity-card.is-immersive { display: grid; min-height: 132px; grid-template-columns: minmax(0, 1.25fr) minmax(150px, .75fr); border: 1px solid rgba(165, 233, 255, .46); color: #f3fbff; background: rgba(2, 51, 112, .82); box-shadow: 0 14px 30px rgba(0, 19, 63, .24); backdrop-filter: blur(10px); }
+.exhibition-entity-card > img { display: block; width: 100%; max-width: 100%; height: clamp(145px, 23vh, 230px); object-fit: contain; background: transparent; }
+.exhibition-entity-card.is-immersive { display: grid; min-height: 132px; grid-template-columns: minmax(0, 1.25fr) minmax(150px, .75fr); border: 1px solid rgba(165, 233, 255, .46); color: #f3fbff; background: transparent; box-shadow: none; backdrop-filter: blur(10px); }
 .exhibition-entity-card.is-immersive .exhibition-entity-card-copy { min-width: 0; }
 .exhibition-entity-card.is-immersive .exhibition-entity-card-copy > p { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .exhibition-entity-card.is-immersive > img { height: 100%; min-height: 132px; max-height: 170px; object-fit: contain; object-position: center; }
@@ -274,6 +287,17 @@ body {
 .exhibition-entity-card.is-light dl div { background: #f1f7fa; }
 .exhibition-entity-card.is-light dt { color: #718096; }
 .exhibition-entity-card.is-light dd { color: #334155; }
+.exhibition-product-list { width: min(100%, 820px); min-width: min(100%, 300px); border: 1px solid rgba(165, 233, 255, .46); border-radius: 16px; padding: 12px; color: #f3fbff; background: transparent; box-shadow: none; backdrop-filter: blur(10px); }
+.exhibition-product-list-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 2px 4px 10px; }
+.exhibition-product-list-header > div { min-width: 0; }
+.exhibition-product-list-header strong { display: block; margin-top: 3px; color: #f3fbff; font-size: 13px; }
+.exhibition-product-list-count { flex: 0 0 auto; border: 1px solid rgba(174, 232, 255, .3); border-radius: 999px; padding: 5px 9px; color: #dff8ff; background: rgba(34, 183, 225, .24); font-size: 10px; font-weight: 700; }
+.exhibition-product-list-track { display: grid; min-width: 0; max-height: min(28vh, 300px); grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: rgba(183, 237, 255, .5) transparent; }
+.exhibition-product-list-item { min-width: 0; overflow: hidden; border: 1px solid rgba(174, 232, 255, .28); border-radius: 13px; background: transparent; }
+.exhibition-product-list-item img,
+.exhibition-product-list-item-placeholder { display: block; width: 100%; height: clamp(92px, 15vh, 150px); object-fit: cover; object-position: center; background: transparent; }
+.exhibition-product-list-item-placeholder { display: grid; place-items: center; color: rgba(223, 248, 255, .74); font-size: 12px; }
+.exhibition-product-list-item > strong { display: -webkit-box; min-height: 2.8em; overflow: hidden; padding: 8px 9px 9px; color: #f3fbff; font-size: 12px; line-height: 1.4; text-overflow: ellipsis; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .digital-display-chat-suggestions { display: flex; flex: 0 0 auto; flex-wrap: wrap; gap: 7px; }
 .digital-display-chat-suggestions button { border: 1px solid rgba(181, 232, 255, .36); border-radius: 999px; padding: 7px 11px; color: rgba(232, 249, 255, .94); background: rgba(21, 122, 190, .38); font-size: 10px; cursor: pointer; backdrop-filter: blur(5px); }
 .digital-display-chat-suggestions button:hover:not(:disabled) { background: rgba(63, 186, 236, .58); }
@@ -308,6 +332,9 @@ body {
   .digital-display-waist-panel.is-registration { top: 31%; max-height: 58vh; overflow-y: auto; }
   .digital-display-waist-panel.is-registration .digital-display-registration-card { display: block; padding: 15px; text-align: center; }
   .digital-display-waist-panel.is-registration .digital-display-registration-card > img { width: min(68vw, 180px); height: auto; max-height: min(32vh, 180px); margin: 0 auto 12px; }
+  .digital-display-presentation-stack { top: 55%; width: 94%; }
+  .digital-display-presentation-stack.is-registration { top: 55%; width: 94%; }
+  .digital-display-presentation-stack .digital-display-waist-panel.is-registration { top: auto; }
   .digital-display-root { min-height: 100dvh; }
   .digital-display-header { top: 17px; left: 18px; right: 18px; }
   .digital-display-watermark { display: none; }
@@ -343,4 +370,13 @@ body {
     max-height: none;
     object-fit: contain;
   }
+  .digital-display-live-subtitle { max-width: none; }
+  .digital-display-live-subtitle.is-presentation-subtitle { right: auto; bottom: auto; left: auto; transform: none; }
+  .digital-display-presentation-stack .digital-display-live-subtitle { margin: 0 auto 20px; }
+  .digital-display-live-subtitle p { font-size: 13px; }
+  .exhibition-product-list { min-width: 0; padding: 10px; }
+  .exhibition-product-list-track { max-height: min(30vh, 260px); gap: 8px; }
+  .exhibition-product-list-item img,
+  .exhibition-product-list-item-placeholder { height: clamp(78px, 14vh, 116px); }
+  .digital-display-chat-panel.is-presentation-hidden { right: 4%; bottom: 2%; left: 4%; }
 }

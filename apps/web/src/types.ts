@@ -10,6 +10,8 @@ export type ExhibitionEntityKind = "exhibition" | "exhibitor" | "exhibit" | "ven
 export type ExhibitionEntityCard = {
   id: string;
   kind: ExhibitionEntityKind;
+  /** 展品所属展商 ID，用于展商介绍后的产品列表联动。 */
+  parent_id?: string | null;
   name: string;
   description: string;
   image_urls: string[];
