@@ -112,7 +112,8 @@ def test_discovery_includes_datasets_created_in_dify_console(tmp_path, monkeypat
         )
 
     monkeypatch.setattr(httpx, "request", fake_request)
-    records = _index(tmp_path).discover_knowledge_base_records()
+    index = _index(tmp_path)
+    records = index.discover_knowledge_base_records()
 
     assert records["kb-001"]["name"] == "已登记知识库"
     discovered_id = "kb_c0393c81cce34ec48d1e96a0ffdf9ed7"
@@ -124,6 +125,40 @@ def test_discovery_includes_datasets_created_in_dify_console(tmp_path, monkeypat
         "dify_dataset_id": "c0393c81-cce3-4ec4-8d1e-96a0ffdf9ed7",
         "status": "active",
     }
+    assert index.resolve_dataset_id(discovered_id) == (
+        "c0393c81-cce3-4ec4-8d1e-96a0ffdf9ed7"
+    )
+
+
+def test_discovered_dataset_can_be_used_without_prior_list_request(tmp_path, monkeypatch):
+    discovered_id = "kb_c0393c81cce34ec48d1e96a0ffdf9ed7"
+
+    def fake_request(method: str, url: str, **kwargs: object) -> httpx.Response:
+        assert method == "GET"
+        if url == "http://dify.test/v1/datasets":
+            assert kwargs["params"] == {"page": 1, "limit": 100}
+            return _response(
+                {
+                    "data": [
+                        {
+                            "id": "c0393c81-cce3-4ec4-8d1e-96a0ffdf9ed7",
+                            "name": "Dify 网页知识库",
+                        }
+                    ],
+                    "has_more": False,
+                }
+            )
+        assert url == (
+            "http://dify.test/v1/datasets/"
+            "c0393c81-cce3-4ec4-8d1e-96a0ffdf9ed7/documents"
+        )
+        assert kwargs["params"] == {"page": 1, "limit": 20}
+        return _response({"data": [], "total": 0, "has_more": False})
+
+    monkeypatch.setattr(httpx, "request", fake_request)
+    payload = _index(tmp_path).list_documents(kb_id=discovered_id)
+
+    assert payload == {"data": [], "total": 0, "has_more": False}
 
 
 def test_sync_exhibition_bindings_supports_many_and_unbinds_removed(tmp_path):

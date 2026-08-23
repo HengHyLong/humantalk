@@ -307,6 +307,11 @@ class DifyKnowledgeIndex:
                 "status": "active",
             }
             by_dataset_id[dataset_id] = knowledge_base_id
+        # Keep automatically discovered datasets usable by subsequent API
+        # calls in the same process.  Previously they were visible in the
+        # knowledge-base list but document and retrieval routes could not
+        # resolve their generated logical IDs.
+        self.dataset_map.update(self._dataset_map_from_records(records))
         return records
 
     def sync_exhibition_bindings(
@@ -489,7 +494,12 @@ class DifyKnowledgeIndex:
     def _require_dataset(self, kb_id: str) -> str:
         if not self.configured:
             raise DifyKnowledgeError("Dify 知识库服务未配置")
-        dataset_id = self._dataset_for(kb_id)
+        clean_id = kb_id.strip()
+        dataset_id = self._dataset_for(clean_id)
+        if not dataset_id and clean_id:
+            discovered = self.discover_knowledge_base_records().get(clean_id)
+            if discovered:
+                dataset_id = discovered.get("dify_dataset_id", "")
         if not dataset_id:
             raise DifyKnowledgeError(
                 "知识库不存在",
