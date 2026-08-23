@@ -149,6 +149,12 @@ def _record_value(record: dict[str, object], *keys: str) -> str:
 def _load_dify_registry(settings: object) -> dict[str, dict[str, str]]:
     raw = str(_setting(settings, "agent_dify_knowledge_base_registry", "") or "").strip()
     registry_path = str(_setting(settings, "agent_dify_registry_path", "") or "").strip()
+    if not registry_path and hasattr(settings, "agent_knowledge_root"):
+        knowledge_root = str(
+            _setting(settings, "agent_knowledge_root", "./data/knowledge")
+            or "./data/knowledge"
+        ).strip()
+        registry_path = str(Path(knowledge_root) / "knowledge_base_registry.json")
     if not raw and registry_path:
         try:
             raw = Path(registry_path).read_text(encoding="utf-8")

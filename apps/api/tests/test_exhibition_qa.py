@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -124,6 +125,54 @@ def test_qa_rejects_unknown_or_cross_exhibition_knowledge_base() -> None:
     with pytest.raises(HTTPException) as missing:
         qa_routes._resolve_dify_targets(settings, MappingStore(), "expo-2026", ["kb-missing"])
     assert missing.value.status_code == 404
+
+
+def test_qa_loads_default_dify_registry_from_knowledge_root(tmp_path) -> None:
+    knowledge_root = tmp_path / "knowledge"
+    knowledge_root.mkdir()
+    (knowledge_root / "knowledge_base_registry.json").write_text(
+        json.dumps(
+            {
+                "kb-cncc": {
+                    "name": "计算机大会知识库",
+                    "exhibition_id": "expo-2026",
+                    "namespace_id": "namespace-cncc",
+                    "dify_dataset_id": "dataset-cncc",
+                    "status": "active",
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    class MappingStore:
+        def list_records(self, kind: str, *, exhibition_id: str | None = None):
+            del kind, exhibition_id
+            return []
+
+    settings = SimpleNamespace(
+        dify_dataset_map="{}",
+        agent_dify_dataset_map="",
+        agent_dify_knowledge_base_registry="",
+        agent_dify_registry_path="",
+        agent_knowledge_root=str(knowledge_root),
+        agent_dify_knowledge_base_id="",
+        agent_dify_dataset_id="",
+        dify_default_dataset_id="",
+    )
+
+    targets = qa_routes._resolve_dify_targets(
+        settings,
+        MappingStore(),
+        "expo-2026",
+        ["kb-cncc"],
+    )
+
+    assert len(targets) == 1
+    assert targets[0].dataset_id == "dataset-cncc"
+    assert targets[0].knowledge_base_id == "kb-cncc"
+    assert targets[0].namespace_id == "namespace-cncc"
 
 
 @pytest.mark.asyncio
