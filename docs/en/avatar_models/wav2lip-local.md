@@ -81,3 +81,16 @@ If GPU memory is tight or first-frame latency is high, tune these parameters fir
 | `OPENTALKING_WAV2LIP_MAX_LONG_EDGE` | `832` | Matches the OmniRT CUDA quickstart default and keeps render latency closer to realtime; set `0` only when prioritizing full source resolution over latency. |
 | `OPENTALKING_WAV2LIP_JPEG_QUALITY` | `85` | Output-frame JPEG quality; higher values improve visuals but increase bandwidth. |
 | `OPENTALKING_PREWARM_AVATARS` | `singer` | Prewarm commonly used avatars when the service starts. |
+
+For a high-resolution portrait avatar displayed full-screen, also raise the retained upload dimensions and the WebRTC encoder bitrate:
+
+```bash
+export OPENTALKING_WAV2LIP_MAX_LONG_EDGE=0
+export OPENTALKING_WAV2LIP_JPEG_QUALITY=95
+export OPENTALKING_CUSTOM_AVATAR_MAX_WIDTH=1080
+export OPENTALKING_CUSTOM_AVATAR_MAX_HEIGHT=1920
+export OPENTALKING_WEBRTC_VIDEO_START_BITRATE=3000000
+export OPENTALKING_WEBRTC_VIDEO_MAX_BITRATE=6000000
+```
+
+Upload dimensions only affect newly uploaded or re-uploaded avatars. Bitrates are in bits per second; higher values increase outbound bandwidth, so lower them gradually on constrained networks.

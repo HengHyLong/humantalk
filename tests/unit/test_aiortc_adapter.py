@@ -8,6 +8,31 @@ from opentalking.core.types.frames import VideoFrameData
 from opentalking.providers.rtc.aiortc.adapter import WebRTCSession
 
 
+def test_configure_aiortc_video_bitrate_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    from aiortc.codecs import h264, vpx
+
+    originals = {
+        "h264_default": h264.DEFAULT_BITRATE,
+        "h264_max": h264.MAX_BITRATE,
+        "vpx_default": vpx.DEFAULT_BITRATE,
+        "vpx_max": vpx.MAX_BITRATE,
+    }
+    monkeypatch.setenv("OPENTALKING_WEBRTC_VIDEO_START_BITRATE", "3000000")
+    monkeypatch.setenv("OPENTALKING_WEBRTC_VIDEO_MAX_BITRATE", "6000000")
+    try:
+        aiortc_adapter._configure_aiortc_video_bitrate()
+
+        assert h264.DEFAULT_BITRATE == 3000000
+        assert h264.MAX_BITRATE == 6000000
+        assert vpx.DEFAULT_BITRATE == 3000000
+        assert vpx.MAX_BITRATE == 6000000
+    finally:
+        h264.DEFAULT_BITRATE = originals["h264_default"]
+        h264.MAX_BITRATE = originals["h264_max"]
+        vpx.DEFAULT_BITRATE = originals["vpx_default"]
+        vpx.MAX_BITRATE = originals["vpx_max"]
+
+
 def test_buffered_reset_clocks_resets_timeline_without_rewinding_pts() -> None:
     session = WebRTCSession(fps=25.0, sample_rate=16000, mode="buffered")
     try:

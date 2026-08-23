@@ -49,6 +49,50 @@ from opentalking.core.types.frames import VideoFrameData
 log = logging.getLogger(__name__)
 
 
+def _positive_env_int(name: str) -> int | None:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return None
+    try:
+        value = int(raw)
+    except ValueError:
+        log.warning("Ignoring invalid %s=%r; expected a positive integer", name, raw)
+        return None
+    if value <= 0:
+        log.warning("Ignoring invalid %s=%r; expected a positive integer", name, raw)
+        return None
+    return value
+
+
+def _configure_aiortc_video_bitrate() -> None:
+    """Apply optional process-wide bitrate limits before aiortc creates an encoder.
+
+    aiortc currently has no public sender-encoding bitrate API. Its VP8 and H.264
+    encoders read module-level defaults when they are constructed, so update those
+    defaults before offer/answer negotiation starts. No values are changed unless
+    the deployment explicitly opts in through environment variables.
+    """
+    start_bitrate = _positive_env_int("OPENTALKING_WEBRTC_VIDEO_START_BITRATE")
+    max_bitrate = _positive_env_int("OPENTALKING_WEBRTC_VIDEO_MAX_BITRATE")
+    if not WEBRTC_AVAILABLE or (start_bitrate is None and max_bitrate is None):
+        return
+
+    from aiortc.codecs import h264, vpx
+
+    configured: list[str] = []
+    for name, codec_module in (("VP8", vpx), ("H264", h264)):
+        codec_min = int(codec_module.MIN_BITRATE)
+        codec_start = int(start_bitrate or codec_module.DEFAULT_BITRATE)
+        codec_max = int(max_bitrate or max(codec_module.MAX_BITRATE, codec_start))
+        codec_max = max(codec_min, codec_max)
+        codec_start = max(codec_min, min(codec_start, codec_max))
+        codec_module.DEFAULT_BITRATE = codec_start
+        codec_module.MAX_BITRATE = codec_max
+        configured.append(f"{name}={codec_start}/{codec_max}")
+
+    log.info("Configured aiortc video bitrate start/max (bps): %s", ", ".join(configured))
+
+
 def _split_ice_urls(value: str) -> list[str]:
     return [item.strip() for item in value.replace(";", ",").split(",") if item.strip()]
 
@@ -457,6 +501,7 @@ class WebRTCSession:
             asyncio.get_event_loop()
         except RuntimeError:
             asyncio.set_event_loop(asyncio.new_event_loop())
+        _configure_aiortc_video_bitrate()
         self.pc = RTCPeerConnection(RTCConfiguration(iceServers=get_webrtc_server_ice_servers()))
         normalized_mode = mode.strip().lower()
         self._shared_clock = _SharedWallClock()

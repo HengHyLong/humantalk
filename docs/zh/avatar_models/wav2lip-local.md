@@ -78,3 +78,16 @@ local Wav2Lip 默认使用 `easy_improved` 后处理。前端提供 `auto`、`ba
 | `OPENTALKING_WAV2LIP_MAX_LONG_EDGE` | `832` | 与 OmniRT CUDA quickstart 默认值一致，让渲染延迟更接近实时；只有优先保留原始分辨率时才设 `0` |
 | `OPENTALKING_WAV2LIP_JPEG_QUALITY` | `85` | 输出帧 JPEG 质量，越高画面越好但带宽更大 |
 | `OPENTALKING_PREWARM_AVATARS` | `singer` | 服务启动时提前预热常用形象 |
+
+前端全屏展示高清竖屏形象时，还要同时提高上传保留尺寸和 WebRTC 编码码率。例如：
+
+```bash
+export OPENTALKING_WAV2LIP_MAX_LONG_EDGE=0
+export OPENTALKING_WAV2LIP_JPEG_QUALITY=95
+export OPENTALKING_CUSTOM_AVATAR_MAX_WIDTH=1080
+export OPENTALKING_CUSTOM_AVATAR_MAX_HEIGHT=1920
+export OPENTALKING_WEBRTC_VIDEO_START_BITRATE=3000000
+export OPENTALKING_WEBRTC_VIDEO_MAX_BITRATE=6000000
+```
+
+上传尺寸只对新上传或重新上传的 Avatar 生效。码率单位为 bit/s；提高码率会增加出口带宽，网络不稳定时应逐步下调。
