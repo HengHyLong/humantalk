@@ -94,3 +94,80 @@ def test_file_upload_uses_server_side_bearer_key(tmp_path, monkeypatch):
         "Authorization": "Bearer server-only-key",
         "Accept": "application/json",
     }
+
+
+def test_discovery_includes_datasets_created_in_dify_console(tmp_path, monkeypatch):
+    def fake_request(method: str, url: str, **kwargs: object) -> httpx.Response:
+        assert method == "GET"
+        assert url == "http://dify.test/v1/datasets"
+        assert kwargs["params"] == {"page": 1, "limit": 100}
+        return _response(
+            {
+                "data": [
+                    {"id": "dataset-001", "name": "已登记知识库"},
+                    {"id": "c0393c81-cce3-4ec4-8d1e-96a0ffdf9ed7", "name": "Dify 网页知识库"},
+                ],
+                "has_more": False,
+            }
+        )
+
+    monkeypatch.setattr(httpx, "request", fake_request)
+    records = _index(tmp_path).discover_knowledge_base_records()
+
+    assert records["kb-001"]["name"] == "已登记知识库"
+    discovered_id = "kb_c0393c81cce34ec48d1e96a0ffdf9ed7"
+    assert records[discovered_id] == {
+        "knowledge_base_id": discovered_id,
+        "name": "Dify 网页知识库",
+        "exhibition_id": "",
+        "namespace_id": "default",
+        "dify_dataset_id": "c0393c81-cce3-4ec4-8d1e-96a0ffdf9ed7",
+        "status": "active",
+    }
+
+
+def test_sync_exhibition_bindings_supports_many_and_unbinds_removed(tmp_path):
+    index = DifyKnowledgeIndex(
+        root=tmp_path,
+        base_url="http://dify.test/v1",
+        api_key="server-only-key",
+        default_namespace_id="namespace-cncc-2026",
+        registry={
+            "kb-old": {
+                "name": "旧知识库",
+                "exhibition_id": "expo-cncc",
+                "namespace_id": "namespace-cncc-2026",
+                "dify_dataset_id": "dataset-old",
+                "status": "active",
+            },
+            "kb-a": {
+                "name": "知识库 A",
+                "exhibition_id": "other-expo",
+                "namespace_id": "namespace-cncc-2026",
+                "dify_dataset_id": "dataset-a",
+                "status": "active",
+            },
+            "kb-b": {
+                "name": "知识库 B",
+                "exhibition_id": "",
+                "namespace_id": "namespace-cncc-2026",
+                "dify_dataset_id": "dataset-b",
+                "status": "active",
+            },
+        },
+    )
+
+    bound = index.sync_exhibition_bindings(
+        exhibition_id="expo-cncc",
+        knowledge_base_ids=["kb-a", "kb-b", "kb-a"],
+        previous_knowledge_base_ids=["kb-old"],
+    )
+
+    assert [record["knowledge_base_id"] for record in bound] == ["kb-a", "kb-b"]
+    records = index.knowledge_base_records()
+    assert records["kb-a"]["exhibition_id"] == "expo-cncc"
+    assert records["kb-b"]["exhibition_id"] == "expo-cncc"
+    assert records["kb-old"]["exhibition_id"] == ""
+    with pytest.raises(DifyKnowledgeError) as caught:
+        index.validate_scope(kb_id="kb-old", exhibition_id="expo-cncc")
+    assert caught.value.code == "KNOWLEDGE_BASE_EXHIBITION_MISMATCH"

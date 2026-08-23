@@ -59,6 +59,8 @@ class DifyKnowledgeIndex:
         self.api_key = api_key.strip()
         self.dataset_id = dataset_id.strip()
         self.default_knowledge_base_id = default_knowledge_base_id.strip()
+        self.default_exhibition_id = default_exhibition_id.strip()
+        self.default_namespace_id = default_namespace_id.strip() or "default"
         self.dataset_map = self._parse_string_map(dataset_map)
         self._configured_registry = self._parse_registry(registry)
         if self.dataset_id and self.default_knowledge_base_id:
@@ -249,7 +251,7 @@ class DifyKnowledgeIndex:
                 code="KNOWLEDGE_BASE_NOT_FOUND",
                 status_code=404,
             )
-        if exhibition_id and record["exhibition_id"] and record["exhibition_id"] != exhibition_id:
+        if exhibition_id and record["exhibition_id"] != exhibition_id:
             raise DifyKnowledgeError(
                 "知识库不属于当前展会",
                 code="KNOWLEDGE_BASE_EXHIBITION_MISMATCH",
@@ -268,6 +270,93 @@ class DifyKnowledgeIndex:
         records.update(self._load_registry_file())
         return records
 
+    def discover_knowledge_base_records(self) -> dict[str, dict[str, str]]:
+        """Return registry mappings plus datasets that only exist in Dify.
+
+        Dify datasets created from the Dify web console do not automatically
+        have an OpenTalking logical knowledge-base ID. The generated ID is
+        deterministic, so the Admin UI can select an unregistered dataset and
+        persist the same ID when the exhibition binding is saved.
+        """
+
+        records = self.knowledge_base_records()
+        by_dataset_id = {
+            record["dify_dataset_id"]: knowledge_base_id
+            for knowledge_base_id, record in records.items()
+            if record.get("dify_dataset_id")
+        }
+        for dataset in self.list_datasets():
+            dataset_id = str(dataset.get("id", "") or "").strip()
+            if not dataset_id:
+                continue
+            knowledge_base_id = by_dataset_id.get(dataset_id) or self._logical_id_for_dataset(
+                dataset_id
+            )
+            existing = records.get(knowledge_base_id)
+            if existing is not None:
+                remote_name = str(dataset.get("name", "") or "").strip()
+                if remote_name:
+                    records[knowledge_base_id] = {**existing, "name": remote_name}
+                continue
+            records[knowledge_base_id] = {
+                "knowledge_base_id": knowledge_base_id,
+                "name": str(dataset.get("name", "") or knowledge_base_id).strip(),
+                "exhibition_id": "",
+                "namespace_id": self.default_namespace_id,
+                "dify_dataset_id": dataset_id,
+                "status": "active",
+            }
+            by_dataset_id[dataset_id] = knowledge_base_id
+        return records
+
+    def sync_exhibition_bindings(
+        self,
+        *,
+        exhibition_id: str,
+        knowledge_base_ids: list[str],
+        previous_knowledge_base_ids: list[str] | None = None,
+    ) -> list[dict[str, str]]:
+        """Atomically bind multiple logical knowledge bases to one exhibition."""
+
+        clean_exhibition_id = exhibition_id.strip()
+        if not clean_exhibition_id:
+            raise ValueError("exhibition id must not be empty")
+        selected_ids = self._unique_ids(knowledge_base_ids)
+        previous_ids = self._unique_ids(previous_knowledge_base_ids or [])
+        if not selected_ids and not previous_ids:
+            return []
+        records = self.knowledge_base_records()
+        missing_ids = [item for item in selected_ids if item not in records]
+        if missing_ids:
+            discovered = self.discover_knowledge_base_records()
+            records.update({item: discovered[item] for item in missing_ids if item in discovered})
+            missing_ids = [item for item in missing_ids if item not in records]
+        if missing_ids:
+            raise DifyKnowledgeError(
+                f"知识库不存在: {', '.join(missing_ids)}",
+                code="KNOWLEDGE_BASE_NOT_FOUND",
+                status_code=404,
+            )
+
+        with self._state_lock:
+            current = self.knowledge_base_records()
+            for knowledge_base_id in selected_ids:
+                source = records[knowledge_base_id]
+                current[knowledge_base_id] = {
+                    **source,
+                    "knowledge_base_id": knowledge_base_id,
+                    "exhibition_id": clean_exhibition_id,
+                    "namespace_id": source.get("namespace_id") or self.default_namespace_id,
+                    "status": "active",
+                }
+            for knowledge_base_id in set(previous_ids) - set(selected_ids):
+                source = current.get(knowledge_base_id)
+                if source and source.get("exhibition_id") == clean_exhibition_id:
+                    current[knowledge_base_id] = {**source, "exhibition_id": ""}
+            self._write_registry_records(current)
+            self.dataset_map.update(self._dataset_map_from_records(current))
+        return [current[item] for item in selected_ids]
+
     def set_knowledge_base_record(self, record: dict[str, str]) -> dict[str, str]:
         required = (
             "knowledge_base_id",
@@ -283,13 +372,7 @@ class DifyKnowledgeIndex:
         with self._state_lock:
             records = self.knowledge_base_records()
             records[normalized["knowledge_base_id"]] = normalized
-            self.registry_path.parent.mkdir(parents=True, exist_ok=True)
-            temporary = self.registry_path.with_suffix(".tmp")
-            temporary.write_text(
-                json.dumps(records, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-            temporary.replace(self.registry_path)
+            self._write_registry_records(records)
             self.dataset_map[normalized["knowledge_base_id"]] = normalized["dify_dataset_id"]
         return normalized
 
@@ -300,6 +383,27 @@ class DifyKnowledgeIndex:
         if description.strip():
             payload["description"] = description.strip()
         return self._request_json("POST", "/datasets", json=payload)
+
+    def list_datasets(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        """List every Dify dataset available to the server-side API key."""
+
+        page_size = min(max(1, int(limit)), 100)
+        page = 1
+        datasets: list[dict[str, Any]] = []
+        while page <= 100:
+            payload = self._request_json(
+                "GET",
+                "/datasets",
+                params={"page": page, "limit": page_size},
+            )
+            data = payload.get("data", [])
+            if not isinstance(data, list):
+                break
+            datasets.extend(item for item in data if isinstance(item, dict))
+            if not bool(payload.get("has_more")) or not data:
+                break
+            page += 1
+        return datasets
 
     @staticmethod
     def dataset_id_from_response(payload: dict[str, Any]) -> str:
@@ -436,6 +540,31 @@ class DifyKnowledgeIndex:
         except (FileNotFoundError, json.JSONDecodeError, OSError):
             return {}
         return self._parse_registry(payload)
+
+    def _write_registry_records(self, records: dict[str, dict[str, str]]) -> None:
+        self.registry_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self.registry_path.with_suffix(self.registry_path.suffix + ".tmp")
+        temporary.write_text(
+            json.dumps(records, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        temporary.replace(self.registry_path)
+
+    @staticmethod
+    def _logical_id_for_dataset(dataset_id: str) -> str:
+        compact = "".join(character for character in dataset_id.lower() if character.isalnum())
+        return f"kb_{compact or dataset_id.strip()}"
+
+    @staticmethod
+    def _unique_ids(values: list[str]) -> list[str]:
+        result: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            clean_value = str(value or "").strip()
+            if clean_value and clean_value not in seen:
+                result.append(clean_value)
+                seen.add(clean_value)
+        return result
 
     @classmethod
     def _parse_registry(cls, source: str | dict[str, Any] | None) -> dict[str, dict[str, str]]:

@@ -11,6 +11,7 @@ from httpx import ASGITransport, AsyncClient
 
 from apps.api.routes import agent as agent_routes
 from opentalking.agent import knowledge_store as knowledge_store_module
+from opentalking.agent.dify_index import DifyKnowledgeIndex
 from opentalking.agent.knowledge_index import (
     LightRAGKnowledgeIndex,
     LightRAGSearchResult,
@@ -1315,6 +1316,70 @@ async def test_agent_knowledge_base_routes_create_list_and_avatar_selection(
         loaded = await client.get("/agent/avatars/singer/knowledge-bases")
         assert loaded.status_code == 200
         assert loaded.json()["knowledge_base_ids"] == [created["id"]]
+
+
+@pytest.mark.asyncio
+async def test_agent_dify_list_discovers_all_remote_datasets(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    index = DifyKnowledgeIndex(
+        root=tmp_path / "knowledge",
+        base_url="http://dify.test/v1",
+        api_key="server-only-key",
+        registry={
+            "kb-known": {
+                "name": "已登记知识库",
+                "exhibition_id": "expo-test",
+                "namespace_id": "namespace-test",
+                "dify_dataset_id": "dataset-known",
+                "status": "active",
+            }
+        },
+    )
+    store = KnowledgeStore(
+        db_path=tmp_path / "agent.sqlite",
+        knowledge_root=tmp_path / "knowledge",
+        knowledge_index=index,
+    )
+
+    def fake_request(method: str, url: str, **_kwargs: object) -> httpx.Response:
+        request = httpx.Request(method, url)
+        if url == "http://dify.test/v1/datasets":
+            return httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {"id": "dataset-known", "name": "已登记知识库"},
+                        {"id": "dataset-second", "name": "第二知识库"},
+                        {"id": "dataset-third", "name": "第三知识库"},
+                    ],
+                    "has_more": False,
+                },
+                request=request,
+            )
+        if url.endswith("/documents"):
+            return httpx.Response(
+                200,
+                json={"data": [], "total": 0, "has_more": False},
+                request=request,
+            )
+        raise AssertionError(f"unexpected Dify request: {method} {url}")
+
+    monkeypatch.setattr(httpx, "request", fake_request)
+    monkeypatch.setattr(agent_routes, "default_knowledge_store", lambda: store)
+    transport = ASGITransport(app=api_app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/agent/knowledge-bases")
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert len(payload["knowledge_bases"]) == 3
+    assert {item["name"] for item in payload["knowledge_base_summaries"]} == {
+        "已登记知识库",
+        "第二知识库",
+        "第三知识库",
+    }
 
 
 @pytest.mark.asyncio

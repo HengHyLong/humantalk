@@ -29,6 +29,23 @@ OPENTALKING_AGENT_DIFY_KNOWLEDGE_BASE_REGISTRY={"kb-001":{"name":"四川博览�
 
 也可以把 JSON 放在 `OPENTALKING_AGENT_DIFY_REGISTRY_PATH` 指定的文件中。
 
+## Dify 网页知识库发现与展会绑定
+
+`GET /agent/knowledge-bases` 会合并本地 registry 和当前服务端 Dify API Key
+可访问的 `/datasets` 列表。因此，直接在 Dify 网页创建的知识库也会出现在 Admin
+的“数字人与知识库”选择区；后端会为尚未登记的 dataset 生成稳定的
+`knowledge_base_id`，但不会把 Dify dataset ID 返回浏览器。
+
+在“本届工作台 → 数字人与知识库”中保存运行配置时，后端会把选中的一个或多个
+`knowledgeBaseIds` 一次性同步到 Dify registry，并把 registry 中的
+`exhibition_id` 更新为展会记录的真实 ID。取消选择的旧知识库会保留映射，但清空
+展会归属，后续可重新绑定到其他展会。默认 registry 文件位于
+`OPENTALKING_AGENT_KNOWLEDGE_ROOT/knowledge_base_registry.json`；如配置了
+`OPENTALKING_AGENT_DIFY_REGISTRY_PATH`，则以指定路径为准。
+
+如果 Dify 的 dataset 列表接口暂时不可用，列表接口会回退到已登记的 registry，
+不会影响已绑定知识库的召回。
+
 ## 数字人问答绑定多个知识库
 
 前端只传稳定的 `knowledge_base_id`，不要传 Dify 的 dataset ID。创建会话时可以绑定一个或多个知识库：

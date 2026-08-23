@@ -30,6 +30,8 @@ from .event_import import (
     public_preview,
 )
 from apps.api.routes.runtime_config import RuntimeConfigPayload, apply_runtime_config
+from opentalking.agent.context_builder import default_knowledge_store
+from opentalking.agent.dify_index import DifyKnowledgeError, DifyKnowledgeIndex
 from opentalking.scene_assets import SceneAssetStore
 
 router = APIRouter(prefix="/api/v1", tags=["admin"])
@@ -682,6 +684,53 @@ def _event_exhibition_id(item: dict[str, Any] | None) -> str | None:
     return (item or {}).get("exhibitionId") or (item or {}).get("exhibition_id")
 
 
+def _knowledge_base_ids(item: dict[str, Any] | None) -> list[str]:
+    raw = (item or {}).get("knowledgeBaseIds", (item or {}).get("knowledge_base_ids", []))
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "KNOWLEDGE_BASE_IDS_INVALID", "detail": "knowledgeBaseIds 必须是数组"},
+        )
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in raw:
+        knowledge_base_id = str(value or "").strip()
+        if knowledge_base_id and knowledge_base_id not in seen:
+            result.append(knowledge_base_id)
+            seen.add(knowledge_base_id)
+    return result
+
+
+def _sync_exhibition_knowledge_bases(
+    exhibition_id: str,
+    data: dict[str, Any],
+    before: dict[str, Any] | None = None,
+) -> None:
+    selected_ids = _knowledge_base_ids(data)
+    data["knowledgeBaseIds"] = selected_ids
+    index = default_knowledge_store().knowledge_index
+    if not isinstance(index, DifyKnowledgeIndex):
+        return
+    try:
+        index.sync_exhibition_bindings(
+            exhibition_id=exhibition_id,
+            knowledge_base_ids=selected_ids,
+            previous_knowledge_base_ids=_knowledge_base_ids(before),
+        )
+    except DifyKnowledgeError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={"code": exc.code, "detail": str(exc)},
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "KNOWLEDGE_BASE_BINDING_INVALID", "detail": str(exc)},
+        ) from exc
+
+
 def _welcome_wake_words(data: dict[str, Any]) -> list[str]:
     raw = data.get("wakeWords", data.get("wake_words", []))
     if isinstance(raw, str):
@@ -1291,6 +1340,13 @@ def create_event(resource: str, request: Request, body: RecordBody, auth: dict[s
     _require(store, auth, permission)
     _validate_record(store, resource, body.data)
     saved = store.save_record(resource, body.data, _event_exhibition_id(body.data))
+    try:
+        if resource == "exhibitions":
+            _sync_exhibition_knowledge_bases(saved["id"], saved)
+            saved = store.save_record(resource, saved, _event_exhibition_id(saved))
+    except Exception:
+        store.delete_record(resource, saved["id"])
+        raise
     _audit(request, auth, action="create", resource_type=resource, resource_id=saved["id"], before=None, after=saved)
     return saved
 
@@ -1310,6 +1366,13 @@ def update_event(resource: str, record_id: str, request: Request, body: RecordBo
     data = {**before, **body.data, "id": record_id}
     _validate_record(store, resource, data, record_id)
     saved = store.save_record(resource, data, _event_exhibition_id(data))
+    try:
+        if resource == "exhibitions":
+            _sync_exhibition_knowledge_bases(record_id, saved, before)
+            saved = store.save_record(resource, saved, _event_exhibition_id(saved))
+    except Exception:
+        store.save_record(resource, before, _event_exhibition_id(before))
+        raise
     _audit(request, auth, action="update", resource_type=resource, resource_id=record_id, before=before, after=saved)
     return saved
 

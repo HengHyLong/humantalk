@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from typing import Any
 
@@ -14,6 +15,7 @@ from opentalking.agent.dify_index import DifyKnowledgeError, DifyKnowledgeIndex
 
 router = APIRouter(prefix="/api/v1/admin/knowledge", tags=["admin-knowledge"])
 MAX_DOCUMENT_BYTES = 20 * 1024 * 1024
+logger = logging.getLogger(__name__)
 
 
 class KnowledgeBaseCreateRequest(BaseModel):
@@ -128,7 +130,11 @@ async def list_knowledge_bases(
     trace_id = _trace_id()
     try:
         index = _dify_index()
-        records = index.knowledge_base_records().values()
+        try:
+            records = index.discover_knowledge_base_records().values()
+        except DifyKnowledgeError:
+            logger.warning("Dify dataset discovery failed; using registry only", exc_info=True)
+            records = index.knowledge_base_records().values()
         items = [
             _record_response(record)
             for record in records

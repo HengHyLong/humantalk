@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import tempfile
 import uuid
 from dataclasses import asdict
@@ -18,6 +19,7 @@ from opentalking.agent.knowledge_store import (
 )
 
 router = APIRouter(prefix="/agent", tags=["agent"])
+logger = logging.getLogger(__name__)
 
 
 class AgentOptionsResponse(BaseModel):
@@ -247,7 +249,14 @@ async def list_knowledge_bases() -> KnowledgeBasesResponse:
         store = default_knowledge_store()
         if isinstance(store.knowledge_index, DifyKnowledgeIndex):
             summaries: list[KnowledgeBaseResponse] = []
-            for record in store.knowledge_index.knowledge_base_records().values():
+            try:
+                records = store.knowledge_index.discover_knowledge_base_records()
+            except DifyKnowledgeError:
+                # Keep registered knowledge bases visible if Dify discovery is
+                # temporarily unavailable or unsupported by the configured key.
+                logger.warning("Dify dataset discovery failed; using registry only", exc_info=True)
+                records = store.knowledge_index.knowledge_base_records()
+            for record in records.values():
                 document_count = 0
                 ready_document_count = 0
                 try:

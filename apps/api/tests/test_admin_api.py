@@ -10,6 +10,7 @@ from apps.api.admin import AdminStore
 from apps.api.admin.middleware import AdminTraceMiddleware
 from apps.api.admin.routes import public_router, router
 from apps.api.admin.security import password_hasher
+from opentalking.agent.dify_index import DifyKnowledgeIndex
 
 
 def _client(tmp_path) -> TestClient:
@@ -60,6 +61,50 @@ def test_exhibition_filter_and_relation_validation(tmp_path) -> None:
         assert response.json()["total"] == 1
         invalid = client.post("/api/v1/admin/event/exhibits", headers=headers, json={"exhibitionId": "expo-test", "exhibitorId": "missing", "name": "bad"})
         assert invalid.status_code == 404
+
+
+def test_exhibition_save_syncs_multiple_dify_registry_bindings(tmp_path, monkeypatch) -> None:
+    index = DifyKnowledgeIndex(
+        root=tmp_path / "knowledge",
+        base_url="http://dify.test/v1",
+        api_key="server-only-key",
+        default_namespace_id="namespace-cncc-2026",
+        registry={
+            "kb-cncc-main": {
+                "name": "计算机大会主知识库",
+                "exhibition_id": "old-exhibition",
+                "namespace_id": "namespace-cncc-2026",
+                "dify_dataset_id": "dataset-cncc-main",
+                "status": "active",
+            },
+            "kb-cncc-agenda": {
+                "name": "计算机大会日程知识库",
+                "exhibition_id": "",
+                "namespace_id": "namespace-cncc-2026",
+                "dify_dataset_id": "dataset-cncc-agenda",
+                "status": "active",
+            },
+        },
+    )
+    monkeypatch.setattr(
+        admin_routes,
+        "default_knowledge_store",
+        lambda: SimpleNamespace(knowledge_index=index),
+    )
+
+    with _client(tmp_path) as client:
+        headers = _login(client)
+        response = client.patch(
+            "/api/v1/admin/event/exhibitions/expo-test",
+            headers=headers,
+            json={"knowledgeBaseIds": ["kb-cncc-main", "kb-cncc-agenda", "kb-cncc-main"]},
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()["knowledgeBaseIds"] == ["kb-cncc-main", "kb-cncc-agenda"]
+        records = index.knowledge_base_records()
+        assert records["kb-cncc-main"]["exhibition_id"] == "expo-test"
+        assert records["kb-cncc-agenda"]["exhibition_id"] == "expo-test"
 
 
 def test_point_creation_infers_exhibition_from_venue(tmp_path) -> None:
