@@ -53,6 +53,20 @@ def test_qa_settings_are_loaded_from_server_environment(monkeypatch) -> None:
     assert settings.qa_fuzzy_threshold == 0.81
 
 
+def test_qa_prefers_agent_dify_connection_used_by_direct_rag() -> None:
+    settings = SimpleNamespace(
+        dify_base_url="https://api.dify.ai/v1",
+        dify_api_key="legacy-key",
+        agent_dify_base_url="http://dify.internal/v1",
+        agent_dify_api_key="agent-key",
+    )
+
+    base_url, api_key = qa_routes._resolve_dify_connection(settings)
+
+    assert base_url == "http://dify.internal/v1"
+    assert api_key == "agent-key"
+
+
 def test_qa_resolves_multiple_logical_knowledge_bases_for_one_exhibition() -> None:
     class MappingStore:
         def list_records(self, kind: str, *, exhibition_id: str | None = None):

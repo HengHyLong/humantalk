@@ -76,6 +76,19 @@ def _setting(settings: object, name: str, default: object) -> object:
     return getattr(settings, name, default)
 
 
+def _resolve_dify_connection(settings: object) -> tuple[str, str]:
+    """Prefer the Agent Dify pair used by knowledge management and direct RAG."""
+
+    agent_base_url = str(_setting(settings, "agent_dify_base_url", "") or "").strip()
+    agent_api_key = str(_setting(settings, "agent_dify_api_key", "") or "").strip()
+    legacy_base_url = str(_setting(settings, "dify_base_url", "") or "").strip()
+    legacy_api_key = str(_setting(settings, "dify_api_key", "") or "").strip()
+    return (
+        agent_base_url or legacy_base_url or "https://api.dify.ai/v1",
+        agent_api_key or legacy_api_key,
+    )
+
+
 def _resolve_exhibition_id(store: object, exhibition_id: str) -> str:
     if exhibition_id != "current":
         return exhibition_id
@@ -321,15 +334,7 @@ async def query_exhibition_qa(
         resolved_exhibition_id,
         requested_kb_ids,
     )
-    dify_base_url = (
-        str(_setting(settings, "dify_base_url", "") or "").strip()
-        or str(_setting(settings, "agent_dify_base_url", "") or "").strip()
-        or "https://api.dify.ai/v1"
-    )
-    dify_key = (
-        str(_setting(settings, "dify_api_key", "") or "").strip()
-        or str(_setting(settings, "agent_dify_api_key", "") or "").strip()
-    )
+    dify_base_url, dify_key = _resolve_dify_connection(settings)
     if bool(dify_targets) != bool(dify_key):
         retriever = _MisconfiguredRetriever()
     elif dify_targets and dify_key:
