@@ -163,6 +163,11 @@ class Wav2LipRealtimeRuntime:
         return threads
 
     def render_chunk(self, session: RealtimeAvatarSession, pcm_s16le: bytes) -> bytes:
+        frames = self.render_chunk_frames(session, pcm_s16le)
+        return encode_jpeg_sequence([self._encode_jpeg_bgr(frame) for frame in frames])
+
+    def render_chunk_frames(self, session: RealtimeAvatarSession, pcm_s16le: bytes) -> list[np.ndarray]:
+        """Render BGR frames without the JPEG round-trip used by remote protocols."""
         state = self._session_state(session)
         bundle = self._model_bundle()
         torch = bundle["torch"]
@@ -184,9 +189,7 @@ class Wav2LipRealtimeRuntime:
             start_frame=state.emitted_frames,
         )
         if not mel_chunks:
-            return encode_jpeg_sequence(
-                [self._encode_jpeg_bgr(state.frame_at(state.emitted_frames).base_frame)]
-            )
+            return [state.frame_at(state.emitted_frames).base_frame.copy()]
 
         prepared_for_chunk = [
             state.frame_at(state.emitted_frames + idx) for idx in range(len(mel_chunks))
@@ -202,7 +205,7 @@ class Wav2LipRealtimeRuntime:
         mel_tensor = torch.FloatTensor(
             np.transpose(np.reshape(mel_batch, (len(mel_chunks), 80, MEL_STEP_SIZE, 1)), (0, 3, 1, 2))
         ).to(self.device)
-        frames: list[bytes] = []
+        frames: list[np.ndarray] = []
         with torch.no_grad():
             for start in range(0, len(mel_chunks), self.batch_size):
                 end = min(len(mel_chunks), start + self.batch_size)
@@ -210,7 +213,7 @@ class Wav2LipRealtimeRuntime:
                 pred_np = pred.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
                 for local_offset, patch in enumerate(pred_np):
                     frames.append(
-                        self._compose_frame(
+                        self._compose_frame_bgr(
                             prepared_for_chunk[start + local_offset],
                             patch,
                             input_size,
@@ -218,9 +221,7 @@ class Wav2LipRealtimeRuntime:
                         )
                     )
         state.emitted_frames += len(frames)
-        return encode_jpeg_sequence(
-            frames or [self._encode_jpeg_bgr(state.frame_at(state.emitted_frames).base_frame)]
-        )
+        return frames or [state.frame_at(state.emitted_frames).base_frame.copy()]
 
     def close_session(self, session_id: str) -> None:
         self._sessions.pop(session_id, None)
@@ -798,6 +799,17 @@ class Wav2LipRealtimeRuntime:
         input_size: int,
         postprocess_mode: str,
     ) -> bytes:
+        return self._encode_jpeg_bgr(
+            self._compose_frame_bgr(state, patch, input_size, postprocess_mode)
+        )
+
+    def _compose_frame_bgr(
+        self,
+        state: _PreparedFrame,
+        patch: np.ndarray,
+        input_size: int,
+        postprocess_mode: str,
+    ) -> np.ndarray:
         y1, y2, x1, x2 = state.coords
         frame = state.base_frame.copy()
         resized = cv2.resize(np.clip(patch, 0.0, 255.0).astype(np.uint8), (x2 - x1, y2 - y1))
@@ -820,7 +832,7 @@ class Wav2LipRealtimeRuntime:
         else:
             blended = blend_mouth_patch_basic(resized, original)
         frame[y1:y2, x1:x2] = blended
-        return self._encode_jpeg_bgr(frame)
+        return frame
 
     def _enhance_patch_gfpgan(self, patch_bgr: np.ndarray) -> np.ndarray:
         if self._gfpgan_restorer is None:

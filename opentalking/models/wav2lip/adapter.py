@@ -513,8 +513,12 @@ class Wav2LipAdapter:
     ) -> list[Wav2LipPrediction | _LegacyWav2LipPrediction]:
         if isinstance(avatar_state, FrameAvatarState):
             return self._infer_legacy(features, avatar_state)
-        payload = avatar_state.runtime.render_chunk(avatar_state.session, features.pcm_s16le)
-        frames = _decode_jpeg_sequence(payload)
+        render_frames = getattr(avatar_state.runtime, "render_chunk_frames", None)
+        if callable(render_frames):
+            frames = render_frames(avatar_state.session, features.pcm_s16le)
+        else:
+            payload = avatar_state.runtime.render_chunk(avatar_state.session, features.pcm_s16le)
+            frames = _decode_jpeg_sequence(payload)
         predictions: list[Wav2LipPrediction | _LegacyWav2LipPrediction] = []
         fps = max(1.0, float(avatar_state.manifest.fps))
         for frame in frames:

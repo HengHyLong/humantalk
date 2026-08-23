@@ -152,14 +152,21 @@ def _install_fake_wav2lip_runtime(monkeypatch) -> type:
             return self.states[session.session_id]
 
         def render_chunk(self, session, pcm_s16le):
-            self.rendered.append((session, pcm_s16le))
-            frames = []
-            for value in (32, 96):
-                image = Image.new("RGB", (session.video.width, session.video.height), (value, 8, 4))
+            frames = self.render_chunk_frames(session, pcm_s16le)
+            encoded = []
+            for frame in frames:
+                image = Image.fromarray(frame[:, :, ::-1], mode="RGB")
                 buffer = io.BytesIO()
                 image.save(buffer, format="JPEG")
-                frames.append(buffer.getvalue())
-            return encode_jpeg_sequence(frames)
+                encoded.append(buffer.getvalue())
+            return encode_jpeg_sequence(encoded)
+
+        def render_chunk_frames(self, session, pcm_s16le):
+            self.rendered.append((session, pcm_s16le))
+            return [
+                np.full((session.video.height, session.video.width, 3), (4, 8, value), dtype=np.uint8)
+                for value in (32, 96)
+            ]
 
     realtime_mod.AvatarAudioSpec = AvatarAudioSpec
     realtime_mod.AvatarVideoSpec = AvatarVideoSpec

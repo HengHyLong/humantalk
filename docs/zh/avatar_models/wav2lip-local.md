@@ -79,15 +79,15 @@ local Wav2Lip 默认使用 `easy_improved` 后处理。前端提供 `auto`、`ba
 | `OPENTALKING_WAV2LIP_JPEG_QUALITY` | `85` | 输出帧 JPEG 质量，越高画面越好但带宽更大 |
 | `OPENTALKING_PREWARM_AVATARS` | `singer` | 服务启动时提前预热常用形象 |
 
-前端全屏展示高清竖屏形象时，还要同时提高上传保留尺寸和 WebRTC 编码码率。例如：
+前端全屏展示高清竖屏形象时，可以保留 1080×1920 上传源，但实时渲染建议先限制为 720×1280，并使用 2–4 Mbps WebRTC 码率：
 
 ```bash
-export OPENTALKING_WAV2LIP_MAX_LONG_EDGE=0
-export OPENTALKING_WAV2LIP_JPEG_QUALITY=95
+export OPENTALKING_WAV2LIP_MAX_LONG_EDGE=1280
+export OPENTALKING_WAV2LIP_JPEG_QUALITY=90
 export OPENTALKING_CUSTOM_AVATAR_MAX_WIDTH=1080
 export OPENTALKING_CUSTOM_AVATAR_MAX_HEIGHT=1920
-export OPENTALKING_WEBRTC_VIDEO_START_BITRATE=3000000
-export OPENTALKING_WEBRTC_VIDEO_MAX_BITRATE=6000000
+export OPENTALKING_WEBRTC_VIDEO_START_BITRATE=2000000
+export OPENTALKING_WEBRTC_VIDEO_MAX_BITRATE=4000000
 ```
 
-上传尺寸只对新上传或重新上传的 Avatar 生效。码率单位为 bit/s；提高码率会增加出口带宽，网络不稳定时应逐步下调。
+上传尺寸只对新上传或重新上传的 Avatar 生效。`MAX_LONG_EDGE=0` 更适合离线质量优先任务；实时会话使用 1080×1920、25fps 会显著增加逐帧合成与 WebRTC 编码开销。码率单位为 bit/s，网络不稳定时应逐步下调。
