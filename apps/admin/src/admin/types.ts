@@ -150,6 +150,7 @@ export type KnowledgeQaStatus = "draft" | "pending_review" | "published" | "arch
 
 export type KnowledgeQa = {
   id: string;
+  exhibitionId?: string;
   question: string;
   keywords: string[];
   answer: string;
@@ -165,6 +166,7 @@ export type KnowledgeQa = {
 
 export type ScriptTemplate = {
   id: string;
+  exhibitionId?: string;
   name: string;
   scene: "welcome" | "explain" | "shopping" | "emergency";
   content: string;
@@ -175,6 +177,7 @@ export type ScriptTemplate = {
 
 export type PublishPackage = {
   id: string;
+  exhibitionId?: string;
   name: string;
   exhibition: string;
   status: "draft" | "pending_review" | "published" | "rolled_back";
@@ -184,10 +187,17 @@ export type PublishPackage = {
   creator: string;
   reviewer?: string;
   updatedAt: string;
+  qaIds?: string[];
+  documentIds?: string[];
+  knowledgeBaseIds?: string[];
+  snapshotAt?: string;
+  publishedAt?: string;
+  rolledBackAt?: string;
 };
 
 export type MissPoolItem = {
   id: string;
+  exhibitionId?: string;
   question: string;
   count: number;
   firstAskedAt: string;

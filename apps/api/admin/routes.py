@@ -533,6 +533,327 @@ def _collection_permission(kind: str) -> str:
     return RESOURCE_PERMISSIONS.get(kind, "asset:avatar" if kind == "avatars" else "knowledge:document")
 
 
+QA_TRANSITIONS = {
+    "draft": {"pending_review"},
+    "pending_review": {"published", "draft"},
+    "published": {"archived"},
+    "archived": {"draft"},
+}
+PACKAGE_TRANSITIONS = {
+    "draft": {"pending_review"},
+    "pending_review": {"published", "draft"},
+    "published": {"rolled_back"},
+    "rolled_back": {"draft"},
+}
+
+
+def _operator_name(auth: dict[str, Any]) -> str:
+    user = auth.get("user") if isinstance(auth, dict) else None
+    if not isinstance(user, dict):
+        return "系统管理员"
+    return str(user.get("display_name") or user.get("username") or "系统管理员")
+
+
+def _resolve_knowledge_exhibition(
+    store: AdminStore,
+    data: dict[str, Any],
+) -> tuple[str, str]:
+    exhibition_id = str(
+        data.get("exhibitionId") or data.get("exhibition_id") or ""
+    ).strip()
+    display_value = str(
+        data.get("exhibition") or data.get("exhibitionName") or ""
+    ).strip()
+    exhibitions = store.list_records("exhibitions")
+    if not exhibition_id and display_value:
+        matched = next(
+            (
+                item
+                for item in exhibitions
+                if display_value
+                in {
+                    str(item.get("id") or "").strip(),
+                    str(item.get("name") or "").strip(),
+                    str(item.get("code") or "").strip(),
+                }
+            ),
+            None,
+        )
+        exhibition_id = str((matched or {}).get("id") or "").strip()
+    exhibition = next(
+        (
+            item
+            for item in exhibitions
+            if str(item.get("id") or "").strip() == exhibition_id
+        ),
+        None,
+    )
+    if exhibition is None:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "EXHIBITION_REQUIRED",
+                "detail": "请选择有效的所属展会",
+            },
+        )
+    exhibition_name = str(exhibition.get("name") or exhibition_id).strip()
+    data["exhibitionId"] = exhibition_id
+    data["exhibition"] = exhibition_name
+    return exhibition_id, exhibition_name
+
+
+def _normalize_keyword_list(value: Any) -> list[str]:
+    if isinstance(value, str):
+        values = re.split(r"[,，、\n]", value)
+    elif isinstance(value, list):
+        values = value
+    else:
+        values = []
+    return list(
+        dict.fromkeys(str(item or "").strip() for item in values if str(item or "").strip())
+    )
+
+
+def _qa_history_entry(
+    data: dict[str, Any],
+    *,
+    operator: str,
+    reason: str,
+) -> dict[str, Any]:
+    return {
+        "version": int(data.get("version") or 1),
+        "answer": str(data.get("answer") or ""),
+        "editor": operator,
+        "time": utc_now(),
+        "reason": reason,
+    }
+
+
+def _prepare_qa_record(
+    store: AdminStore,
+    data: dict[str, Any],
+    *,
+    before: dict[str, Any] | None,
+    operator: str,
+) -> dict[str, Any]:
+    exhibition_id, _ = _resolve_knowledge_exhibition(store, data)
+    question = str(data.get("question") or "").strip()
+    answer = str(data.get("answer") or "").strip()
+    if not question or not answer:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "QA_CONTENT_REQUIRED", "detail": "问题和官方答案不能为空"},
+        )
+    data["question"] = question
+    data["answer"] = answer
+    data["keywords"] = _normalize_keyword_list(data.get("keywords"))
+    data["category"] = str(data.get("category") or "未分类").strip() or "未分类"
+    data["exhibitionId"] = exhibition_id
+    requested_status = str(data.get("status") or "draft").strip().lower()
+    if requested_status not in {"draft", "pending_review", "published", "archived"}:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "QA_STATUS_INVALID", "detail": "问答状态不合法"},
+        )
+    if before is None:
+        data["status"] = "draft"
+        data["version"] = 1
+        data["creator"] = str(data.get("creator") or operator)
+        data["history"] = [
+            _qa_history_entry(data, operator=operator, reason="创建")
+        ]
+        return data
+
+    old_status = str(before.get("status") or "draft").strip().lower()
+    content_changed = any(
+        data.get(field) != before.get(field)
+        for field in ("question", "answer", "keywords", "category", "exhibitionId")
+    )
+    status_changed = requested_status != old_status
+    if status_changed and requested_status not in QA_TRANSITIONS.get(old_status, set()):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "QA_INVALID_TRANSITION",
+                "detail": f"不允许从 {old_status} 流转到 {requested_status}",
+            },
+        )
+    data["version"] = max(1, int(before.get("version") or 1))
+    history = list(before.get("history") or [])
+    if content_changed:
+        data["version"] += 1
+        if not status_changed and old_status in {"pending_review", "published", "archived"}:
+            requested_status = "draft"
+        history.append(_qa_history_entry(data, operator=operator, reason="编辑"))
+    if status_changed:
+        history.append(
+            _qa_history_entry(
+                data,
+                operator=operator,
+                reason={
+                    "pending_review": "提交审核",
+                    "published": "审核发布",
+                    "archived": "归档",
+                    "draft": "退回草稿",
+                }[requested_status],
+            )
+        )
+    data["status"] = requested_status
+    data["history"] = history
+    data["creator"] = str(before.get("creator") or data.get("creator") or operator)
+    if requested_status == "published":
+        data["reviewer"] = operator
+    return data
+
+
+def _prepare_script_record(
+    store: AdminStore,
+    data: dict[str, Any],
+    *,
+    operator: str,
+) -> dict[str, Any]:
+    exhibition_id, _ = _resolve_knowledge_exhibition(store, data)
+    name = str(data.get("name") or "").strip()
+    content = str(data.get("content") or "").strip()
+    scene = str(data.get("scene") or "welcome").strip().lower()
+    status = str(data.get("status") or "active").strip().lower()
+    if not name or not content:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "SCRIPT_CONTENT_REQUIRED", "detail": "话术名称和内容不能为空"},
+        )
+    if scene not in {"welcome", "explain", "shopping", "emergency"}:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "SCRIPT_SCENE_INVALID", "detail": "话术场景不合法"},
+        )
+    if status not in {"active", "inactive"}:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "SCRIPT_STATUS_INVALID", "detail": "话术状态不合法"},
+        )
+    data.update(
+        {
+            "name": name,
+            "content": content,
+            "scene": scene,
+            "status": status,
+            "exhibitionId": exhibition_id,
+            "creator": str(data.get("creator") or operator),
+        }
+    )
+    return data
+
+
+def _prepare_package_record(
+    store: AdminStore,
+    data: dict[str, Any],
+    *,
+    before: dict[str, Any] | None,
+    operator: str,
+) -> dict[str, Any]:
+    exhibition_id, _ = _resolve_knowledge_exhibition(store, data)
+    name = str(data.get("name") or "").strip()
+    if not name:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "PACKAGE_NAME_REQUIRED", "detail": "发布包名称不能为空"},
+        )
+    requested_status = str(data.get("status") or "draft").strip().lower()
+    if requested_status not in {"draft", "pending_review", "published", "rolled_back"}:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "PACKAGE_STATUS_INVALID", "detail": "发布包状态不合法"},
+        )
+    if before is None:
+        published_qa = store.list_records(
+            "qa", exhibition_id=exhibition_id, status="published"
+        )
+        published_documents = [
+            item
+            for item in store.list_records("documents", exhibition_id=exhibition_id)
+            if str(item.get("status") or "published").lower()
+            in {"published", "ready", "active"}
+        ]
+        exhibition = store.get_record("exhibitions", exhibition_id) or {}
+        existing_versions = [
+            int(item.get("version") or 0)
+            for item in store.list_records("packages", exhibition_id=exhibition_id)
+        ]
+        data.update(
+            {
+                "status": "draft",
+                "version": max(existing_versions, default=0) + 1,
+                "qaCount": len(published_qa),
+                "documentCount": len(published_documents),
+                "qaIds": [str(item.get("id") or "") for item in published_qa],
+                "documentIds": [
+                    str(item.get("id") or "") for item in published_documents
+                ],
+                "knowledgeBaseIds": list(exhibition.get("knowledgeBaseIds") or []),
+                "snapshotAt": utc_now(),
+                "creator": operator,
+            }
+        )
+        return data
+
+    old_status = str(before.get("status") or "draft").strip().lower()
+    if requested_status != old_status and requested_status not in PACKAGE_TRANSITIONS.get(
+        old_status, set()
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "PACKAGE_INVALID_TRANSITION",
+                "detail": f"不允许从 {old_status} 流转到 {requested_status}",
+            },
+        )
+    data["status"] = requested_status
+    data["exhibitionId"] = exhibition_id
+    if requested_status == "published" and requested_status != old_status:
+        for item in store.list_records("packages", exhibition_id=exhibition_id):
+            if item.get("id") != before.get("id") and item.get("status") == "published":
+                store.save_record(
+                    "packages",
+                    {**item, "status": "rolled_back", "rollbackReason": "由新发布包替换"},
+                    exhibition_id,
+                )
+        data["reviewer"] = operator
+        data["publishedAt"] = utc_now()
+    if requested_status == "rolled_back" and requested_status != old_status:
+        data["rolledBackBy"] = operator
+        data["rolledBackAt"] = utc_now()
+    return data
+
+
+def _prepare_knowledge_record(
+    store: AdminStore,
+    auth: dict[str, Any],
+    kind: str,
+    data: dict[str, Any],
+    *,
+    before: dict[str, Any] | None,
+) -> dict[str, Any]:
+    operator = _operator_name(auth)
+    if kind == "qa":
+        return _prepare_qa_record(
+            store,
+            data,
+            before=before,
+            operator=operator,
+        )
+    if kind == "scripts":
+        return _prepare_script_record(store, data, operator=operator)
+    if kind == "packages":
+        return _prepare_package_record(
+            store,
+            data,
+            before=before,
+            operator=operator,
+        )
+    return data
+
+
 @router.post("/admin/assets/gifs/upload")
 async def upload_gif(request: Request, file: UploadFile = File(...), exhibition_id: str | None = None, auth: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
     store = get_store(request)
@@ -571,9 +892,18 @@ def create_collection(resource: str, request: Request, body: RecordBody, auth: d
     kind = _collection_kind(domain, resource)
     store = get_store(request)
     _require(store, auth, _collection_permission(kind))
-    if kind in {"documents", "knowledge_bases", "qa", "scripts", "packages", "miss_pool"} and body.data.get("exhibitionId"):
-        _validate_record(store, "knowledge_bases" if kind == "documents" else kind, body.data)
-    saved = store.save_record(kind, body.data, body.data.get("exhibitionId"))
+    data = dict(body.data)
+    if kind in {"qa", "scripts", "packages"}:
+        data = _prepare_knowledge_record(
+            store,
+            auth,
+            kind,
+            data,
+            before=None,
+        )
+    elif kind in {"documents", "knowledge_bases", "miss_pool"} and data.get("exhibitionId"):
+        _validate_record(store, "knowledge_bases" if kind == "documents" else kind, data)
+    saved = store.save_record(kind, data, data.get("exhibitionId"))
     _audit(request, auth, action="create", resource_type=kind, resource_id=saved["id"], before=None, after=saved)
     return saved
 
@@ -655,7 +985,20 @@ def update_collection(resource: str, record_id: str, request: Request, body: Rec
     store = get_store(request)
     _require(store, auth, _collection_permission(kind))
     before = _record(store, kind, record_id) or {}
+    if not before:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "RESOURCE_NOT_FOUND", "detail": "资源不存在"},
+        )
     data = {**before, **body.data, "id": record_id}
+    if kind in {"qa", "scripts", "packages"}:
+        data = _prepare_knowledge_record(
+            store,
+            auth,
+            kind,
+            data,
+            before=before,
+        )
     saved = store.save_record(kind, data, data.get("exhibitionId"))
     _audit(request, auth, action="update", resource_type=kind, resource_id=record_id, before=before, after=saved)
     return saved
@@ -895,8 +1238,22 @@ def _validate_record(store: AdminStore, kind: str, data: dict[str, Any], record_
         if active_seconds < 10 or active_seconds > 600:
             raise HTTPException(status_code=400, detail={"code": "WAKE_WINDOW_INVALID", "detail": "休眠时间必须在 10～600 秒之间"})
         script = store.get_record("scripts", str(data.get("scriptId") or data.get("script_id") or ""))
-        if not script or script.get("scene") != "welcome":
-            raise HTTPException(status_code=400, detail={"code": "WELCOME_SCRIPT_INVALID", "detail": "欢迎配置必须关联有效的迎宾话术"})
+        if (
+            not script
+            or script.get("scene") != "welcome"
+            or script.get("status", "active") != "active"
+            or (
+                _event_exhibition_id(script)
+                and _event_exhibition_id(script) != exhibition_id
+            )
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "WELCOME_SCRIPT_INVALID",
+                    "detail": "欢迎配置必须关联当前展会已启用的迎宾话术",
+                },
+            )
         data["triggers"] = triggers
         data["wakeWords"] = wake_words
         data["wakeActiveSeconds"] = active_seconds
@@ -2045,6 +2402,14 @@ def public_config(exhibition_id: str, request: Request) -> dict[str, Any]:
     wake_words = _welcome_wake_words(welcome_config)
     wake_enabled = "唤醒词" in _welcome_triggers(welcome_config) and bool(wake_words)
     welcome_script = store.get_record("scripts", str(welcome_config.get("scriptId") or welcome_config.get("script_id") or "")) or {}
+    if (
+        welcome_script.get("status", "active") != "active"
+        or (
+            _event_exhibition_id(welcome_script)
+            and _event_exhibition_id(welcome_script) != exhibition_id
+        )
+    ):
+        welcome_script = {}
     configured_keywords = config.get("keywords", {"navigation": [], "exhibition_content": []})
     if not isinstance(configured_keywords, dict):
         configured_keywords = {"navigation": [], "exhibition_content": []}

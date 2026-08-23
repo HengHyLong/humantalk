@@ -173,6 +173,156 @@ def test_welcome_wake_word_validation_and_public_config(tmp_path) -> None:
         assert public.json()["welcome"]["text"] == "您好，欢迎来到测试展会。"
 
 
+def test_knowledge_qa_script_and_package_workflows(tmp_path) -> None:
+    with _client(tmp_path) as client:
+        headers = _login(client)
+
+        created_qa = client.post(
+            "/api/v1/admin/knowledge/qa",
+            headers=headers,
+            json={
+                "id": "qa-cncc-test",
+                "exhibitionId": "expo-test",
+                "question": "中国计算机大会由谁主办？",
+                "answer": "中国计算机大会由中国计算机学会主办。",
+                "keywords": ["CNCC主办单位", "CCF"],
+                "category": "大会信息",
+                "status": "published",
+            },
+        )
+        assert created_qa.status_code == 200, created_qa.text
+        assert created_qa.json()["status"] == "draft"
+        assert created_qa.json()["exhibitionId"] == "expo-test"
+        assert created_qa.json()["exhibition"] == "测试展会"
+        assert created_qa.json()["version"] == 1
+        assert created_qa.json()["history"][0]["reason"] == "创建"
+
+        invalid_transition = client.patch(
+            "/api/v1/admin/knowledge/qa/qa-cncc-test",
+            headers=headers,
+            json={"status": "published"},
+        )
+        assert invalid_transition.status_code == 409
+        assert invalid_transition.json()["detail"]["code"] == "QA_INVALID_TRANSITION"
+
+        submitted = client.patch(
+            "/api/v1/admin/knowledge/qa/qa-cncc-test",
+            headers=headers,
+            json={"status": "pending_review"},
+        )
+        assert submitted.status_code == 200
+        published = client.patch(
+            "/api/v1/admin/knowledge/qa/qa-cncc-test",
+            headers=headers,
+            json={"status": "published"},
+        )
+        assert published.status_code == 200, published.text
+        assert published.json()["reviewer"] == "系统管理员"
+        assert client.app.state.admin_store.list_records(
+            "qa", exhibition_id="expo-test", status="published"
+        )[0]["id"] == "qa-cncc-test"
+
+        edited = client.patch(
+            "/api/v1/admin/knowledge/qa/qa-cncc-test",
+            headers=headers,
+            json={"answer": "CNCC 由中国计算机学会（CCF）主办。"},
+        )
+        assert edited.status_code == 200
+        assert edited.json()["status"] == "draft"
+        assert edited.json()["version"] == 2
+        assert edited.json()["history"][-1]["reason"] == "编辑"
+
+        created_script = client.post(
+            "/api/v1/admin/knowledge/scripts",
+            headers=headers,
+            json={
+                "id": "script-cncc-welcome",
+                "exhibitionId": "expo-test",
+                "name": "CNCC 标准迎宾",
+                "scene": "welcome",
+                "content": "您好，欢迎来到中国计算机大会。",
+                "status": "active",
+            },
+        )
+        assert created_script.status_code == 200, created_script.text
+        assert created_script.json()["exhibition"] == "测试展会"
+
+        invalid_script = client.post(
+            "/api/v1/admin/knowledge/scripts",
+            headers=headers,
+            json={
+                "exhibitionId": "expo-test",
+                "name": "错误话术",
+                "scene": "unknown",
+                "content": "测试",
+            },
+        )
+        assert invalid_script.status_code == 422
+        assert invalid_script.json()["detail"]["code"] == "SCRIPT_SCENE_INVALID"
+
+        republished_draft = client.patch(
+            "/api/v1/admin/knowledge/qa/qa-cncc-test",
+            headers=headers,
+            json={"status": "pending_review"},
+        )
+        assert republished_draft.status_code == 200
+        republished = client.patch(
+            "/api/v1/admin/knowledge/qa/qa-cncc-test",
+            headers=headers,
+            json={"status": "published"},
+        )
+        assert republished.status_code == 200
+
+        first_package = client.post(
+            "/api/v1/admin/knowledge/packages",
+            headers=headers,
+            json={"name": "CNCC 知识发布包 v1", "exhibitionId": "expo-test"},
+        )
+        assert first_package.status_code == 200, first_package.text
+        assert first_package.json()["status"] == "draft"
+        assert first_package.json()["qaCount"] == 1
+        assert first_package.json()["qaIds"] == ["qa-cncc-test"]
+        first_id = first_package.json()["id"]
+
+        invalid_publish = client.patch(
+            f"/api/v1/admin/knowledge/packages/{first_id}",
+            headers=headers,
+            json={"status": "published"},
+        )
+        assert invalid_publish.status_code == 409
+        assert invalid_publish.json()["detail"]["code"] == "PACKAGE_INVALID_TRANSITION"
+
+        assert client.patch(
+            f"/api/v1/admin/knowledge/packages/{first_id}",
+            headers=headers,
+            json={"status": "pending_review"},
+        ).status_code == 200
+        assert client.patch(
+            f"/api/v1/admin/knowledge/packages/{first_id}",
+            headers=headers,
+            json={"status": "published"},
+        ).status_code == 200
+
+        second_package = client.post(
+            "/api/v1/admin/knowledge/packages",
+            headers=headers,
+            json={"name": "CNCC 知识发布包 v2", "exhibitionId": "expo-test"},
+        )
+        second_id = second_package.json()["id"]
+        assert second_package.json()["version"] == 2
+        assert client.patch(
+            f"/api/v1/admin/knowledge/packages/{second_id}",
+            headers=headers,
+            json={"status": "pending_review"},
+        ).status_code == 200
+        assert client.patch(
+            f"/api/v1/admin/knowledge/packages/{second_id}",
+            headers=headers,
+            json={"status": "published"},
+        ).status_code == 200
+        assert client.app.state.admin_store.get_record("packages", first_id)["status"] == "rolled_back"
+
+
 def test_lead_masking_navigation_and_trace(tmp_path) -> None:
     with _client(tmp_path) as client:
         store = client.app.state.admin_store

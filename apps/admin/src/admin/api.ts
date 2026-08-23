@@ -277,7 +277,7 @@ export interface AdminApiClient {
   saveShoppingStrategy(item: ShoppingStrategy): Promise<ShoppingStrategy>;
   deleteShoppingStrategy(id: string): Promise<void>;
   listPackages(): Promise<PublishPackage[]>;
-  createPackage(input: Pick<PublishPackage, "name" | "exhibition" | "qaCount" | "documentCount">): Promise<PublishPackage>;
+  createPackage(input: Pick<PublishPackage, "name" | "exhibitionId" | "exhibition" | "qaCount" | "documentCount">): Promise<PublishPackage>;
   transitionPackage(id: string, status: PublishPackage["status"]): Promise<PublishPackage>;
   listMissPool(): Promise<MissPoolItem[]>;
   resolveMiss(id: string, status: MissPoolItem["status"]): Promise<MissPoolItem>;
@@ -471,7 +471,7 @@ export class MockAdminApiClient implements AdminApiClient {
   async saveShoppingStrategy(item: ShoppingStrategy) { const exhibition = (await this.listExhibitions()).find((candidate) => candidate.id === item.exhibitionId); if (!exhibition) throw new Error("导购策略所属展会不存在"); const exhibits = await this.listExhibits(); const exhibitIds = (item.exhibitIds || []).filter((id) => exhibits.some((exhibit) => exhibit.id === id && exhibit.exhibitionId === item.exhibitionId)); if (exhibitIds.length !== (item.exhibitIds || []).length) throw new Error("导购策略关联的展品必须属于所选展会"); const saved = { ...item, exhibitionName: exhibition.name, exhibitIds, updatedAt: now() }; writeStore("shopping-strategies", [saved, ...(await this.listShoppingStrategies()).filter((candidate) => candidate.id !== item.id)]); return saved; }
   async deleteShoppingStrategy(id: string) { writeStore("shopping-strategies", (await this.listShoppingStrategies()).filter((item) => item.id !== id)); }
   async listPackages() { return readStore("packages", DEFAULT_PACKAGES); }
-  async createPackage(input: Pick<PublishPackage, "name" | "exhibition" | "qaCount" | "documentCount">) { const item: PublishPackage = { ...input, id: `pkg-${Date.now()}`, status: "draft", version: 1, creator: "当前用户", updatedAt: now() }; writeStore("packages", [item, ...await this.listPackages()]); return item; }
+  async createPackage(input: Pick<PublishPackage, "name" | "exhibitionId" | "exhibition" | "qaCount" | "documentCount">) { const item: PublishPackage = { ...input, id: `pkg-${Date.now()}`, status: "draft", version: 1, creator: "当前用户", updatedAt: now() }; writeStore("packages", [item, ...await this.listPackages()]); return item; }
   async transitionPackage(id: string, status: PublishPackage["status"]) { const list = await this.listPackages(); const next = list.map((item) => item.id === id ? { ...item, status, reviewer: status === "published" ? "当前用户" : item.reviewer, updatedAt: now() } : item); writeStore("packages", next); return next.find((item) => item.id === id) ?? list[0]; }
   async listMissPool() { return readStore("miss-pool", DEFAULT_MISS); }
   async resolveMiss(id: string, status: MissPoolItem["status"]) { const list = await this.listMissPool(); const next = list.map((item) => item.id === id ? { ...item, status } : item); writeStore("miss-pool", next); return next.find((item) => item.id === id) ?? list[0]; }
@@ -776,7 +776,9 @@ export class FetchAdminApiClient implements AdminApiClient {
   private async saveCollection<T>(domain: string, resource: string, item: JsonRecord): Promise<T> {
     const existing = Boolean(item.id) && !isClientDraftId(item.id);
     const path = existing ? `/admin/${domain}/${resource}/${encodeURIComponent(String(item.id))}` : `/admin/${domain}/${resource}`;
-    return this.request<T>(path, { method: existing ? "PATCH" : "POST", body: this.data(item) });
+    const payload = { ...item };
+    if (!existing) delete payload.id;
+    return this.request<T>(path, { method: existing ? "PATCH" : "POST", body: this.data(payload) });
   }
 
   private exhibition(item: JsonRecord): Exhibition {
@@ -814,7 +816,7 @@ export class FetchAdminApiClient implements AdminApiClient {
 
   private qa(item: JsonRecord): KnowledgeQa {
     const history = Array.isArray(item.history) ? item.history : [];
-    return { ...item, id: String(item.id || ""), question: String(item.question || item.title || ""), keywords: stringArray(item.keywords), answer: String(item.answer || ""), category: String(item.category || "未分类"), exhibition: String(item.exhibition || item.exhibitionName || ""), status: item.status === "pending_review" || item.status === "published" || item.status === "archived" ? item.status : "draft", version: Number(item.version || 1), creator: String(item.creator || item.createdBy || ""), reviewer: item.reviewer ? String(item.reviewer) : undefined, updatedAt: String(item.updatedAt || item.updated_at || ""), history: history.map((entry) => { const value = entry as JsonRecord; return { version: Number(value.version || 1), answer: String(value.answer || ""), editor: String(value.editor || ""), time: String(value.time || value.createdAt || ""), reason: String(value.reason || "") }; }) } as KnowledgeQa;
+    return { ...item, id: String(item.id || ""), exhibitionId: String(item.exhibitionId || item.exhibition_id || ""), question: String(item.question || item.title || ""), keywords: stringArray(item.keywords), answer: String(item.answer || ""), category: String(item.category || "未分类"), exhibition: String(item.exhibition || item.exhibitionName || ""), status: item.status === "pending_review" || item.status === "published" || item.status === "archived" ? item.status : "draft", version: Number(item.version || 1), creator: String(item.creator || item.createdBy || ""), reviewer: item.reviewer ? String(item.reviewer) : undefined, updatedAt: String(item.updatedAt || item.updated_at || ""), history: history.map((entry) => { const value = entry as JsonRecord; return { version: Number(value.version || 1), answer: String(value.answer || ""), editor: String(value.editor || ""), time: String(value.time || value.createdAt || ""), reason: String(value.reason || "") }; }) } as KnowledgeQa;
   }
 
   private lead(item: JsonRecord): Lead {
@@ -971,13 +973,13 @@ export class FetchAdminApiClient implements AdminApiClient {
   async saveQa(item: KnowledgeQa) { return this.saveCollection<KnowledgeQa>("knowledge", "qa", item as JsonRecord); }
   async transitionQa(id: string, status: KnowledgeQa["status"]) { return this.saveCollection<KnowledgeQa>("knowledge", "qa", { id, status }); }
   async deleteQa(id: string) { await this.request(`/admin/knowledge/qa/${encodeURIComponent(id)}`, { method: "DELETE" }); }
-  async listScripts() { return this.collection<ScriptTemplate>("knowledge", "scripts"); }
+  async listScripts() { return (await this.collection<JsonRecord>("knowledge", "scripts")).map((item) => ({ ...item, exhibitionId: String(item.exhibitionId || item.exhibition_id || "") } as ScriptTemplate)); }
   async saveScript(item: ScriptTemplate) { return this.saveCollection<ScriptTemplate>("knowledge", "scripts", item as JsonRecord); }
   async deleteScript(id: string) { await this.request(`/admin/knowledge/scripts/${encodeURIComponent(id)}`, { method: "DELETE" }); }
-  async listPackages() { return this.collection<PublishPackage>("knowledge", "packages"); }
-  async createPackage(input: Pick<PublishPackage, "name" | "exhibition" | "qaCount" | "documentCount">) { return this.saveCollection<PublishPackage>("knowledge", "packages", input as JsonRecord); }
+  async listPackages() { return (await this.collection<JsonRecord>("knowledge", "packages")).map((item) => ({ ...item, exhibitionId: String(item.exhibitionId || item.exhibition_id || "") } as PublishPackage)); }
+  async createPackage(input: Pick<PublishPackage, "name" | "exhibitionId" | "exhibition" | "qaCount" | "documentCount">) { return this.saveCollection<PublishPackage>("knowledge", "packages", input as JsonRecord); }
   async transitionPackage(id: string, status: PublishPackage["status"]) { return this.saveCollection<PublishPackage>("knowledge", "packages", { id, status }); }
-  async listMissPool() { return this.collection<MissPoolItem>("knowledge", "miss-pool"); }
+  async listMissPool() { return (await this.collection<JsonRecord>("knowledge", "miss-pool")).map((item) => ({ ...item, exhibitionId: String(item.exhibitionId || item.exhibition_id || "") } as MissPoolItem)); }
   async resolveMiss(id: string, status: MissPoolItem["status"]) { return this.saveCollection<MissPoolItem>("knowledge", "miss-pool", { id, status }); }
 
   async listWelcomeConfigs(exhibitionId?: string) {
