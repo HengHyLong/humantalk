@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
 import uuid
 from typing import Literal
 
@@ -11,11 +13,13 @@ from apps.api.services import session_service
 from apps.api.services.exhibition_qa import (
     DifyKnowledgeRetriever,
     AdminKnowledgeRetriever,
+    DifyKnowledgeTarget,
     ExhibitionQaService,
     LocalKnowledgeRetriever,
     KnowledgeRetrievalError,
     RetrievalResult,
     parse_dataset_map,
+    parse_dataset_ids_map,
 )
 from opentalking.agent.context_builder import default_knowledge_store
 
@@ -37,6 +41,7 @@ class QaQueryRequest(BaseModel):
     voice: str | None = None
     tts_provider: str | None = None
     tts_model: str | None = None
+    knowledge_base_ids: list[str] | None = Field(default=None, max_length=16)
 
 
 class QaSourceResponse(BaseModel):
@@ -45,6 +50,8 @@ class QaSourceResponse(BaseModel):
     excerpt: str
     score: float
     document_id: str | None = None
+    knowledge_base_id: str | None = None
+    namespace_id: str | None = None
 
 
 class QaQueryResponse(BaseModel):
@@ -103,6 +110,174 @@ def _resolve_dataset_id(settings: object, store: object, exhibition_id: str) -> 
     return str(_setting(settings, "dify_default_dataset_id", "") or "").strip()
 
 
+def _clean_ids(value: object) -> list[str]:
+    if isinstance(value, (list, tuple, set)):
+        values = value
+    elif value is None:
+        values = []
+    else:
+        values = [value]
+    result: list[str] = []
+    for item in values:
+        clean = str(item or "").strip()
+        if clean and clean not in result:
+            result.append(clean)
+    return result
+
+
+def _session_knowledge_base_ids(session: dict[str, object]) -> list[str]:
+    raw = session.get("knowledge_base_ids")
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except json.JSONDecodeError:
+            raw = []
+    ids = _clean_ids(raw)
+    if ids:
+        return ids
+    return _clean_ids(session.get("knowledge_base_id"))
+
+
+def _record_value(record: dict[str, object], *keys: str) -> str:
+    for key in keys:
+        value = str(record.get(key, "") or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _load_dify_registry(settings: object) -> dict[str, dict[str, str]]:
+    raw = str(_setting(settings, "agent_dify_knowledge_base_registry", "") or "").strip()
+    registry_path = str(_setting(settings, "agent_dify_registry_path", "") or "").strip()
+    if not raw and registry_path:
+        try:
+            raw = Path(registry_path).read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            raw = ""
+    if not raw:
+        return {}
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    result: dict[str, dict[str, str]] = {}
+    for key, value in payload.items():
+        if not isinstance(value, dict):
+            continue
+        kb_id = _record_value(value, "knowledge_base_id", "knowledgeBaseId") or str(key).strip()
+        dataset_id = _record_value(value, "dify_dataset_id", "dataset_id", "datasetId")
+        if not kb_id or not dataset_id:
+            continue
+        result[kb_id] = {
+            "knowledge_base_id": kb_id,
+            "dify_dataset_id": dataset_id,
+            "exhibition_id": _record_value(value, "exhibition_id", "exhibitionId"),
+            "namespace_id": _record_value(value, "namespace_id", "namespaceId"),
+        }
+    return result
+
+
+def _resolve_dify_targets(
+    settings: object,
+    store: object,
+    exhibition_id: str,
+    requested_kb_ids: list[str],
+) -> list[DifyKnowledgeTarget]:
+    """Resolve logical KB IDs to server-side Dify datasets for one exhibition."""
+    known: dict[str, DifyKnowledgeTarget] = {}
+    mismatched: set[str] = set()
+
+    def add_record(record: dict[str, object], *, require_exhibition: bool = False) -> None:
+        kb_id = _record_value(record, "knowledge_base_id", "knowledgeBaseId", "id")
+        dataset_id = _record_value(record, "dify_dataset_id", "difyDatasetId", "dataset_id", "datasetId")
+        if not kb_id or not dataset_id:
+            return
+        record_exhibition = _record_value(record, "exhibition_id", "exhibitionId")
+        if record_exhibition and record_exhibition != exhibition_id:
+            if kb_id in requested_kb_ids:
+                mismatched.add(kb_id)
+            return
+        if require_exhibition and not record_exhibition:
+            return
+        known.setdefault(
+            kb_id,
+            DifyKnowledgeTarget(
+                dataset_id=dataset_id,
+                knowledge_base_id=kb_id,
+                namespace_id=_record_value(record, "namespace_id", "namespaceId") or None,
+            ),
+        )
+
+    for record in getattr(store, "list_records")("knowledge_bases", exhibition_id=exhibition_id):
+        if isinstance(record, dict):
+            add_record(record)
+
+    for record in _load_dify_registry(settings).values():
+        add_record(record, require_exhibition=not bool(requested_kb_ids))
+
+    configured_exhibition_id = str(
+        _setting(settings, "agent_dify_default_exhibition_id", "") or ""
+    ).strip()
+    agent_map = parse_dataset_ids_map(
+        str(_setting(settings, "agent_dify_dataset_map", "") or "")
+    )
+    if configured_exhibition_id == exhibition_id:
+        for kb_id, dataset_ids in agent_map.items():
+            for dataset_id in dataset_ids:
+                known.setdefault(
+                    kb_id,
+                    DifyKnowledgeTarget(dataset_id=dataset_id, knowledge_base_id=kb_id),
+                )
+                break
+
+    default_kb_id = str(_setting(settings, "agent_dify_knowledge_base_id", "") or "").strip()
+    default_dataset_id = str(_setting(settings, "agent_dify_dataset_id", "") or "").strip()
+    if (
+        default_kb_id
+        and default_dataset_id
+        and (default_kb_id in requested_kb_ids or configured_exhibition_id == exhibition_id)
+    ):
+        known.setdefault(
+            default_kb_id,
+            DifyKnowledgeTarget(dataset_id=default_dataset_id, knowledge_base_id=default_kb_id),
+        )
+
+    if requested_kb_ids:
+        if mismatched:
+            raise HTTPException(
+                status_code=409,
+                detail=f"知识库不属于当前展会: {', '.join(sorted(mismatched))}",
+            )
+        missing = [kb_id for kb_id in requested_kb_ids if kb_id not in known]
+        if missing:
+            raise HTTPException(status_code=404, detail=f"知识库不存在: {', '.join(missing)}")
+        return [known[kb_id] for kb_id in requested_kb_ids]
+
+    targets = list(known.values())
+    exhibition_map = parse_dataset_ids_map(
+        str(_setting(settings, "dify_dataset_map", "") or "")
+    )
+    targets.extend(
+        DifyKnowledgeTarget(dataset_id=dataset_id)
+        for dataset_id in exhibition_map.get(exhibition_id, [])
+    )
+    if not targets:
+        fallback_dataset_id = _resolve_dataset_id(settings, store, exhibition_id)
+        if fallback_dataset_id:
+            targets.append(DifyKnowledgeTarget(dataset_id=fallback_dataset_id))
+
+    unique: list[DifyKnowledgeTarget] = []
+    seen: set[tuple[str, str | None]] = set()
+    for target in targets:
+        key = (target.dataset_id, target.knowledge_base_id)
+        if key not in seen:
+            unique.append(target)
+            seen.add(key)
+    return unique
+
+
 def _resolve_local_kb_ids(store: object, exhibition_id: str) -> list[str]:
     ids: list[str] = []
     for item in getattr(store, "list_records")("knowledge_bases", exhibition_id=exhibition_id):
@@ -124,21 +299,38 @@ async def query_exhibition_qa(
         raise HTTPException(status_code=404, detail="exhibition not found")
 
     redis_client = getattr(request.app.state, "redis", None)
+    session: dict[str, object] | None = None
     if redis_client is not None:
         session = await session_service.get_session(redis_client, body.session_id)
         if not session:
             raise HTTPException(status_code=404, detail="session not found")
 
     settings = getattr(request.app.state, "settings", object())
-    dataset_id = _resolve_dataset_id(settings, store, resolved_exhibition_id)
-    dify_key = str(_setting(settings, "dify_api_key", "") or "").strip()
-    if bool(dataset_id) != bool(dify_key):
+    requested_kb_ids = list(body.knowledge_base_ids or [])
+    if not requested_kb_ids and session is not None:
+        requested_kb_ids = _session_knowledge_base_ids(session)
+    dify_targets = _resolve_dify_targets(
+        settings,
+        store,
+        resolved_exhibition_id,
+        requested_kb_ids,
+    )
+    dify_base_url = (
+        str(_setting(settings, "dify_base_url", "") or "").strip()
+        or str(_setting(settings, "agent_dify_base_url", "") or "").strip()
+        or "https://api.dify.ai/v1"
+    )
+    dify_key = (
+        str(_setting(settings, "dify_api_key", "") or "").strip()
+        or str(_setting(settings, "agent_dify_api_key", "") or "").strip()
+    )
+    if bool(dify_targets) != bool(dify_key):
         retriever = _MisconfiguredRetriever()
-    elif dataset_id and dify_key:
+    elif dify_targets and dify_key:
         retriever = DifyKnowledgeRetriever(
-            base_url=str(_setting(settings, "dify_base_url", "https://api.dify.ai/v1")),
+            base_url=dify_base_url,
             api_key=dify_key,
-            dataset_id=dataset_id,
+            targets=dify_targets,
             timeout_sec=float(_setting(settings, "dify_timeout_sec", 12.0)),
             top_k=int(_setting(settings, "qa_retrieval_top_k", 3)),
             score_threshold=float(_setting(settings, "qa_retrieval_score_threshold", 0.45)),
@@ -208,6 +400,8 @@ async def query_exhibition_qa(
                 excerpt=source.content[:300],
                 score=source.score,
                 document_id=source.document_id,
+                knowledge_base_id=source.knowledge_base_id,
+                namespace_id=source.namespace_id,
             )
             for source in decision.sources
         ],

@@ -3,13 +3,14 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from apps.api.admin import AdminStore
 from apps.api.routes import qa as qa_routes
 from apps.api.services.exhibition_qa import (
     DifyKnowledgeRetriever,
+    DifyKnowledgeTarget,
     ExhibitionQaService,
     KnowledgeRetrievalError,
     KnowledgeSource,
@@ -49,6 +50,80 @@ def test_qa_settings_are_loaded_from_server_environment(monkeypatch) -> None:
     assert settings.dify_api_key == "secret"
     assert settings.dify_default_dataset_id == "dataset-1"
     assert settings.qa_fuzzy_threshold == 0.81
+
+
+def test_qa_resolves_multiple_logical_knowledge_bases_for_one_exhibition() -> None:
+    class MappingStore:
+        def list_records(self, kind: str, *, exhibition_id: str | None = None):
+            if kind != "knowledge_bases" or exhibition_id != "expo-2026":
+                return []
+            return [
+                {
+                    "id": "kb-a",
+                    "knowledge_base_id": "kb-a",
+                    "dify_dataset_id": "dataset-a",
+                    "exhibition_id": "expo-2026",
+                    "namespace_id": "ns-a",
+                },
+                {
+                    "id": "kb-b",
+                    "knowledge_base_id": "kb-b",
+                    "dify_dataset_id": "dataset-b",
+                    "exhibition_id": "expo-2026",
+                    "namespace_id": "ns-b",
+                },
+            ]
+
+    store = MappingStore()
+    settings = SimpleNamespace(
+        dify_dataset_map="{}",
+        agent_dify_dataset_map="",
+        agent_dify_knowledge_base_registry="",
+        agent_dify_registry_path="",
+        agent_dify_knowledge_base_id="",
+        agent_dify_dataset_id="",
+        dify_default_dataset_id="",
+    )
+
+    targets = qa_routes._resolve_dify_targets(
+        settings,
+        store,
+        "expo-2026",
+        ["kb-a", "kb-b"],
+    )
+
+    assert [(target.knowledge_base_id, target.dataset_id) for target in targets] == [
+        ("kb-a", "dataset-a"),
+        ("kb-b", "dataset-b"),
+    ]
+
+
+def test_qa_rejects_unknown_or_cross_exhibition_knowledge_base() -> None:
+    class MappingStore:
+        def list_records(self, kind: str, *, exhibition_id: str | None = None):
+            del kind, exhibition_id
+            return []
+
+    settings = SimpleNamespace(
+        dify_dataset_map="{}",
+        agent_dify_dataset_map="",
+        agent_dify_knowledge_base_registry=(
+            '{"kb-other":{"dify_dataset_id":"dataset-other",'
+            '"exhibition_id":"expo-other","namespace_id":"ns-other"}}'
+        ),
+        agent_dify_registry_path="",
+        agent_dify_knowledge_base_id="",
+        agent_dify_dataset_id="",
+        dify_default_dataset_id="",
+    )
+
+    with pytest.raises(HTTPException) as mismatch:
+        qa_routes._resolve_dify_targets(settings, MappingStore(), "expo-2026", ["kb-other"])
+    assert mismatch.value.status_code == 409
+
+    with pytest.raises(HTTPException) as missing:
+        qa_routes._resolve_dify_targets(settings, MappingStore(), "expo-2026", ["kb-missing"])
+    assert missing.value.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -104,6 +179,68 @@ async def test_dify_retriever_uses_official_dataset_retrieve_contract(monkeypatc
     assert captured["json"]["query"] == "服务中心在哪里？"  # type: ignore[index]
     assert result.sources[0].title == "服务指南.docx"
     assert result.sources[0].score == 0.93
+
+
+@pytest.mark.asyncio
+async def test_dify_retriever_merges_multiple_datasets_and_keeps_source_scope(monkeypatch) -> None:
+    captured_urls: list[str] = []
+
+    class FakeResponse:
+        def __init__(self, dataset_id: str) -> None:
+            self.dataset_id = dataset_id
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self):
+            score = 0.91 if self.dataset_id == "dataset-b" else 0.82
+            return {
+                "records": [
+                    {
+                        "segment": {
+                            "id": f"segment-{self.dataset_id}",
+                            "document_id": f"doc-{self.dataset_id}",
+                            "content": f"来自 {self.dataset_id} 的资料。",
+                            "document": {"name": f"{self.dataset_id}.docx"},
+                        },
+                        "score": score,
+                    }
+                ]
+            }
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url, *, headers, json):
+            del headers, json
+            captured_urls.append(url)
+            return FakeResponse(url.rsplit("/", 2)[-2])
+
+    monkeypatch.setattr(exhibition_qa_module.httpx, "AsyncClient", lambda **kwargs: FakeClient())
+    retriever = DifyKnowledgeRetriever(
+        base_url="https://dify.example/v1",
+        api_key="server-key",
+        targets=[
+            DifyKnowledgeTarget(dataset_id="dataset-a", knowledge_base_id="kb-a", namespace_id="ns-a"),
+            DifyKnowledgeTarget(dataset_id="dataset-b", knowledge_base_id="kb-b", namespace_id="ns-b"),
+        ],
+        top_k=3,
+    )
+
+    result = await retriever.retrieve(exhibition_id="expo-2026", question="展会资料")
+
+    assert sorted(captured_urls) == [
+        "https://dify.example/v1/datasets/dataset-a/retrieve",
+        "https://dify.example/v1/datasets/dataset-b/retrieve",
+    ]
+    assert [source.knowledge_base_id for source in result.sources] == ["kb-b", "kb-a"]
+    assert [source.namespace_id for source in result.sources] == ["ns-b", "ns-a"]
+    assert result.sources[0].score == 0.91
+    assert result.provider == "dify"
 
 
 @pytest.mark.asyncio

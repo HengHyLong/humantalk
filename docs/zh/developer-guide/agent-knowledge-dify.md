@@ -29,6 +29,42 @@ OPENTALKING_AGENT_DIFY_KNOWLEDGE_BASE_REGISTRY={"kb-001":{"name":"四川博览�
 
 也可以把 JSON 放在 `OPENTALKING_AGENT_DIFY_REGISTRY_PATH` 指定的文件中。
 
+## 数字人问答绑定多个知识库
+
+前端只传稳定的 `knowledge_base_id`，不要传 Dify 的 dataset ID。创建会话时可以绑定一个或多个知识库：
+
+```http
+POST /sessions
+Content-Type: application/json
+```
+
+```json
+{
+  "avatar_id": "可用数字人 ID",
+  "model": "mock",
+  "agent_enabled": true,
+  "knowledge_enabled": true,
+  "knowledge_base_ids": ["kb-001", "kb-002"]
+}
+```
+
+之后调用展会问答接口时，后端会读取会话中的知识库绑定，分别请求对应的 Dify dataset，合并、按分数排序并截取 Top-K：
+
+```http
+POST /exhibitions/{exhibition_id}/qa/query
+Content-Type: application/json
+```
+
+```json
+{
+  "session_id": "session-id",
+  "turn_id": "turn-001",
+  "question": "这个展会有哪些重点活动？"
+}
+```
+
+如需临时覆盖会话绑定，也可以在问答请求中传 `knowledge_base_ids`。后端会校验知识库是否属于当前展会；Dify 的 API Key 和 dataset ID 始终只在服务端使用。响应的 `sources` 会带回 `knowledge_base_id` 和 `namespace_id`，方便前端展示来源。
+
 ## 代理接口
 
 Admin 代理接口需要 Admin 登录 Token：

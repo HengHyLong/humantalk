@@ -437,12 +437,15 @@ export type QaSource = {
   excerpt: string;
   score: number;
   document_id?: string | null;
+  knowledge_base_id?: string | null;
+  namespace_id?: string | null;
 };
 
 export type ExhibitionQaQueryRequest = {
   session_id: string;
   turn_id: string;
   question: string;
+  knowledge_base_ids?: string[];
   locale?: string;
   voice?: string;
   tts_provider?: string;
