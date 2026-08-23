@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import logging
+import mimetypes
 import tempfile
 import uuid
 from dataclasses import asdict
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, Literal
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
@@ -61,6 +64,7 @@ class KnowledgeDocumentResponse(BaseModel):
     chunk_count: int
     created_at: str
     updated_at: str
+    provider: Literal["local", "dify"] = "local"
 
 
 class KnowledgeDocumentsResponse(BaseModel):
@@ -125,6 +129,68 @@ class DeleteKnowledgeDocumentResponse(BaseModel):
 
 class DeleteKnowledgeBaseResponse(BaseModel):
     deleted: bool
+
+
+def _timestamp_text(value: object) -> str:
+    if isinstance(value, (int, float)):
+        try:
+            return datetime.fromtimestamp(float(value), tz=timezone.utc).isoformat()
+        except (OverflowError, OSError, ValueError):
+            return ""
+    return str(value or "")
+
+
+def _dify_document_response(
+    *,
+    kb_id: str,
+    item: dict[str, Any],
+    chunk_count: int,
+) -> KnowledgeDocumentResponse:
+    detail = item.get("data_source_detail_dict")
+    upload_file = detail.get("upload_file") if isinstance(detail, dict) else None
+    if not isinstance(upload_file, dict):
+        upload_file = {}
+    filename = str(
+        item.get("name") or upload_file.get("name") or item.get("id") or "Dify 文档"
+    )
+    mime_type = str(
+        upload_file.get("mime_type")
+        or mimetypes.guess_type(filename)[0]
+        or "application/octet-stream"
+    )
+    raw_status = str(
+        item.get("indexing_status") or item.get("display_status") or ""
+    ).lower()
+    error = str(item.get("error") or "").strip() or None
+    if error or raw_status in {"error", "failed"}:
+        status = "error"
+    elif (
+        raw_status in {"completed", "available"}
+        and bool(item.get("enabled", True))
+        and not bool(item.get("archived", False))
+    ):
+        status = "ready"
+    else:
+        status = "processing"
+    created_at = _timestamp_text(item.get("created_at") or upload_file.get("created_at"))
+    updated_at = (
+        _timestamp_text(item.get("updated_at") or item.get("completed_at"))
+        or created_at
+    )
+    return KnowledgeDocumentResponse(
+        id=str(item.get("id") or ""),
+        kb_id=kb_id,
+        filename=filename,
+        mime_type=mime_type,
+        bytes=max(0, int(upload_file.get("size") or 0)),
+        sha256="",
+        status=status,
+        error=error,
+        chunk_count=max(0, chunk_count),
+        created_at=created_at,
+        updated_at=updated_at,
+        provider="dify",
+    )
 
 
 def _require_scope(user_id: str, avatar_id: str) -> tuple[str, str]:
@@ -597,8 +663,59 @@ async def view_knowledge_file(file_id: str) -> FileResponse:
     response_model=KnowledgeDocumentsResponse,
 )
 async def list_knowledge_documents(kb_id: str) -> KnowledgeDocumentsResponse:
+    store = default_knowledge_store()
+    if isinstance(store.knowledge_index, DifyKnowledgeIndex):
+        try:
+            remote_documents: list[dict[str, Any]] = []
+            page = 1
+            while page <= 20:
+                payload = store.knowledge_index.list_documents(
+                    kb_id=kb_id,
+                    page=page,
+                    limit=100,
+                )
+                data = payload.get("data", [])
+                if not isinstance(data, list):
+                    break
+                remote_documents.extend(item for item in data if isinstance(item, dict))
+                if not bool(payload.get("has_more")) or not data:
+                    break
+                page += 1
+            documents: list[KnowledgeDocumentResponse] = []
+            for item in remote_documents:
+                document_id = str(item.get("id") or "")
+                try:
+                    chunk_count = (
+                        store.knowledge_index.count_document_segments(
+                            kb_id=kb_id,
+                            document_id=document_id,
+                        )
+                        if document_id
+                        else 0
+                    )
+                except DifyKnowledgeError:
+                    logger.warning(
+                        "Failed to load Dify segment count for kb=%s document=%s",
+                        kb_id,
+                        document_id,
+                        exc_info=True,
+                    )
+                    chunk_count = 0
+                documents.append(
+                    _dify_document_response(
+                        kb_id=kb_id,
+                        item=item,
+                        chunk_count=chunk_count,
+                    )
+                )
+            return KnowledgeDocumentsResponse(documents=documents)
+        except DifyKnowledgeError as exc:
+            raise HTTPException(
+                status_code=exc.status_code,
+                detail={"code": exc.code, "detail": str(exc)},
+            ) from exc
     try:
-        docs = await default_knowledge_store().list_documents(kb_id=kb_id)
+        docs = await store.list_documents(kb_id=kb_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return KnowledgeDocumentsResponse(

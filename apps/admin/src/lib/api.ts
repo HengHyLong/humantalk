@@ -477,6 +477,7 @@ export type KnowledgeDocument = {
   chunk_count: number;
   created_at: string;
   updated_at: string;
+  provider?: "local" | "dify";
 };
 
 export type KnowledgeDocumentsResponse = {

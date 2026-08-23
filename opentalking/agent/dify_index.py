@@ -463,6 +463,22 @@ class DifyKnowledgeIndex:
             params=params,
         )
 
+    def count_document_segments(self, *, kb_id: str, document_id: str) -> int:
+        dataset_id = self._require_dataset(kb_id)
+        clean_document_id = document_id.strip()
+        if not clean_document_id:
+            return 0
+        response = self._request_json(
+            "GET",
+            f"/datasets/{dataset_id}/documents/{clean_document_id}/segments",
+            params={"page": 1, "limit": 1},
+        )
+        try:
+            return max(0, int(response.get("total", 0) or 0))
+        except (TypeError, ValueError):
+            data = response.get("data", [])
+            return len(data) if isinstance(data, list) else 0
+
     def get_indexing_status(self, *, kb_id: str, batch_id: str) -> dict[str, Any]:
         dataset_id = self._require_dataset(kb_id)
         return self._request_json(

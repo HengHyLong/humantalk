@@ -1383,6 +1383,105 @@ async def test_agent_dify_list_discovers_all_remote_datasets(
 
 
 @pytest.mark.asyncio
+async def test_agent_dify_documents_are_listed_from_remote_dataset(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    index = DifyKnowledgeIndex(
+        root=tmp_path / "knowledge",
+        base_url="http://dify.test/v1",
+        api_key="server-only-key",
+        registry={
+            "kb-known": {
+                "name": "农博会知识库",
+                "exhibition_id": "expo-test",
+                "namespace_id": "namespace-test",
+                "dify_dataset_id": "dataset-known",
+                "status": "active",
+            }
+        },
+    )
+    store = KnowledgeStore(
+        db_path=tmp_path / "agent.sqlite",
+        knowledge_root=tmp_path / "knowledge",
+        knowledge_index=index,
+    )
+
+    def fake_request(method: str, url: str, **_kwargs: object) -> httpx.Response:
+        request = httpx.Request(method, url)
+        if url == "http://dify.test/v1/datasets/dataset-known/documents":
+            return httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {
+                            "id": "doc-remote",
+                            "name": "农博会_QA.docx",
+                            "indexing_status": "completed",
+                            "enabled": True,
+                            "archived": False,
+                            "error": None,
+                            "created_at": 1_787_202_286,
+                            "completed_at": 1_787_202_300,
+                            "data_source_detail_dict": {
+                                "upload_file": {
+                                    "name": "农博会_QA.docx",
+                                    "size": 45_760,
+                                    "mime_type": (
+                                        "application/vnd.openxmlformats-officedocument."
+                                        "wordprocessingml.document"
+                                    ),
+                                }
+                            },
+                        }
+                    ],
+                    "total": 1,
+                    "has_more": False,
+                },
+                request=request,
+            )
+        if url == (
+            "http://dify.test/v1/datasets/dataset-known/"
+            "documents/doc-remote/segments"
+        ):
+            return httpx.Response(
+                200,
+                json={"data": [], "total": 62, "has_more": True},
+                request=request,
+            )
+        raise AssertionError(f"unexpected Dify request: {method} {url}")
+
+    monkeypatch.setattr(httpx, "request", fake_request)
+    monkeypatch.setattr(agent_routes, "default_knowledge_store", lambda: store)
+    transport = ASGITransport(app=api_app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get(
+            "/agent/knowledge-bases/kb-known/documents"
+        )
+
+    assert response.status_code == 200, response.text
+    documents = response.json()["documents"]
+    assert len(documents) == 1
+    assert documents[0] == {
+        "id": "doc-remote",
+        "kb_id": "kb-known",
+        "filename": "农博会_QA.docx",
+        "mime_type": (
+            "application/vnd.openxmlformats-officedocument."
+            "wordprocessingml.document"
+        ),
+        "bytes": 45_760,
+        "sha256": "",
+        "status": "ready",
+        "error": None,
+        "chunk_count": 62,
+        "created_at": "2026-08-20T05:04:46+00:00",
+        "updated_at": "2026-08-20T05:05:00+00:00",
+        "provider": "dify",
+    }
+
+
+@pytest.mark.asyncio
 async def test_agent_knowledge_base_routes_rename_delete_without_default_guard(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
