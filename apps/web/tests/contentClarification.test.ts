@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { classifyContentClarification, classifyExplicitContentRequest } from "../src/lib/contentClarification";
+import { classifyContentClarification, classifyContentClarificationTurn, classifyExplicitContentRequest } from "../src/lib/contentClarification";
 
 test("explicit route wording always takes navigation priority", () => {
   for (const text of [
@@ -65,5 +65,43 @@ test("content clarification keeps ambiguous answers pending", () => {
   assert.equal(
     classifyContentClarification("展品路线", "协作机器人工作站", "机器人展区"),
     "unknown",
+  );
+});
+
+test("pending content clarification releases a different question", () => {
+  assert.equal(
+    classifyContentClarificationTurn("介绍另一家公司", "协作机器人工作站", "机器人展区", true),
+    "new_topic",
+  );
+  assert.equal(
+    classifyContentClarificationTurn("怎么去卫生间", "协作机器人工作站", "机器人展区"),
+    "new_topic",
+  );
+  assert.equal(
+    classifyContentClarificationTurn("今天天气如何", "协作机器人工作站", "机器人展区"),
+    "new_topic",
+  );
+});
+
+test("pending content clarification accepts explicit choices", () => {
+  assert.equal(
+    classifyContentClarificationTurn("了解展品", "协作机器人工作站", "机器人展区"),
+    "entity",
+  );
+  assert.equal(
+    classifyContentClarificationTurn("我想了解展品", "协作机器人工作站", "机器人展区"),
+    "entity",
+  );
+  assert.equal(
+    classifyContentClarificationTurn("查看路线", "协作机器人工作站", "机器人展区"),
+    "route",
+  );
+  assert.equal(
+    classifyContentClarificationTurn("我要查看路线", "协作机器人工作站", "机器人展区"),
+    "route",
+  );
+  assert.equal(
+    classifyContentClarificationTurn("我要去机器人展区", "协作机器人工作站", "机器人展区"),
+    "route",
   );
 });

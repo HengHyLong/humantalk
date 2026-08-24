@@ -1,4 +1,5 @@
 export type ContentClarificationChoice = "entity" | "route" | "unknown";
+export type ContentClarificationTurnChoice = Exclude<ContentClarificationChoice, "unknown"> | "new_topic";
 
 function normalizeChoiceText(value: string): string {
   return value
@@ -57,4 +58,39 @@ export function classifyContentClarification(
   if (namesAreDifferent && text.includes(normalizedEntityName)) return "entity";
   if (namesAreDifferent && normalizedDestination && text.includes(normalizedDestination)) return "route";
   return "unknown";
+}
+
+export function classifyContentClarificationTurn(
+  value: string,
+  entityName: string,
+  routeDestination: string,
+  hasDifferentEntity = false,
+): ContentClarificationTurnChoice {
+  if (hasDifferentEntity) return "new_topic";
+  const choice = classifyContentClarification(value, entityName, routeDestination);
+  if (choice === "unknown") return "new_topic";
+
+  const text = normalizeChoiceText(value);
+  const entity = normalizeChoiceText(entityName);
+  const destination = normalizeChoiceText(routeDestination);
+  if ((entity && text.includes(entity)) || (destination && text.includes(destination))) {
+    return choice;
+  }
+
+  const standaloneEntityAnswers = [
+    "了解展品", "介绍展品", "展品介绍", "产品介绍", "介绍产品", "了解产品",
+    "我想了解展品", "我要了解展品", "想了解展品", "了解一下展品", "请介绍展品", "介绍一下展品",
+    "我想了解产品", "我要了解产品", "想了解产品", "了解一下产品", "请介绍产品", "介绍一下产品",
+    "展品", "商品", "产品", "展商", "第一个", "前者",
+    "entity", "product", "exhibit", "exhibitor", "first", "learn about the exhibit", "learn about the product",
+  ];
+  const standaloneRouteAnswers = [
+    "查看路线", "路线", "导航", "怎么走", "怎么去", "带我去", "第二个", "后者",
+    "我要查看路线", "我想查看路线", "想看路线", "我要看路线", "带我去那里",
+    "route", "navigation", "directions", "second", "show route", "view route",
+  ];
+  const acceptedAnswers = choice === "entity" ? standaloneEntityAnswers : standaloneRouteAnswers;
+  return acceptedAnswers.some((answer) => text === normalizeChoiceText(answer))
+    ? choice
+    : "new_topic";
 }

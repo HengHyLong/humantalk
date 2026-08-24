@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { classifyProductInterestDecision, classifyRegistrationDecision, selectShoppingPresentationEntities } from "../src/lib/shoppingConversation";
+import { classifyProductInterestDecision, classifyRegistrationDecision, classifyRegistrationFollowupDecision, selectShoppingPresentationEntities } from "../src/lib/shoppingConversation";
 import type { ExhibitionEntityCard } from "../src/types";
 
 const confirms = ["需要", "好的", "可以", "登记", "要"];
@@ -41,6 +41,25 @@ test("company product follow-up still accepts direct product answers", () => {
   assert.equal(classifyProductInterestDecision("请介绍一下这家公司的产品", confirms, declines), "confirm");
   assert.equal(classifyProductInterestDecision("我不想了解这些产品", confirms, declines), "decline");
   assert.equal(classifyProductInterestDecision("暂时不用", confirms, declines), "decline");
+});
+
+test("registration follow-up releases unrelated questions", () => {
+  const confirms = ["需要", "好的", "可以", "同意", "登记"];
+  const declines = ["不需要", "不用", "取消"];
+
+  assert.equal(classifyRegistrationFollowupDecision("好的，请问卫生间在哪里？", confirms, declines), "new_topic");
+  assert.equal(classifyRegistrationFollowupDecision("今天有哪些会议？", confirms, declines), "new_topic");
+  assert.equal(classifyRegistrationFollowupDecision("介绍另一件展品", confirms, declines, true), "new_topic");
+  assert.equal(classifyRegistrationFollowupDecision("不用了，卫生间在哪里？", confirms, declines), "new_topic");
+});
+
+test("registration follow-up keeps direct confirmation answers", () => {
+  const confirms = ["需要", "好的", "可以", "同意", "登记"];
+  const declines = ["不需要", "不用", "取消"];
+
+  assert.equal(classifyRegistrationFollowupDecision("好的", confirms, declines), "confirm");
+  assert.equal(classifyRegistrationFollowupDecision("请打开登记二维码", confirms, declines), "confirm");
+  assert.equal(classifyRegistrationFollowupDecision("暂时不用", confirms, declines), "decline");
 });
 
 test("shopping confirmation only presents the explicitly introduced product", () => {

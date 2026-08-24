@@ -116,8 +116,8 @@ import type { ConnectionStatus, ExhibitionEntityCard, MemoryLibrary, Message, Qu
 import { matchExhibitionEntities, selectExhibitionEntity } from "./lib/exhibitionEntityMatch";
 import { readExhibitionEntityCache, writeExhibitionEntityCache } from "./lib/exhibitionCache";
 import { useAutoDismiss } from "./lib/useAutoDismiss";
-import { classifyProductInterestDecision, classifyRegistrationDecision, selectShoppingPresentationEntities } from "./lib/shoppingConversation";
-import { classifyContentClarification, classifyExplicitContentRequest } from "./lib/contentClarification";
+import { classifyProductInterestDecision, classifyRegistrationFollowupDecision, selectShoppingPresentationEntities } from "./lib/shoppingConversation";
+import { classifyContentClarificationTurn, classifyExplicitContentRequest } from "./lib/contentClarification";
 import { isEnglishConversation, type ConversationLanguage } from "./lib/conversationLanguage";
 import {
   canChangeModelForAvatar,
@@ -3067,87 +3067,99 @@ export default function App() {
     }
 
     const pendingShopping = pendingShoppingRegistrationRef.current;
-    if (pendingShopping && !databaseShortcut && explicitContentRequest !== "unknown") {
-      pendingShoppingRegistrationRef.current = null;
-      setShoppingRegistration(null);
-      setMessages((current) => current.map((message) => (
-        message.relatedEntities?.length
-          ? { ...message, relatedEntities: [] }
-          : message
-      )));
-    } else if (pendingShopping && !databaseShortcut) {
+    if (pendingShopping && !databaseShortcut) {
       setLastVoiceIntent("shopping");
       setNavigationResult(null);
-      const decision = classifyRegistrationDecision(
+      const pendingEntityIds = new Set(pendingShopping.relatedEntities.map((entity) => entity.id));
+      const hasDifferentEntity = relatedEntities.some((entity) => (
+        entity.kind !== "exhibition" && !pendingEntityIds.has(entity.id)
+      ));
+      const decision = classifyRegistrationFollowupDecision(
         text,
         pendingShopping.confirmKeywords,
         pendingShopping.declineKeywords,
+        explicitContentRequest !== "unknown" || hasDifferentEntity,
       );
-      if (decision === "decline") {
+      if (decision === "new_topic") {
         pendingShoppingRegistrationRef.current = null;
         setShoppingRegistration(null);
-        enqueueSpeech(englishConversation ? "Okay, no registration for now. You can continue exploring other exhibits." : "好的，暂不登记。您还可以继续了解其他展品。", text, pendingShopping.relatedEntities, true);
-        return;
-      }
-      if (decision === "unknown") {
-        enqueueSpeech(pendingShopping.retryPrompt, text, pendingShopping.relatedEntities, true);
-        return;
-      }
-      try {
-        const registration = pendingShopping.registrationPath
-          ? {
-              language: conversationLanguage,
-              strategy_id: pendingShopping.strategyId || "exhibit-survey",
-              exhibit_id: pendingShopping.exhibitId || "",
-              title: pendingShopping.title,
-              path: pendingShopping.registrationPath,
-              spoken_text: englishConversation
-                ? "The registration QR code is ready. Please scan it with your phone to complete the form."
-                : "好的，登记二维码已为您打开，请使用手机扫码填写信息。",
-            }
-          : await createShoppingRegistration(configuredExhibitionId, {
-              strategy_id: pendingShopping.strategyId || "",
-              session_id: sessionId,
-              confirmation_text: text,
-              exhibit_id: pendingShopping.exhibitId,
-              language: conversationLanguage,
-            });
-        const url = new URL(registration.path, window.location.origin).toString();
-        const { toDataURL } = await import("qrcode");
-        const qrDataUrl = await toDataURL(url, {
-          width: 360,
-          margin: 2,
-          errorCorrectionLevel: "M",
-          color: { dark: "#082f49", light: "#ffffff" },
-        });
-        if (!qrDataUrl.startsWith("data:image/png;base64,")) {
-          throw new Error("Registration QR generation returned an invalid image payload");
+        setMessages((current) => current.map((message) => (
+          message.relatedEntities?.length
+            ? { ...message, relatedEntities: [] }
+            : message
+        )));
+      } else {
+        if (decision === "decline") {
+          pendingShoppingRegistrationRef.current = null;
+          setShoppingRegistration(null);
+          enqueueSpeech(englishConversation ? "Okay, no registration for now. You can continue exploring other exhibits." : "好的，暂不登记。您还可以继续了解其他展品。", text, pendingShopping.relatedEntities, true);
+          return;
         }
-        pendingShoppingRegistrationRef.current = null;
-        setShoppingRegistration({ ...registration, url, qrDataUrl });
-        // The registration QR is the presentation for this turn. Reattaching
-        // the product entities here makes the product card reappear as soon as
-        // the QR dialog is closed, even when the user already dismissed it.
-        enqueueSpeech(registration.spoken_text, text, [], true);
-      } catch (error) {
-        console.warn("shopping registration failed", error);
-        enqueueSpeech(englishConversation ? "The registration QR code is temporarily unavailable. Please try again later." : "登记二维码暂时无法生成，请稍后再试。", text, [], true);
+        try {
+          const registration = pendingShopping.registrationPath
+            ? {
+                language: conversationLanguage,
+                strategy_id: pendingShopping.strategyId || "exhibit-survey",
+                exhibit_id: pendingShopping.exhibitId || "",
+                title: pendingShopping.title,
+                path: pendingShopping.registrationPath,
+                spoken_text: englishConversation
+                  ? "The registration QR code is ready. Please scan it with your phone to complete the form."
+                  : "好的，登记二维码已为您打开，请使用手机扫码填写信息。",
+              }
+            : await createShoppingRegistration(configuredExhibitionId, {
+                strategy_id: pendingShopping.strategyId || "",
+                session_id: sessionId,
+                confirmation_text: text,
+                exhibit_id: pendingShopping.exhibitId,
+                language: conversationLanguage,
+              });
+          const url = new URL(registration.path, window.location.origin).toString();
+          const { toDataURL } = await import("qrcode");
+          const qrDataUrl = await toDataURL(url, {
+            width: 360,
+            margin: 2,
+            errorCorrectionLevel: "M",
+            color: { dark: "#082f49", light: "#ffffff" },
+          });
+          if (!qrDataUrl.startsWith("data:image/png;base64,")) {
+            throw new Error("Registration QR generation returned an invalid image payload");
+          }
+          pendingShoppingRegistrationRef.current = null;
+          setShoppingRegistration({ ...registration, url, qrDataUrl });
+          // The registration QR is the presentation for this turn. Reattaching
+          // the product entities here makes the product card reappear as soon as
+          // the QR dialog is closed, even when the user already dismissed it.
+          enqueueSpeech(registration.spoken_text, text, [], true);
+        } catch (error) {
+          console.warn("shopping registration failed", error);
+          enqueueSpeech(englishConversation ? "The registration QR code is temporarily unavailable. Please try again later." : "登记二维码暂时无法生成，请稍后再试。", text, [], true);
+        }
+        return;
       }
-      return;
     }
 
     const pendingContent = pendingContentClarificationRef.current;
     if (pendingContent && !databaseShortcut) {
       const destination = pendingContent.routeResult.route?.to?.trim() || pendingContent.routeResult.title?.trim() || "";
-      const choice = classifyContentClarification(text, pendingContent.entity.name, destination);
-      if (choice === "route") {
+      const hasDifferentEntity = relatedEntities.some((entity) => (
+        entity.kind !== "exhibition" && entity.id !== pendingContent.entity.id
+      ));
+      const choice = classifyContentClarificationTurn(
+        text,
+        pendingContent.entity.name,
+        destination,
+        hasDifferentEntity,
+      );
+      if (choice === "new_topic") {
+        pendingContentClarificationRef.current = null;
+      } else if (choice === "route") {
         pendingContentClarificationRef.current = null;
         setLastVoiceIntent("navigation");
         setNavigationResult(pendingContent.routeResult);
         enqueueSpeech(pendingContent.routeResult.spoken_text || text, text, [], true);
         return;
-      }
-      if (choice === "entity") {
+      } else {
         pendingContentClarificationRef.current = null;
         setLastVoiceIntent("exhibition_content");
         setNavigationResult(null);
@@ -3163,8 +3175,6 @@ export default function App() {
         enqueueSpeech(introductionText, text, [pendingContent.entity], true);
         return;
       }
-      enqueueSpeech(pendingContent.retryPrompt || pendingContent.prompt, text, [], true);
-      return;
     }
 
     const baseVoiceConfig = exhibitionVoiceConfig ?? {
