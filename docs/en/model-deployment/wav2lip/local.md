@@ -68,6 +68,7 @@ OPENTALKING_WEBRTC_NVENC_TUNE=ull
 OPENTALKING_WEBRTC_VIDEO_START_BITRATE=4000000
 OPENTALKING_WEBRTC_VIDEO_MAX_BITRATE=8000000
 OPENTALKING_WAV2LIP_MAX_LONG_EDGE=1920
+AUDIO2VIDEO_PLAYBACK_AUDIO_RESERVE_MS=1200
 ```
 
 Use the runtime log `WebRTC H.264 encoder active: codec=h264_nvenc` to confirm that GPU encoding is actually active. CUDA model-loading logs alone do not prove that WebRTC uses NVENC. OpenTalking falls back to `libx264` if NVENC is unavailable.

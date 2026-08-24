@@ -721,6 +721,19 @@ class WebRTCSession:
         self.video.clear_pending()
         self.audio.clear_pending()
 
+    def buffered_audio_duration_ms(self) -> float:
+        """Return queued plus track-local PCM duration waiting for playback."""
+        sample_rate = max(1, int(getattr(self.audio, "sample_rate", 16000) or 16000))
+        buffered = getattr(self.audio, "_buffer", None)
+        samples = int(getattr(buffered, "size", 0) or 0)
+        queue = getattr(self.audio, "_queue", None)
+        pending = tuple(getattr(queue, "_queue", ()))
+        for item in pending:
+            if item is None:
+                continue
+            samples += int(np.asarray(item).size)
+        return samples * 1000.0 / sample_rate
+
     async def wait_for_playback_drain(self) -> None:
         """Wait until queued audio has been handed to the WebRTC sender.
 

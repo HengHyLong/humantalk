@@ -219,6 +219,19 @@ def test_clear_media_queues_drops_buffered_audio_and_video_without_rewinding_pts
         session._put_close_sentinel(session.audio._queue)
 
 
+def test_buffered_audio_duration_counts_track_buffer_and_pending_queue() -> None:
+    session = WebRTCSession(fps=25.0, sample_rate=16000, mode="buffered")
+    try:
+        session.audio._buffer = np.ones((160,), dtype=np.int16)
+        session.audio._queue.put_nowait(np.ones((320,), dtype=np.int16))
+        session.audio._queue.put_nowait(np.ones((160,), dtype=np.int16))
+
+        assert session.buffered_audio_duration_ms() == pytest.approx(40.0)
+    finally:
+        session._put_close_sentinel(session.video._queue)
+        session._put_close_sentinel(session.audio._queue)
+
+
 def test_legacy_reset_clocks_rewinds_per_utterance_timeline() -> None:
     session = WebRTCSession(fps=25.0, sample_rate=16000, mode="legacy")
     try:

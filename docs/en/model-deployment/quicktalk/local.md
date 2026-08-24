@@ -81,6 +81,9 @@ OPENTALKING_WEBRTC_VIDEO_START_BITRATE=4000000
 OPENTALKING_WEBRTC_VIDEO_MAX_BITRATE=8000000
 OPENTALKING_QUICKTALK_MAX_LONG_EDGE=1920
 OPENTALKING_QUICKTALK_FPS=20
+AUDIO2VIDEO_PLAYBACK_AUDIO_RESERVE_MS=1200
 ```
 
 After a WebRTC session starts, the log should contain `WebRTC H.264 encoder active: codec=h264_nvenc`. OpenTalking logs the error and falls back to `libx264` if NVENC cannot be initialized. NVENC reduces final video compression cost only; model generation must still complete faster than the corresponding audio duration.
+
+`AUDIO2VIDEO_PLAYBACK_AUDIO_RESERVE_MS` prevents video backpressure from draining queued audio. The `audio_buffer_ms=before->after` log should remain near or above this reserve. A larger value improves jitter tolerance at the cost of additional playback buffering.

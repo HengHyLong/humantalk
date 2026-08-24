@@ -127,6 +127,109 @@ def test_wav2lip_and_quicktalk_playback_backpressure_accept_env(monkeypatch) -> 
     assert runner._playback_backpressure_config() == (3, 7, 80.0)
 
 
+def test_wav2lip_and_quicktalk_audio_reserve_defaults_and_accepts_env(monkeypatch) -> None:
+    monkeypatch.delenv("AUDIO2VIDEO_PLAYBACK_AUDIO_RESERVE_MS", raising=False)
+    runner = FlashTalkRunner.__new__(FlashTalkRunner)
+    runner.model_type = "quicktalk"
+
+    assert runner._playback_audio_reserve_ms() == 1000.0
+
+    monkeypatch.setenv("AUDIO2VIDEO_PLAYBACK_AUDIO_RESERVE_MS", "1200")
+    assert runner._playback_audio_reserve_ms() == 1200.0
+
+
+def test_audio2video_backpressure_stops_before_audio_reserve_is_drained(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("AUDIO2VIDEO_PLAYBACK_AUDIO_RESERVE_MS", "1000")
+    sleeps: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+    queue = asyncio.Queue()
+    for item in range(40):
+        queue.put_nowait(item)
+
+    runner = FlashTalkRunner.__new__(FlashTalkRunner)
+    runner.model_type = "quicktalk"
+    runner.webrtc = SimpleNamespace(
+        video=SimpleNamespace(_queue=queue),
+        draining=False,
+        buffered_audio_duration_ms=lambda: 900.0,
+    )
+    runner._speech_media_active = True
+    runner._webrtc_started = SimpleNamespace(is_set=lambda: True)
+    runner._interrupt = SimpleNamespace(is_set=lambda: False)
+
+    waited_ms = asyncio.run(
+        runner._wait_for_playback_capacity(
+            n_frames=28,
+            first_media_this_speak=False,
+        )
+    )
+
+    assert waited_ms == 0.0
+    assert sleeps == []
+
+
+def test_quicktalk_queues_full_audio_chunk_before_video_backpressure() -> None:
+    calls: list[tuple[str, int]] = []
+    video_queue = asyncio.Queue()
+    audio_queue = asyncio.Queue()
+
+    runner = FlashTalkRunner.__new__(FlashTalkRunner)
+    runner.model_type = "quicktalk"
+    runner.session_id = "sess_audio_first"
+    runner.flashtalk = SimpleNamespace(sample_rate=16000, fps=20)
+    runner.webrtc = SimpleNamespace(
+        video=SimpleNamespace(_queue=video_queue),
+        audio=SimpleNamespace(_queue=audio_queue),
+        buffered_audio_duration_ms=lambda: 1400.0,
+    )
+    runner._interrupt = SimpleNamespace(is_set=lambda: False)
+    runner._av_ts_ms = 0.0
+    runner._last_frame = None
+    runner._debug_frame_trace = False
+
+    async def fake_append(frames) -> None:
+        return None
+
+    async def fake_audio_put(pcm) -> None:
+        calls.append(("audio", int(np.asarray(pcm).size)))
+
+    async def fake_wait(**kwargs) -> float:
+        assert calls == [("audio", 22400)]
+        calls.append(("wait", int(kwargs["n_frames"])))
+        return 0.0
+
+    async def fake_video_put(frame) -> None:
+        calls.append(("video", 1))
+
+    runner._append_recording_frames_if_enabled = fake_append
+    runner._audio_put_safe = fake_audio_put
+    runner._wait_for_playback_capacity = fake_wait
+    runner._video_put_safe = fake_video_put
+    runner._trace_queued_video_frame = lambda frame: None
+
+    pcm = np.ones((22400,), dtype=np.int16)
+    frames = [
+        SimpleNamespace(
+            data=np.zeros((2, 2, 3), dtype=np.uint8),
+            timestamp_ms=0.0,
+        )
+        for _ in range(28)
+    ]
+
+    asyncio.run(runner._queue_av_chunk(pcm, frames))
+
+    assert calls[0] == ("audio", 22400)
+    assert calls[1] == ("wait", 28)
+    assert [name for name, _ in calls].count("audio") == 1
+    assert [name for name, _ in calls].count("video") == 28
+
+
 @pytest.mark.asyncio
 async def test_fasterliveportrait_waits_when_playback_queue_is_high(monkeypatch) -> None:
     monkeypatch.setenv("FLP_PLAYBACK_TARGET_QUEUE_FRAMES", "1")
