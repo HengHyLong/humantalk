@@ -3160,10 +3160,13 @@ class FlashTalkRunner:
     async def _queue_av_chunk(self, pcm_chunk: np.ndarray, frames: list[Any]) -> None:
         """Queue generated audio and video while preserving real-time A/V pacing.
 
-        QuickTalk and Wav2Lip enqueue the complete PCM chunk before waiting on
-        video backpressure. Their video chunks are large enough that waiting
-        first can otherwise drain the audio queue and produce periodic stalls.
-        Other backends retain frame-by-frame audio interleaving.
+        QuickTalk and Wav2Lip keep a complete PCM chunk together, but must not
+        enqueue that *new* audio before video backpressure has finished. Doing
+        so lets the browser start playing the chunk while its matching video is
+        still waiting to enter the queue, which accumulates audio lead over
+        long replies. The wait observes only previously queued audio and stops
+        at the configured reserve, then matching audio/video are queued back to
+        back. Other backends retain frame-by-frame audio interleaving.
         """
         t0 = getattr(self, "_speak_t0_wall", None)
         ms = getattr(self, "_speak_milestones", None)
@@ -3206,8 +3209,6 @@ class FlashTalkRunner:
 
         await self._append_recording_frames_if_enabled(frames)
         audio_first = self.model_type in {"quicktalk", "wav2lip"}
-        if audio_first and total_samples > 0:
-            await self._audio_put_safe(arr)
         audio_buffer_before_wait_ms = (
             self.webrtc.buffered_audio_duration_ms() if self.webrtc else 0.0
         )
@@ -3216,6 +3217,11 @@ class FlashTalkRunner:
             first_media_this_speak=first_media_this_speak,
         )
         audio_buffer_after_wait_ms = (
+            self.webrtc.buffered_audio_duration_ms() if self.webrtc else 0.0
+        )
+        if audio_first and total_samples > 0:
+            await self._audio_put_safe(arr)
+        audio_buffer_after_enqueue_ms = (
             self.webrtc.buffered_audio_duration_ms() if self.webrtc else 0.0
         )
 
@@ -3255,7 +3261,7 @@ class FlashTalkRunner:
         log.info(
             "FlashTalk queue AV chunk: session=%s model=%s frames=%d audio_ms=%.1f "
             "queue_ms=%.1f playback_wait_ms=%.1f queue_fps=%.2f vq=%d->%d aq=%d->%d "
-            "audio_buffer_ms=%.1f->%.1f av_ts_ms=%.1f",
+            "audio_buffer_ms=%.1f->%.1f->%.1f av_ts_ms=%.1f",
             self.session_id,
             self.model_type,
             n_frames,
@@ -3269,6 +3275,7 @@ class FlashTalkRunner:
             aq_after,
             audio_buffer_before_wait_ms,
             audio_buffer_after_wait_ms,
+            audio_buffer_after_enqueue_ms,
             self._av_ts_ms,
         )
 

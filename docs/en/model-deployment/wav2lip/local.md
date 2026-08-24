@@ -72,3 +72,5 @@ AUDIO2VIDEO_PLAYBACK_AUDIO_RESERVE_MS=1200
 ```
 
 Use the runtime log `WebRTC H.264 encoder active: codec=h264_nvenc` to confirm that GPU encoding is actually active. CUDA model-loading logs alone do not prove that WebRTC uses NVENC. OpenTalking falls back to `libx264` if NVENC is unavailable.
+
+`AUDIO2VIDEO_PLAYBACK_AUDIO_RESERVE_MS` prevents video backpressure from draining previously queued audio. The `audio_buffer_ms=before-wait->after-wait->after-new-audio` log confirms that new audio is not played ahead of its matching video; the after-wait value normally settles near the reserve.

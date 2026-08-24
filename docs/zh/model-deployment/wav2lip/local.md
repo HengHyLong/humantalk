@@ -96,6 +96,8 @@ AUDIO2VIDEO_PLAYBACK_AUDIO_RESERVE_MS=1200
 
 建立会话后，以 `WebRTC H.264 encoder active: codec=h264_nvenc` 日志作为真正启用 GPU 编码的判断依据。仅看到 CUDA 模型加载日志并不能证明 WebRTC 已经使用 NVENC。NVENC 不可用时会自动回退 `libx264`。
 
+`AUDIO2VIDEO_PLAYBACK_AUDIO_RESERVE_MS` 用于避免等待视频队列时耗尽旧音频。日志中的 `audio_buffer_ms=等待前->等待后->新音频入队后` 可以确认新音频没有在对应视频之前播放；等待后的数值通常会停在储备线附近。
+
 ## 6. 验证
 
 ```bash title="终端"

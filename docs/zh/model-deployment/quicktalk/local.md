@@ -146,4 +146,4 @@ AUDIO2VIDEO_PLAYBACK_AUDIO_RESERVE_MS=1200
 
 服务启动并建立 WebRTC 会话后，日志应出现 `WebRTC H.264 encoder active: codec=h264_nvenc`。如果驱动、PyAV 或 NVENC 会话不可用，OpenTalking 会记录原因并自动回退到 `libx264`。NVENC 只降低最终视频压缩开销；如果 `FlashTalk live generate` 日志中的模型生成耗时已经超过对应音频时长，仍需降低模型实时输出尺寸或帧率。
 
-`AUDIO2VIDEO_PLAYBACK_AUDIO_RESERVE_MS` 用于避免等待视频队列时耗尽音频。日志中的 `audio_buffer_ms=入队后->等待后` 应保持在储备线附近或以上；数值提高会增强抗抖动能力，也会增加一定播放缓冲。
+`AUDIO2VIDEO_PLAYBACK_AUDIO_RESERVE_MS` 用于避免等待视频队列时耗尽旧音频。日志中的 `audio_buffer_ms=等待前->等待后->新音频入队后` 可以确认背压期间没有提前播放新音频；等待后的数值通常会停在储备线附近。数值提高会增强抗抖动能力，也会增加一定播放缓冲。

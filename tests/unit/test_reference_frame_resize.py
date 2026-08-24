@@ -174,7 +174,7 @@ def test_audio2video_backpressure_stops_before_audio_reserve_is_drained(
     assert sleeps == []
 
 
-def test_quicktalk_queues_full_audio_chunk_before_video_backpressure() -> None:
+def test_quicktalk_waits_before_queueing_matching_audio_and_video() -> None:
     calls: list[tuple[str, int]] = []
     video_queue = asyncio.Queue()
     audio_queue = asyncio.Queue()
@@ -200,7 +200,7 @@ def test_quicktalk_queues_full_audio_chunk_before_video_backpressure() -> None:
         calls.append(("audio", int(np.asarray(pcm).size)))
 
     async def fake_wait(**kwargs) -> float:
-        assert calls == [("audio", 22400)]
+        assert calls == []
         calls.append(("wait", int(kwargs["n_frames"])))
         return 0.0
 
@@ -224,8 +224,8 @@ def test_quicktalk_queues_full_audio_chunk_before_video_backpressure() -> None:
 
     asyncio.run(runner._queue_av_chunk(pcm, frames))
 
-    assert calls[0] == ("audio", 22400)
-    assert calls[1] == ("wait", 28)
+    assert calls[0] == ("wait", 28)
+    assert calls[1] == ("audio", 22400)
     assert [name for name, _ in calls].count("audio") == 1
     assert [name for name, _ in calls].count("video") == 28
 
