@@ -37,3 +37,45 @@ export function classifyRegistrationDecision(
   if (confirmKeywords.some((term) => matchesTerm(text, term))) return "confirm";
   return "unknown";
 }
+
+export function classifyProductInterestDecision(
+  value: string,
+  confirmKeywords: string[],
+  declineKeywords: string[],
+  hasDifferentEntity = false,
+): RegistrationDecision {
+  const text = normalizeRegistrationText(value);
+  if (!text || hasDifferentEntity) return "unknown";
+
+  const productSignals = ["产品", "展品", "商品", "products", "product", "exhibits", "exhibit"];
+  const positiveSignals = ["了解", "看看", "想看", "介绍", "讲", "需要", "有兴趣", "learn", "show", "introduce", "interested"];
+  const mentionsProduct = productSignals.some((signal) => text.includes(normalizeRegistrationText(signal)));
+  if (mentionsProduct) {
+    const productDecision = classifyRegistrationDecision(value, confirmKeywords, declineKeywords);
+    if (productDecision === "decline") return "decline";
+    if (positiveSignals.some((signal) => text.includes(normalizeRegistrationText(signal)))) return "confirm";
+  }
+
+  const exactDecision = classifyRegistrationDecision(
+    value,
+    confirmKeywords.filter((term) => text === normalizeRegistrationText(term)),
+    declineKeywords.filter((term) => text === normalizeRegistrationText(term)),
+  );
+  if (exactDecision !== "unknown") return exactDecision;
+  if (["我想了解一下", "想了解一下", "我想看看", "想看看"].some((term) => text === normalizeRegistrationText(term))) {
+    return "confirm";
+  }
+
+  // A polite acknowledgement may prefix a completely new question, for
+  // example “好的，请问卫生间在哪里”. Do not let “好的” consume that turn.
+  const newTopicSignals = [
+    "请问", "想问", "想知道", "了解", "告诉我", "介绍", "讲", "帮我", "查询", "查一下", "怎么", "如何", "什么",
+    "哪里", "在哪", "哪儿", "为什么", "为何", "多少", "几个", "几点", "多久",
+    "谁", "是否", "能否", "有没有", "路线", "导航", "天气", "help", "tellme",
+    "what", "where", "when", "why", "how", "which", "who", "route", "weather",
+  ];
+  if (/[?？]/u.test(value) || newTopicSignals.some((signal) => text.includes(normalizeRegistrationText(signal)))) {
+    return "unknown";
+  }
+  return classifyRegistrationDecision(value, confirmKeywords, declineKeywords);
+}

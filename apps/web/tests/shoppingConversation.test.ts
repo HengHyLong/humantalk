@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { classifyRegistrationDecision, selectShoppingPresentationEntities } from "../src/lib/shoppingConversation";
+import { classifyProductInterestDecision, classifyRegistrationDecision, selectShoppingPresentationEntities } from "../src/lib/shoppingConversation";
 import type { ExhibitionEntityCard } from "../src/types";
 
 const confirms = ["需要", "好的", "可以", "登记", "要"];
@@ -18,6 +18,29 @@ test("registration decision gives negative phrases priority", () => {
 
 test("registration decision keeps an ambiguous reply in the confirmation round", () => {
   assert.equal(classifyRegistrationDecision("我再看看产品参数", confirms, declines), "unknown");
+});
+
+test("company product follow-up releases a new question instead of matching its acknowledgement", () => {
+  const confirms = ["想了解", "想看", "好的", "可以"];
+  const declines = ["不想", "不用", "不需要"];
+
+  assert.equal(classifyProductInterestDecision("好的，请问卫生间在哪里？", confirms, declines), "unknown");
+  assert.equal(classifyProductInterestDecision("我想了解另一家公司", confirms, declines, true), "unknown");
+  assert.equal(classifyProductInterestDecision("我想了解人工智能", confirms, declines), "unknown");
+  assert.equal(classifyProductInterestDecision("不用了，卫生间在哪里？", confirms, declines), "unknown");
+  assert.equal(classifyProductInterestDecision("讲个笑话", confirms, declines), "unknown");
+  assert.equal(classifyProductInterestDecision("好的，讲个笑话", confirms, declines), "unknown");
+});
+
+test("company product follow-up still accepts direct product answers", () => {
+  const confirms = ["想了解", "想看", "好的", "可以"];
+  const declines = ["不想", "不用", "不需要"];
+
+  assert.equal(classifyProductInterestDecision("好的", confirms, declines), "confirm");
+  assert.equal(classifyProductInterestDecision("我想了解一下", confirms, declines), "confirm");
+  assert.equal(classifyProductInterestDecision("请介绍一下这家公司的产品", confirms, declines), "confirm");
+  assert.equal(classifyProductInterestDecision("我不想了解这些产品", confirms, declines), "decline");
+  assert.equal(classifyProductInterestDecision("暂时不用", confirms, declines), "decline");
 });
 
 test("shopping confirmation only presents the explicitly introduced product", () => {

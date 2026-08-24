@@ -116,7 +116,7 @@ import type { ConnectionStatus, ExhibitionEntityCard, MemoryLibrary, Message, Qu
 import { matchExhibitionEntities, selectExhibitionEntity } from "./lib/exhibitionEntityMatch";
 import { readExhibitionEntityCache, writeExhibitionEntityCache } from "./lib/exhibitionCache";
 import { useAutoDismiss } from "./lib/useAutoDismiss";
-import { classifyRegistrationDecision, selectShoppingPresentationEntities } from "./lib/shoppingConversation";
+import { classifyProductInterestDecision, classifyRegistrationDecision, selectShoppingPresentationEntities } from "./lib/shoppingConversation";
 import { classifyContentClarification, classifyExplicitContentRequest } from "./lib/contentClarification";
 import { isEnglishConversation, type ConversationLanguage } from "./lib/conversationLanguage";
 import {
@@ -3003,10 +3003,15 @@ export default function App() {
     const pendingExhibition = pendingExhibitionFollowupRef.current;
     if (pendingExhibition && !databaseShortcut) {
       if (pendingExhibition.stage === "exhibitor_products") {
-        const decision = classifyRegistrationDecision(
+        const hasDifferentEntity = relatedEntities.some((entity) => (
+          entity.id !== pendingExhibition.exhibitor.id
+          && entity.kind !== "exhibition"
+        ));
+        const decision = classifyProductInterestDecision(
           text,
           englishConversation ? ["yes", "sure", "show", "products", "okay"] : ["想了解", "想看", "要看", "好的", "可以", "好啊", "有兴趣"],
           englishConversation ? ["no", "not now", "cancel", "no thanks"] : ["不想", "不用", "暂时不用", "不需要", "不要", "没有"],
+          hasDifferentEntity,
         );
         if (decision === "confirm") {
           if (!pendingExhibition.products.length) {
@@ -3043,31 +3048,22 @@ export default function App() {
           );
           return;
         }
-        enqueueSpeech(
-          englishConversation
-            ? `Would you like to see the products from ${pendingExhibition.exhibitor.name}? Please answer yes or no.`
-            : `您还想了解${pendingExhibition.exhibitor.name}的相关展品吗？请回答“想了解”或“暂时不用”。`,
-          text,
-          [pendingExhibition.exhibitor],
-          true,
-        );
-        return;
+        // Any non-answer is treated as a new conversation turn. Clear the old
+        // company-product question and let the normal intent router handle it.
+        pendingExhibitionFollowupRef.current = null;
+        setExhibitionFollowupStage(null);
+      } else {
+        const selectedProduct = selectExhibitionEntity(text, pendingExhibition.products);
+        if (selectedProduct) {
+          pendingExhibitionFollowupRef.current = null;
+          setExhibitionFollowupStage(null);
+          await introduceExhibitAndOfferRegistration(selectedProduct, text);
+          return;
+        }
+        // The user may ask a new question instead of choosing a listed product.
+        pendingExhibitionFollowupRef.current = null;
+        setExhibitionFollowupStage(null);
       }
-
-      const selectedProduct = selectExhibitionEntity(text, pendingExhibition.products);
-      if (!selectedProduct) {
-        enqueueSpeech(
-          englishConversation ? "Please tell me the product name or say first, second, or third." : "请说出展品名称，也可以说“第一个”“第二个”或“第三个”。",
-          text,
-          pendingExhibition.products,
-          true,
-        );
-        return;
-      }
-      pendingExhibitionFollowupRef.current = null;
-      setExhibitionFollowupStage(null);
-      await introduceExhibitAndOfferRegistration(selectedProduct, text);
-      return;
     }
 
     const pendingShopping = pendingShoppingRegistrationRef.current;
