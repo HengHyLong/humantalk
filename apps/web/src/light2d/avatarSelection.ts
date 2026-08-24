@@ -64,7 +64,9 @@ export function normalizeAvatarModelSelection<T extends SelectableAvatar>(
   const avatar = avatars.find((item) => item.id === avatarId);
   return {
     avatarId,
-    model: avatarId === DOGO_LIGHT2D_AVATAR_ID
+    model: requestedModel === "video"
+      ? "video"
+      : avatarId === DOGO_LIGHT2D_AVATAR_ID
       ? "mock"
       : modelForAvatarSelection(avatar, requestedModel),
   };
@@ -74,7 +76,7 @@ export function canChangeModelForAvatar(
   avatar: SelectableAvatar | null | undefined,
   nextModel: string,
 ): boolean {
-  return !isDogoLight2dAvatar(avatar) || nextModel === "mock";
+  return !isDogoLight2dAvatar(avatar) || nextModel === "mock" || nextModel === "video";
 }
 
 export type VideoCreationAvatarState = {

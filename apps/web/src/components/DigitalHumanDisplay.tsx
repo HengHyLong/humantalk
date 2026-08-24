@@ -17,6 +17,7 @@ import { ExhibitionEntityCard } from "./ExhibitionEntityCard";
 import { ExhibitionProductList } from "./ExhibitionProductList";
 import { LiveSubtitle } from "./LiveSubtitle";
 import { SceneStage } from "./SceneStage";
+import type { VideoDriverState } from "./VideoAvatar";
 
 const PRESENTATION_AUTO_CLOSE_MS = 90_000;
 const CONVERSATION_IDLE_HIDE_MS = 90_000;
@@ -34,6 +35,9 @@ type DigitalHumanDisplayProps = {
   subtitle?: string | null;
   avatarMaskUrl?: string | null;
   clientRenderer?: ClientRendererDescriptor | null;
+  videoDriver?: boolean;
+  videoState?: VideoDriverState;
+  videoDriverAssets?: { listen_url: string; think_url?: string | null; talk_url: string } | null;
   connection: ConnectionStatus;
   isSpeaking: boolean;
   avatar: AvatarSummary | null;
@@ -79,6 +83,9 @@ export function DigitalHumanDisplay({
   subtitle,
   avatarMaskUrl = null,
   clientRenderer = null,
+  videoDriver = false,
+  videoState = "listen",
+  videoDriverAssets = null,
   connection,
   isSpeaking,
   avatar,
@@ -262,14 +269,17 @@ export function DigitalHumanDisplay({
           subtitle={null}
           avatarMaskUrl={avatarMaskUrl}
           clientRenderer={clientRenderer}
+          videoDriver={videoDriver}
+          videoState={videoState}
+          videoDriverAssets={videoDriverAssets}
           fullBleed
           videoFit="cover"
           backgroundColorOverride="#062b66"
           className="digital-display-stage"
         >
           <div className="digital-display-grid" aria-hidden />
-          <div className="digital-display-orbit digital-display-orbit-one" aria-hidden />
-          <div className="digital-display-orbit digital-display-orbit-two" aria-hidden />
+          {/*<div className="digital-display-orbit digital-display-orbit-one" aria-hidden />*/}
+          {/*<div className="digital-display-orbit digital-display-orbit-two" aria-hidden />*/}
 
           <aside className="digital-display-languages" aria-label={english ? "Language selection" : "语言选择"}>
             {languages.map((option) => (

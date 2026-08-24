@@ -3,6 +3,7 @@ import type { ClientRendererDescriptor, SceneBackgroundAsset, SceneComposition }
 import { buildApiUrl } from "../lib/api";
 import { Light2dAvatar } from "./Light2dAvatar";
 import { VideoBackground } from "./VideoBackground";
+import { VideoAvatar, type VideoDriverState } from "./VideoAvatar";
 
 type SceneStageProps = {
   videoRef: RefObject<HTMLVideoElement>;
@@ -22,6 +23,9 @@ type SceneStageProps = {
   fullBleed?: boolean;
   videoFit?: "contain" | "cover";
   clientRenderer?: ClientRendererDescriptor | null;
+  videoDriver?: boolean;
+  videoState?: VideoDriverState;
+  videoDriverAssets?: { listen_url: string; think_url?: string | null; talk_url: string } | null;
   backgroundColorOverride?: string;
 };
 
@@ -64,6 +68,9 @@ export function SceneStage({
   fullBleed = false,
   videoFit,
   clientRenderer = null,
+  videoDriver = false,
+  videoState = "listen",
+  videoDriverAssets = null,
   backgroundColorOverride,
 }: SceneStageProps) {
   const [rendererFailed, setRendererFailed] = useState(false);
@@ -119,6 +126,12 @@ export function SceneStage({
         {hasSceneBackground ? <div className="absolute inset-0 bg-slate-950/10" /> : null}
       </div>
 
+      {videoDriver && videoState !== "listen" ? (
+        <div className="pointer-events-none absolute left-4 top-4 z-20 rounded-full border border-white/20 bg-slate-950/70 px-3 py-1.5 text-xs font-semibold text-white shadow-lg backdrop-blur">
+          {videoState === "think" ? "思考中" : "播报中"}
+        </div>
+      ) : null}
+
       <div className={`absolute inset-0 flex ${fullBleed ? "" : "p-4 sm:p-6 lg:p-8"} ${avatarAnchorClass}`}>
         <div
           className={
@@ -131,9 +144,10 @@ export function SceneStage({
           <VideoBackground
             ref={videoRef}
             stream={videoStream}
-            className={`absolute inset-0 h-full w-full ${avatarFit} ${avatarObjectPosition} ${clientRenderer && !rendererFailed ? "opacity-0" : "opacity-100"}`}
+            className={`absolute inset-0 h-full w-full ${avatarFit} ${avatarObjectPosition} ${videoDriver || (clientRenderer && !rendererFailed) ? "opacity-0" : "opacity-100"}`}
             style={avatarMaskStyle}
           />
+          {videoDriver ? <VideoAvatar state={videoState} videoDriver={videoDriverAssets} className={`absolute inset-0 h-full w-full ${avatarFit} ${avatarObjectPosition}`} /> : null}
           {clientRenderer && !rendererFailed ? (
             <Light2dAvatar
               renderer={clientRenderer}

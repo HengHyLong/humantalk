@@ -64,7 +64,11 @@ export function normalizeAvatarModelSelection<T extends SelectableAvatar>(
   const avatar = avatars.find((item) => item.id === avatarId);
   return {
     avatarId,
-    model: avatarId === DOGO_LIGHT2D_AVATAR_ID
+    // Video mode is rendered entirely by the browser and is compatible with
+    // every avatar selection, including the light2d avatar.
+    model: requestedModel === "video"
+      ? "video"
+      : avatarId === DOGO_LIGHT2D_AVATAR_ID
       ? "mock"
       : modelForAvatarSelection(avatar, requestedModel),
   };
@@ -74,7 +78,7 @@ export function canChangeModelForAvatar(
   avatar: SelectableAvatar | null | undefined,
   nextModel: string,
 ): boolean {
-  return !isDogoLight2dAvatar(avatar) || nextModel === "mock";
+  return !isDogoLight2dAvatar(avatar) || nextModel === "mock" || nextModel === "video";
 }
 
 export type VideoCreationAvatarState = {

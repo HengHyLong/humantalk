@@ -85,6 +85,59 @@ def test_create_custom_avatar_adds_listed_asset_with_preview(tmp_path):
     assert preview.headers["content-type"] == "image/png"
 
 
+def test_create_custom_video_avatar_persists_listen_and_talk_assets(tmp_path, monkeypatch):
+    base = tmp_path / "base-avatar"
+    base.mkdir()
+    (base / "preview.png").write_bytes(_png_bytes())
+    (base / "reference.png").write_bytes(_png_bytes())
+    (base / "manifest.json").write_text(
+        json.dumps({
+            "id": "base-avatar",
+            "name": "Base Avatar",
+            "model_type": "mock",
+            "fps": 25,
+            "sample_rate": 16000,
+            "width": 8,
+            "height": 8,
+            "version": "1.0",
+        }),
+        encoding="utf-8",
+    )
+
+    async def fake_read_upload(upload):
+        return Image.new("RGB", (8, 8), (10, 180, 210)), f"{upload.filename}-bytes".encode(), ".mp4"
+
+    monkeypatch.setattr(avatars, "_read_upload_video", fake_read_upload)
+    app = FastAPI()
+    app.state.settings = SimpleNamespace(avatars_dir=str(tmp_path))
+    app.include_router(avatars.router)
+    client = TestClient(app)
+
+    response = client.post(
+        "/avatars/custom",
+        data={"base_avatar_id": "base-avatar", "name": "视频数字人", "model": "video"},
+        files={
+            "listen_video": ("listen.mp4", b"listen", "video/mp4"),
+            "think_video": ("think.mp4", b"think", "video/mp4"),
+            "talk_video": ("talk.mp4", b"talk", "video/mp4"),
+        },
+    )
+
+    assert response.status_code == 200
+    created = response.json()
+    assert created["model_type"] == "video"
+    assert created["video_driver"]["listen_url"].endswith("/video-driver/listen")
+    assert created["video_driver"]["think_url"].endswith("/video-driver/think")
+    assert created["video_driver"]["talk_url"].endswith("/video-driver/talk")
+    avatar_dir = tmp_path / created["id"]
+    assert (avatar_dir / "source" / "listen.mp4").read_bytes() == b"listen.mp4-bytes"
+    assert (avatar_dir / "source" / "think.mp4").read_bytes() == b"think.mp4-bytes"
+    assert (avatar_dir / "source" / "talk.mp4").read_bytes() == b"talk.mp4-bytes"
+    assert client.get(created["video_driver"]["listen_url"]).content == b"listen.mp4-bytes"
+    assert client.get(created["video_driver"]["think_url"]).content == b"think.mp4-bytes"
+    assert client.get(created["video_driver"]["talk_url"]).content == b"talk.mp4-bytes"
+
+
 def test_create_custom_avatar_persists_selected_person_mode(tmp_path: Path) -> None:
     base = tmp_path / "base-avatar"
     base.mkdir()

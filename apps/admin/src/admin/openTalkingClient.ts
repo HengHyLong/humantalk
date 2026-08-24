@@ -22,12 +22,13 @@ export type OpenTalkingClient = {
     name: string;
     file?: File;
     video?: File;
+    listenVideo?: File;
+    thinkVideo?: File;
+    talkVideo?: File;
     baseAvatarId?: string | null;
     model?: string | null;
     personMode?: "single" | "double";
     removeBackground?: boolean;
-    waitingGif?: File;
-    speakingGif?: File;
   }): Promise<AvatarSummary>;
   deleteAvatar(avatarId: string): Promise<void>;
   previewTts(input: { text: string; voice: string; provider?: string; model?: string | null }): Promise<Blob>;
@@ -48,7 +49,9 @@ export const openTalkingClient: OpenTalkingClient = {
     return response.items ?? response.avatars ?? [];
   }),
   listModels: () => apiGet<{ models?: string[]; default_model?: string | null }>("/models").then((response) => ({
-    models: response.models ?? [],
+    // video is a browser-side driver and therefore is intentionally not part of
+    // the backend synthesis-model list.
+    models: Array.from(new Set([...(response.models ?? []), "video"])),
     defaultModel: response.default_model ?? null,
   })),
   listVoices: () =>
@@ -56,16 +59,17 @@ export const openTalkingClient: OpenTalkingClient = {
       Array.isArray(response) ? response : response.items ?? [],
     ),
   deleteVoiceEntry: (entryId) => apiDelete<Record<string, unknown>>(`/voices/${entryId}`).then(() => undefined),
-  createCustomAvatar: ({ file, video, name, baseAvatarId, model = null, personMode = "single", removeBackground = false, waitingGif, speakingGif }) => {
+  createCustomAvatar: ({ file, video, listenVideo, thinkVideo, talkVideo, name, baseAvatarId, model = null, personMode = "single", removeBackground = false }) => {
     const form = new FormData();
     if (baseAvatarId) form.set("base_avatar_id", baseAvatarId);
     form.set("name", name);
     if (model) form.set("model", model);
     form.set("person_mode", personMode);
-    if (model === "gif") {
-      if (!waitingGif || !speakingGif) throw new Error("GIF 形象必须同时提供等待聆听和张嘴讲话动图。");
-      form.set("waiting_gif", waitingGif);
-      form.set("speaking_gif", speakingGif);
+    if (model === "video") {
+      if (!listenVideo || !thinkVideo || !talkVideo) throw new Error("视频驱动必须同时上传聆听、思考和讲话视频。");
+      form.set("listen_video", listenVideo);
+      form.set("think_video", thinkVideo);
+      form.set("talk_video", talkVideo);
     } else if (video) {
       form.set("video", video);
       form.set("remove_background", "false");

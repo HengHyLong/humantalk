@@ -43,6 +43,7 @@ from apps.api.schemas.avatar import (
     ClientRendererCapability,
     DuoDialogCapability,
     PersonMode,
+    VideoDriverCapability,
 )
 from apps.cli.prepare_cache import (
     PreparedAssetResult,
@@ -183,6 +184,42 @@ def _video_media_type(path: Path) -> str:
     return "video/mp4"
 
 
+def _video_driver_paths(avatar_dir: Path) -> tuple[Path, Path, Path | None] | None:
+    try:
+        raw = json.loads((avatar_dir / "manifest.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    metadata = raw.get("metadata")
+    driver = metadata.get("video_driver") if isinstance(metadata, dict) else None
+    if not isinstance(driver, dict):
+        return None
+    root = avatar_dir.resolve()
+    paths: list[Path] = []
+    for key in ("listen", "talk"):
+        candidate_value = driver.get(key)
+        if not isinstance(candidate_value, str) or not candidate_value:
+            return None
+        candidate = (root / candidate_value).resolve()
+        try:
+            candidate.relative_to(root)
+        except ValueError:
+            return None
+        if not candidate.is_file() or candidate.suffix.lower() not in {".mp4", ".webm", ".mov", ".avi"}:
+            return None
+        paths.append(candidate)
+    think_value = driver.get("think")
+    think_path: Path | None = None
+    if isinstance(think_value, str) and think_value:
+        candidate = (root / think_value).resolve()
+        try:
+            candidate.relative_to(root)
+        except ValueError:
+            return None
+        if candidate.is_file() and candidate.suffix.lower() in {".mp4", ".webm", ".mov", ".avi"}:
+            think_path = candidate
+    return paths[0], paths[1], think_path
+
+
 def _summary_from_dir(path: Path) -> AvatarSummary:
     b = load_avatar_bundle(path, strict=False)
     m = b.manifest
@@ -208,6 +245,19 @@ def _summary_from_dir(path: Path) -> AvatarSummary:
         matting_status=_avatar_matting_status(path / 'manifest.json'),
         duo_dialog=duo_capability,
         client_renderer=_client_renderer_capability(path),
+        video_driver=(
+            VideoDriverCapability(
+                listen_url=f"/avatars/{m.id}/video-driver/listen",
+                think_url=(
+                    f"/avatars/{m.id}/video-driver/think"
+                    if (_video_driver_paths(path) or (None, None, None))[2] is not None
+                    else "/avatars/video-driver/think"
+                ),
+                talk_url=f"/avatars/{m.id}/video-driver/talk",
+            )
+            if _video_driver_paths(path) is not None
+            else None
+        ),
     )
 
 
@@ -316,7 +366,7 @@ async def _read_upload_video(upload: UploadFile) -> tuple[Image.Image, bytes, st
 
 def _normalize_custom_avatar_model(model: str | None, fallback: str) -> str:
     value = (model or "").strip().lower()
-    if value in {"fasterliveportrait", "flashhead", "flashtalk", "mock", "musetalk", "quicktalk", "wav2lip"}:
+    if value in {"fasterliveportrait", "flashhead", "flashtalk", "mock", "musetalk", "quicktalk", "wav2lip", "video"}:
         return value
     return fallback
 
@@ -344,6 +394,7 @@ def _write_custom_avatar_manifest(
         "source_video",
         "template_video",
         "video",
+        "video_driver",
     ):
         metadata.pop(key, None)
     metadata["custom_avatar"] = True
@@ -1107,6 +1158,9 @@ async def create_custom_avatar(
     remove_background: bool = Form(default=False),
     image: UploadFile | None = File(default=None),
     video: UploadFile | None = File(default=None),
+    listen_video: UploadFile | None = File(default=None),
+    think_video: UploadFile | None = File(default=None),
+    talk_video: UploadFile | None = File(default=None),
 ) -> AvatarSummary:
     display_name = name.strip()
     if not display_name:
@@ -1123,11 +1177,25 @@ async def create_custom_avatar(
 
     avatar_id = _unique_avatar_id(root, display_name)
     target_dir = root / avatar_id
-    if (image is None and video is None) or (image is not None and video is not None):
+    requested_model = (model or "").strip().lower()
+    is_video_driver = requested_model == "video"
+    if is_video_driver:
+        if image is not None or video is not None or listen_video is None or think_video is None or talk_video is None:
+            raise HTTPException(status_code=400, detail="video model requires listen_video, think_video and talk_video")
+    elif listen_video is not None or think_video is not None or talk_video is not None:
+        raise HTTPException(status_code=400, detail="listen_video and talk_video require model=video")
+    elif (image is None and video is None) or (image is not None and video is not None):
         raise HTTPException(status_code=400, detail="provide exactly one image or video")
     video_body: bytes | None = None
     video_suffix = ".mp4"
-    if video is not None:
+    driver_video_bodies: tuple[bytes, str, bytes, str, bytes, str] | None = None
+    if is_video_driver:
+        listen_image, listen_body, listen_suffix = await _read_upload_video(listen_video)
+        _, think_body, think_suffix = await _read_upload_video(think_video)
+        _, talk_body, talk_suffix = await _read_upload_video(talk_video)
+        image_rgb = listen_image
+        driver_video_bodies = (listen_body, listen_suffix, think_body, think_suffix, talk_body, talk_suffix)
+    elif video is not None:
         image_rgb, video_body, video_suffix = await _read_upload_video(video)
     elif image is not None:
         image_rgb = await _read_upload_image(image)
@@ -1153,7 +1221,7 @@ async def create_custom_avatar(
         fitted_image = _resize_uploaded_avatar_image(image_rgb, max_width=max_w, max_height=max_h)
         source_dir = target_dir / "source"
         source_dir.mkdir(parents=True, exist_ok=True)
-        if remove_background and video_body is None:
+        if remove_background and video_body is None and driver_video_bodies is None:
             original_image = fitted_image.copy()
             try:
                 fitted_image, matting_provider = remove_avatar_background(
@@ -1174,7 +1242,24 @@ async def create_custom_avatar(
         fitted_image.save(target_dir / "preview.png", format="PNG")
         fitted_image.save(target_dir / "reference.png", format="PNG")
         fitted_image.save(source_dir / "source.png", format="PNG")
-        if video_body is not None:
+        if driver_video_bodies is not None:
+            listen_body, listen_suffix, think_body, think_suffix, talk_body, talk_suffix = driver_video_bodies
+            listen_name = f"listen{listen_suffix}"
+            think_name = f"think{think_suffix}"
+            talk_name = f"talk{talk_suffix}"
+            (source_dir / listen_name).write_bytes(listen_body)
+            (source_dir / think_name).write_bytes(think_body)
+            (source_dir / talk_name).write_bytes(talk_body)
+            raw = _read_manifest(target_dir / "manifest.json")
+            metadata = dict(raw.get("metadata") or {})
+            metadata["idle_mode"] = "video"
+            metadata["reference_mode"] = "video"
+            metadata["source_image"] = "source/source.png"
+            metadata["source_video"] = f"source/{listen_name}"
+            metadata["video_driver"] = {"listen": f"source/{listen_name}", "think": f"source/{think_name}", "talk": f"source/{talk_name}"}
+            raw["metadata"] = metadata
+            _write_manifest(target_dir / "manifest.json", raw)
+        elif video_body is not None:
             video_name = f"source_video{video_suffix}"
             (source_dir / video_name).write_bytes(video_body)
             raw = _read_manifest(target_dir / "manifest.json")
@@ -1190,9 +1275,9 @@ async def create_custom_avatar(
             target_dir / "reference.png",
             force=True,
         )
-        if video_body is None:
+        if video_body is None and driver_video_bodies is None:
             _prepare_quicktalk_custom_assets(target_dir / "manifest.json", fitted_image)
-        if video_body is None and _model_type_from_manifest(target_dir / "manifest.json") == "wav2lip":
+        if video_body is None and driver_video_bodies is None and _model_type_from_manifest(target_dir / "manifest.json") == "wav2lip":
             frames_dir = target_dir / "frames"
             frames_dir.mkdir(parents=True, exist_ok=True)
             frame_path = frames_dir / "frame_00000.png"
@@ -1265,6 +1350,36 @@ async def get_preview_video(avatar_id: str, request: Request) -> FileResponse:
     path = _avatar_preview_video_path(avatar_dir)
     if path is None:
         raise HTTPException(status_code=404, detail="preview video not found")
+    return FileResponse(path, media_type=_video_media_type(path))
+
+
+@router.get("/video-driver/think")
+async def get_default_video_driver_think() -> FileResponse:
+    path = Path(__file__).resolve().parents[3] / "examples" / "avatars" / "video" / "think.mp4"
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="think video not found")
+    return FileResponse(path, media_type=_video_media_type(path))
+
+
+@router.get("/{avatar_id}/video-driver/{state}")
+async def get_video_driver_asset(avatar_id: str, state: str, request: Request) -> FileResponse:
+    root = _avatars_root(request)
+    avatar_dir = (root / avatar_id).resolve()
+    try:
+        avatar_dir.relative_to(root)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="invalid avatar_id") from exc
+    paths = _video_driver_paths(avatar_dir) if avatar_dir.is_dir() else None
+    if paths is None or state not in {"listen", "think", "talk"}:
+        raise HTTPException(status_code=404, detail="video driver asset not found")
+    if state == "listen":
+        path = paths[0]
+    elif state == "talk":
+        path = paths[1]
+    elif paths[2] is not None:
+        path = paths[2]
+    else:
+        path = Path(__file__).resolve().parents[3] / "examples" / "avatars" / "video" / "think.mp4"
     return FileResponse(path, media_type=_video_media_type(path))
 
 

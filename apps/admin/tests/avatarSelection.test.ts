@@ -85,6 +85,14 @@ test("DOGO offline state locks model and unsupported controls", () => {
   });
 });
 
+test("video mode remains available for the Light2D avatar", () => {
+  assert.equal(canChangeModelForAvatar(avatars[0], "video"), true);
+  assert.deepEqual(
+    normalizeAvatarModelSelection(avatars, "dogo-light2d", "video"),
+    { avatarId: "dogo-light2d", model: "video" },
+  );
+});
+
 test("DOGO offline composition omits stale background without changing layout", () => {
   assert.deepEqual(
     videoCreationCompositionForAvatar(avatars[0], {

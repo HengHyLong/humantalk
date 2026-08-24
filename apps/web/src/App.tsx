@@ -13,6 +13,7 @@ import {
 } from "./components/SettingsPanel";
 import { RuntimeConfigWorkspace } from "./components/RuntimeConfigWorkspace";
 import { SceneStage } from "./components/SceneStage";
+import type { VideoDriverState } from "./components/VideoAvatar";
 import { DigitalHumanDisplay } from "./components/DigitalHumanDisplay";
 import { TopBar, type ConversationViewMode, type StudioWorkflow } from "./components/TopBar";
 import { ToastStack, type ToastMessage, type ToastTone } from "./components/ToastStack";
@@ -830,6 +831,7 @@ function pickInitialAvatar(
     avatars.find((a) => a.model_type === "flashhead" && available.has("flashhead")) ??
     avatars.find((a) => a.model_type === "flashtalk" && available.has("flashtalk")) ??
     avatars.find((a) => a.model_type === "musetalk" && available.has("musetalk")) ??
+    avatars.find((a) => a.model_type === VIDEO_MODEL && available.has(VIDEO_MODEL)) ??
     avatars.find((a) => available.has(a.model_type)) ??
     avatars[0]
   );
@@ -861,13 +863,15 @@ function pickInitialModel(
   if (available.has(currentModel) && connected.has(currentModel)) return currentModel;
   const avatarModel = initialAvatar?.model_type;
   if (avatarModel && available.has(avatarModel) && connected.has(avatarModel)) return avatarModel;
-  for (const preferred of ["fasterliveportrait", "quicktalk", "mock"]) {
+  for (const preferred of ["fasterliveportrait", "quicktalk", VIDEO_MODEL, "mock"]) {
     if (available.has(preferred) && connected.has(preferred)) return preferred;
   }
   const firstConnected = registeredModels.find((id) => connected.has(id));
   return firstConnected ?? registeredModels[0] ?? avatarModel ?? currentModel;
 }
 
+const VIDEO_MODEL = "video";
+const VIDEO_SESSION_MODEL = "mock";
 const SERVER_AUDIO_RENDERERS = new Set(["flashtalk", "flashhead", "fasterliveportrait", "quicktalk", "musetalk", "wav2lip"]);
 const SUBTITLE_HOLD_MS = 6_000;
 
@@ -1048,6 +1052,7 @@ export default function App() {
   const [conversationLanguage, setConversationLanguage] = useState<ConversationLanguage>("zh-CN");
   const englishConversation = isEnglishConversation(conversationLanguage);
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const [videoState, setVideoState] = useState<VideoDriverState>("listen");
   const [currentSubtitle, setCurrentSubtitle] = useState("");
   const [exhibitionVoiceConfig, setExhibitionVoiceConfig] = useState<ExhibitionVoiceConfig | null>(null);
   const [exhibitionEntities, setExhibitionEntities] = useState<ExhibitionEntityCard[]>([]);
@@ -1095,7 +1100,7 @@ export default function App() {
     );
   }, []);
 
-  const clearSubtitleState = useCallback(() => {
+  const clearSubtitleState = useCallback((resetVideoState = true) => {
     setCurrentSubtitle("");
     subtitleAccRef.current = "";
     clearSubtitleFallbackTimer();
@@ -1106,6 +1111,7 @@ export default function App() {
     streamingAssistantMsgIdRef.current = null;
     pendingAssistantMsgIdRef.current = null;
     setIsSpeaking(false);
+    if (resetVideoState) setVideoState("listen");
   }, [clearSubtitleFallbackTimer]);
 
   const finishSubtitleState = useCallback((finalText = "") => {
@@ -1116,6 +1122,7 @@ export default function App() {
     streamingAssistantMsgIdRef.current = null;
     pendingAssistantMsgIdRef.current = null;
     setIsSpeaking(false);
+    setVideoState("listen");
     if (subtitleHideTimerRef.current !== null) clearTimeout(subtitleHideTimerRef.current);
     subtitleHideTimerRef.current = window.setTimeout(() => {
       subtitleHideTimerRef.current = null;
@@ -2183,7 +2190,7 @@ export default function App() {
         if (disposed) return;
         setRuntimeStatus(health);
         setAvatars(av);
-        setModels(mo.models);
+        setModels(Array.from(new Set([...mo.models, VIDEO_MODEL])));
         if (initialRuntimeConfig) {
           setRuntimeConfig(initialRuntimeConfig);
           syncRuntimeConfigSelection(initialRuntimeConfig);
@@ -2213,7 +2220,10 @@ export default function App() {
           if (boundTtsProvider === "edge") setEdgeVoice(selectedExhibition.bound_voice_id.trim());
           else setQwenVoice(selectedExhibition.bound_voice_id.trim());
         }
-        const statuses = mo.statuses ?? mo.models.map((id) => ({ id, connected: true }));
+        const statuses = [
+          ...(mo.statuses ?? mo.models.map((id) => ({ id, connected: true }))).filter((status) => status.id !== VIDEO_MODEL),
+          { id: VIDEO_MODEL, connected: true },
+        ];
         setModelStatuses(statuses);
         const storedAvatarSelection = readStoredAvatarSelection();
         const boundAvatar = selectedExhibition?.bound_avatar_id
@@ -2222,7 +2232,7 @@ export default function App() {
         if (selectedExhibition && !boundAvatar) {
           throw new Error(`Bound avatar not found: ${selectedExhibition.bound_avatar_id || "empty"}`);
         }
-        const initialAvatar = boundAvatar ?? pickInitialAvatar(av, mo.models, storedAvatarSelection, mo.default_model);
+        const initialAvatar = boundAvatar ?? pickInitialAvatar(av, [...mo.models, VIDEO_MODEL], storedAvatarSelection, mo.default_model);
         if (initialAvatar) {
           setAvatarId(initialAvatar.id);
           if (initialAvatar.is_custom || storedAvatarSelection?.source === "explicit") {
@@ -2233,7 +2243,7 @@ export default function App() {
           }
           const requestedModel = selectedExhibition?.bound_model?.trim() || pickInitialModel(
             modelRef.current,
-            mo.models,
+            [...mo.models, VIDEO_MODEL],
             statuses,
             initialAvatar,
             mo.default_model,
@@ -2306,9 +2316,10 @@ export default function App() {
         setExpiringCountdown(null);
         setSessionId(null);
         setActiveAsrProvider("");
+        setVideoState("listen");
         const orphanId = streamingAssistantMsgIdRef.current;
         const pendingId = pendingAssistantMsgIdRef.current;
-        clearSubtitleState();
+        clearSubtitleState(false);
         if (orphanId || pendingId) {
           const removeIds = new Set([orphanId, pendingId].filter(Boolean));
           setMessages((prev) => prev.filter((m) => !removeIds.has(m.id)));
@@ -2323,8 +2334,9 @@ export default function App() {
       if (ev === "speech.started") {
         const staleId = streamingAssistantMsgIdRef.current;
         const pendingId = pendingAssistantMsgIdRef.current;
-        clearSubtitleState();
+        clearSubtitleState(false);
         setIsSpeaking(true);
+        setVideoState("think");
         if (staleId) {
           setMessages((prev) => prev.filter((m) => m.id !== staleId));
         }
@@ -2344,6 +2356,7 @@ export default function App() {
         clearSubtitleFallbackTimer();
         flushSubtitleDisplay();
         flushSubtitleMessage();
+        setVideoState("talk");
       }
       if (ev === "subtitle.chunk" && data && typeof data === "object") {
         const t = (data as { text?: string }).text;
@@ -2355,11 +2368,15 @@ export default function App() {
         flushSubtitleMessage();
       }
       if (ev === "speech.ended") {
+        // Ignore a late completion from a cancelled turn while the next turn
+        // is still waiting for its own speech.started event.
+        if (pendingAssistantMsgIdRef.current) return;
         const d = data && typeof data === "object" ? (data as { text?: string }) : {};
         const fromEvent = typeof d.text === "string" ? d.text.trim() : "";
         const streamed = subtitleAccRef.current.trim();
         const finalText = fromEvent || streamed;
         const msgId = streamingAssistantMsgIdRef.current;
+        setVideoState("listen");
         finishSubtitleState(finalText);
         if (msgId) {
           if (finalText) {
@@ -2483,7 +2500,9 @@ export default function App() {
       const created = await apiPost<CreateSessionResponse>("/sessions", {
         persona_id: selectedPersonaId || undefined,
         avatar_id: avatarId,
-        model,
+        // Video mode is rendered locally in the browser; the mock session
+        // only supplies the normal SSE/TTS lifecycle and audio transport.
+        model: model === VIDEO_MODEL ? VIDEO_SESSION_MODEL : model,
         llm_system_prompt: llmSystemPrompt.trim() || undefined,
         language: conversationLanguage,
         tts_provider: ttsProvider,
@@ -2700,6 +2719,47 @@ export default function App() {
     }
   }, [avatarId, model, notify, releaseSession, resetLiveState]);
 
+  const handleCreateVideoAvatar = useCallback(async (
+    listenFile: File,
+    thinkFile: File,
+    talkFile: File,
+    name: string,
+  ) => {
+    const trimmedName = name.trim();
+    if (!trimmedName) {
+      notify("请先给形象起个名字。", "info");
+      return null;
+    }
+    setReferenceSaving(true);
+    try {
+      const form = new FormData();
+      form.set("base_avatar_id", avatarId);
+      form.set("name", trimmedName);
+      form.set("model", VIDEO_MODEL);
+      form.set("listen_video", listenFile);
+      form.set("think_video", thinkFile);
+      form.set("talk_video", talkFile);
+      const created = await apiPostForm<AvatarSummary>("/avatars/custom", form);
+      setAvatars((prev) => [...prev.filter((avatar) => avatar.id !== created.id), created]);
+      setAvatarId(created.id);
+      setModel(VIDEO_MODEL);
+      writeStoredAvatarId(created.id);
+      const sid = sessionIdRef.current;
+      if (sid) await releaseSession(sid);
+      resetLiveState(true);
+      setConnection("idle");
+      notify(`视频数字人形象「${created.name ?? trimmedName}」已加入形象库。`, "success");
+      return created;
+    } catch (error) {
+      console.warn("create video avatar failed", error);
+      const detail = error instanceof ApiError ? error.detail : null;
+      notify(detail ? `创建失败：${detail}` : "创建视频数字人失败，请查看后端日志。", "error");
+      return null;
+    } finally {
+      setReferenceSaving(false);
+    }
+  }, [avatarId, notify, releaseSession, resetLiveState]);
+
   const handleDeleteAvatar = useCallback(
     async (target: AvatarSummary) => {
       try {
@@ -2775,6 +2835,7 @@ export default function App() {
       const previousPendingId = pendingAssistantMsgIdRef.current;
       pendingAssistantMsgIdRef.current = pendingId;
       setIsSpeaking(true);
+      setVideoState("think");
       setMessages((prev) => [
         ...prev.filter((m) => m.id !== previousPendingId && m.id !== activeAssistantId),
         ...(user ? [{ id: makeId(), role: "user" as const, text: user, timestamp: Date.now() }] : []),
@@ -3094,7 +3155,7 @@ export default function App() {
       : explicitContentRequest === "entity" && relatedEntities.length > 0
         ? { intent: "exhibition_content" as const, keyword: null }
         : configuredMatch;
-    setLastVoiceIntent(match.intent);
+    setLastVoiceIntent(match.intent === "unknown" ? null : match.intent);
 
     if (match.intent === "navigation") {
       try {
@@ -3292,6 +3353,7 @@ export default function App() {
     const previousPendingId = pendingAssistantMsgIdRef.current;
     pendingAssistantMsgIdRef.current = pendingId;
     setIsSpeaking(true);
+    setVideoState("think");
     setMessages((prev) => [
       ...prev.filter((message) => message.id !== previousPendingId && message.id !== activeAssistantId),
       { id: makeId(), role: "user", text: displayText, timestamp: Date.now() },
@@ -3347,6 +3409,7 @@ export default function App() {
       const detail = apiErrorMessage(error, englishConversation ? "The Q&A service is temporarily unavailable." : "问答服务暂不可用，请稍后重试。");
       pendingAssistantMsgIdRef.current = null;
       setIsSpeaking(false);
+      setVideoState("listen");
       setMessages((prev) => prev.map((message) => (
         message.id === pendingId ? { ...message, text: englishConversation ? `Q&A failed: ${detail}` : `问答失败：${detail}` } : message
       )));
@@ -3464,6 +3527,7 @@ export default function App() {
 
   const handleInterrupt = useCallback(() => {
     speakAudioAbortRef.current?.abort();
+    setVideoState("listen");
     if (!sessionId) return;
     void apiPost(`/sessions/${sessionId}/interrupt`, {}).catch(() => {});
   }, [sessionId]);
@@ -3948,6 +4012,9 @@ export default function App() {
           subtitle={currentSubtitle}
           avatarMaskUrl={selectedAvatarMaskUrl}
           clientRenderer={model === "mock" ? currentAvatar?.client_renderer ?? null : null}
+          videoDriver={model === VIDEO_MODEL}
+          videoState={videoState}
+          videoDriverAssets={currentAvatar?.video_driver ?? null}
           connection={connection}
           isSpeaking={isSpeaking}
           avatar={currentAvatar}
@@ -4088,6 +4155,9 @@ export default function App() {
                 avatarAdjust={immersiveActive ? immersiveAvatarAdjust : undefined}
                 compactSquareStage={compactSquareStage}
                 clientRenderer={!showStart && model === "mock" ? currentAvatar?.client_renderer ?? null : null}
+                videoDriver={!showStart && model === VIDEO_MODEL}
+                videoState={videoState}
+                videoDriverAssets={!showStart ? currentAvatar?.video_driver ?? null : null}
                 className="h-full w-full"
               >
                 {immersiveActive ? (
@@ -4208,6 +4278,8 @@ export default function App() {
                     onAvatarChange={handleAvatarChange}
                     onStart={() => void handleStart()}
                     onCustomAvatarCreate={(file, name, options) => handleCreateCustomAvatar(file, name, options)}
+                    videoDriver={model === VIDEO_MODEL}
+                    onVideoAvatarCreate={(listenFile, thinkFile, talkFile, name) => handleCreateVideoAvatar(listenFile, thinkFile, talkFile, name)}
                     onAvatarDelete={(target) => void handleDeleteAvatar(target)}
                     referenceSaving={referenceSaving}
                   />

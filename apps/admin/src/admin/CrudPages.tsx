@@ -25,7 +25,7 @@ export function Button({ children, onClick, variant = "primary", disabled = fals
 
 export function Card({ children, className = "" }: { children: ReactNode; className?: string }) { return <section className={`rounded-2xl border border-slate-200 bg-white shadow-sm ${className}`}>{children}</section>; }
 
-export function Header({ eyebrow, title, description, action }: { eyebrow: string; title: string; description: string; action?: ReactNode }) { return <div className="mb-5 flex flex-wrap items-end justify-between gap-4"><div><p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-cyan-600">{eyebrow}</p><h1 className="mt-1 text-2xl font-semibold tracking-tight text-slate-950">{title}</h1><p className="mt-1 text-sm text-slate-500">{description}</p></div>{action ? <div>{action}</div> : null}</div>; }
+export function Header({ eyebrow, title, description, action }: { eyebrow: string; title: string; description: string; action?: ReactNode }) { const displayDescription = description.replace("GIF 类型需要同时上传等待聆听和张嘴讲话两张动图。", "视频驱动使用内置 listen.mp4 / talk.mp4，按聆听和说话状态切换。"); return <div className="mb-5 flex flex-wrap items-end justify-between gap-4"><div><p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-cyan-600">{eyebrow}</p><h1 className="mt-1 text-2xl font-semibold tracking-tight text-slate-950">{title}</h1><p className="mt-1 text-sm text-slate-500">{displayDescription}</p></div>{action ? <div>{action}</div> : null}</div>; }
 
 export function Modal({ title, children, onClose, onSave, saveLabel = "保存", saving = false, error = "" }: { title: string; children: ReactNode; onClose: () => void; onSave?: () => void; saveLabel?: string; saving?: boolean; error?: string }) {
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -108,7 +108,7 @@ export function EnhancedAvatarPage({ onDebug }: { onDebug?: (avatarId: string) =
   const [selected, setSelected] = useState("");
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
-  const [form, setForm] = useState<{ file: File | null; waitingGif: File | null; speakingGif: File | null; name: string; baseAvatarId: string; model: string; removeBackground: boolean }>({ file: null, waitingGif: null, speakingGif: null, name: "", baseAvatarId: "", model: "", removeBackground: false });
+  const [form, setForm] = useState<{ file: File | null; listenVideo: File | null; thinkVideo: File | null; talkVideo: File | null; name: string; baseAvatarId: string; model: string; removeBackground: boolean }>({ file: null, listenVideo: null, thinkVideo: null, talkVideo: null, name: "", baseAvatarId: "", model: "", removeBackground: false });
   const [error, setError] = useState("");
   const avatarPagination = usePagination(avatars);
   const reload = useCallback(() => {
@@ -122,7 +122,7 @@ export function EnhancedAvatarPage({ onDebug }: { onDebug?: (avatarId: string) =
       setAvatars(items);
       if (modelResult.status === "fulfilled") {
         const modelResponse = modelResult.value;
-        setModels(Array.from(new Set([...modelResponse.models, "gif"])));
+        setModels(Array.from(new Set([...modelResponse.models, "video"])));
         setForm((current) => ({
           ...current,
           model: current.model || modelResponse.defaultModel || modelResponse.models[0] || "",
@@ -150,18 +150,14 @@ export function EnhancedAvatarPage({ onDebug }: { onDebug?: (avatarId: string) =
       setError("后端没有可用于创建形象的系统模板，请先检查形象列表。");
       return;
     }
-    if (form.model === "gif") {
-      if (!form.waitingGif || !form.speakingGif) {
-        setError("GIF 类型必须同时上传等待聆听动图和张嘴讲话动图。");
+    if (form.model === "video") {
+      if (!form.listenVideo || !form.thinkVideo || !form.talkVideo) {
+        setError("视频驱动必须同时上传聆听、思考和讲话视频。");
         return;
       }
-      const gifFiles = [form.waitingGif, form.speakingGif];
-      if (gifFiles.some((file) => !file.name.toLowerCase().endsWith(".gif") || (file.type && file.type !== "image/gif"))) {
-        setError("GIF 类型仅支持 .gif 动图文件。");
-        return;
-      }
-      if (gifFiles.some((file) => file.size > 20 * 1024 * 1024)) {
-        setError("每张 GIF 动图不能超过 20MB。");
+      const videoError = [form.listenVideo, form.thinkVideo, form.talkVideo].map(customAvatarFileError).find(Boolean);
+      if (videoError) {
+        setError(videoError as string);
         return;
       }
     } else {
@@ -176,10 +172,10 @@ export function EnhancedAvatarPage({ onDebug }: { onDebug?: (avatarId: string) =
       }
     }
     try {
-      const item = await openTalkingClient.createCustomAvatar({ file: isCustomAvatarVideo(form.file) ? undefined : form.file ?? undefined, video: isCustomAvatarVideo(form.file) ? form.file ?? undefined : undefined, name: form.name.trim(), baseAvatarId, model: form.model || null, personMode: "single", removeBackground: form.removeBackground, waitingGif: form.waitingGif ?? undefined, speakingGif: form.speakingGif ?? undefined });
+      const item = await openTalkingClient.createCustomAvatar({ file: isCustomAvatarVideo(form.file) ? undefined : form.file ?? undefined, video: isCustomAvatarVideo(form.file) ? form.file ?? undefined : undefined, listenVideo: form.listenVideo ?? undefined, thinkVideo: form.thinkVideo ?? undefined, talkVideo: form.talkVideo ?? undefined, name: form.name.trim(), baseAvatarId, model: form.model || null, personMode: "single", removeBackground: form.removeBackground });
       setAvatars((current) => [...current, item]);
       setSelected(item.id);
-      setForm({ file: null, waitingGif: null, speakingGif: null, name: "", baseAvatarId, model: form.model, removeBackground: false });
+      setForm({ file: null, listenVideo: null, thinkVideo: null, talkVideo: null, name: "", baseAvatarId, model: form.model, removeBackground: false });
       setError("");
     } catch (requestError) {
       setError(requestError instanceof ApiError ? requestError.message : "导入失败，请检查图片格式和后端处理状态。");
@@ -195,7 +191,7 @@ export function EnhancedAvatarPage({ onDebug }: { onDebug?: (avatarId: string) =
       setError("删除失败：系统形象不可删除，或后端未允许删除该自定义形象。");
     }
   };
-  const importModal = form.name ? <Modal title="导入数字人形象" onClose={() => { setForm((current) => ({ ...current, file: null, waitingGif: null, speakingGif: null, name: "", removeBackground: false })); setError(""); }} onSave={() => void add()} saveLabel="上传并创建"><Field label="形象名称" value={form.name} onChange={(value) => setForm({ ...form, name: value })} placeholder="例如：古装美女" /><label className="mt-4 block text-xs font-semibold text-slate-600">模型<select value={form.model} onChange={(event) => setForm({ ...form, model: event.target.value })} className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-normal"><option value="">使用后端默认模型</option>{models.map((model) => <option key={model} value={model}>{model === "gif" ? "gif（等待聆听 + 张嘴讲话）" : model}</option>)}</select></label>{form.model === "gif" ? <div className="mt-4 space-y-3"><p className="rounded-xl bg-violet-50 px-4 py-3 text-xs leading-5 text-violet-700">GIF 形象由两张动图组成，系统会在聆听和讲话状态之间切换。每张文件限制 20MB。</p><label className="block rounded-xl border border-dashed border-violet-300 bg-violet-50 p-5 text-center text-xs text-violet-700">上传等待聆听动图<input type="file" accept=".gif,image/gif" className="sr-only" onChange={(event) => setForm({ ...form, waitingGif: event.target.files?.[0] ?? null })} />{form.waitingGif ? <p className="mt-2 font-semibold">{form.waitingGif.name}</p> : null}</label><label className="block rounded-xl border border-dashed border-violet-300 bg-violet-50 p-5 text-center text-xs text-violet-700">上传张嘴讲话动图<input type="file" accept=".gif,image/gif" className="sr-only" onChange={(event) => setForm({ ...form, speakingGif: event.target.files?.[0] ?? null })} />{form.speakingGif ? <p className="mt-2 font-semibold">{form.speakingGif.name}</p> : null}</label></div> : <div className="mt-4"><label className="block rounded-xl border border-dashed border-cyan-300 bg-cyan-50 p-5 text-center text-xs text-cyan-700">选择图片或视频（图片 ≤ 10MB，视频 ≤ 200MB）<input type="file" accept="image/jpeg,image/png,image/webp,video/mp4,video/webm,video/quicktime,video/x-msvideo,.mov,.avi" className="sr-only" onChange={(event) => setForm({ ...form, file: event.target.files?.[0] ?? null })} />{form.file ? <p className="mt-2 font-semibold">{form.file.name}{isCustomAvatarVideo(form.file) ? " · 视频源" : " · 图片源"}</p> : null}</label><label className={`mt-4 flex items-center gap-2 text-xs font-semibold text-slate-600 ${isCustomAvatarVideo(form.file) ? "opacity-50" : ""}`}><input type="checkbox" checked={form.removeBackground} disabled={isCustomAvatarVideo(form.file)} onChange={(event) => setForm({ ...form, removeBackground: event.target.checked })} className="h-4 w-4 rounded border-slate-300 text-cyan-600" />上传时抠除背景（视频源不支持）</label></div>}</Modal> : null;
+  const importModal = form.name ? <Modal title="导入数字人形象" onClose={() => { setForm((current) => ({ ...current, file: null, listenVideo: null, thinkVideo: null, talkVideo: null, name: "", removeBackground: false })); setError(""); }} onSave={() => void add()} saveLabel="上传并创建"><Field label="形象名称" value={form.name} onChange={(value) => setForm({ ...form, name: value })} placeholder="例如：古装美女" /><label className="mt-4 block text-xs font-semibold text-slate-600">模型<select value={form.model} onChange={(event) => setForm({ ...form, model: event.target.value })} className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-normal"><option value="">使用后端默认模型</option>{models.map((model) => <option key={model} value={model}>{model === "video" ? "视频驱动（上传聆听 + 思考 + 讲话视频）" : model}</option>)}</select></label>{form.model === "video" ? <div className="mt-4 space-y-3"><p className="rounded-xl bg-cyan-50 px-4 py-3 text-xs leading-5 text-cyan-700">请分别上传选中数字人的聆听、思考和讲话视频。保存后会生成可绑定的 video 数字人，运行时按状态播放对应视频。</p><label className="block rounded-xl border border-dashed border-cyan-300 bg-cyan-50 p-5 text-center text-xs text-cyan-700">上传聆听视频（listen）<input type="file" accept="video/mp4,video/webm,video/quicktime,video/x-msvideo,.mp4,.webm,.mov,.avi" className="sr-only" onChange={(event) => setForm({ ...form, listenVideo: event.target.files?.[0] ?? null })} />{form.listenVideo ? <p className="mt-2 font-semibold">{form.listenVideo.name}</p> : null}</label><label className="block rounded-xl border border-dashed border-cyan-300 bg-cyan-50 p-5 text-center text-xs text-cyan-700">上传思考视频（think）<input type="file" accept="video/mp4,video/webm,video/quicktime,video/x-msvideo,.mp4,.webm,.mov,.avi" className="sr-only" onChange={(event) => setForm({ ...form, thinkVideo: event.target.files?.[0] ?? null })} />{form.thinkVideo ? <p className="mt-2 font-semibold">{form.thinkVideo.name}</p> : null}</label><label className="block rounded-xl border border-dashed border-cyan-300 bg-cyan-50 p-5 text-center text-xs text-cyan-700">上传讲话视频（talk）<input type="file" accept="video/mp4,video/webm,video/quicktime,video/x-msvideo,.mp4,.webm,.mov,.avi" className="sr-only" onChange={(event) => setForm({ ...form, talkVideo: event.target.files?.[0] ?? null })} />{form.talkVideo ? <p className="mt-2 font-semibold">{form.talkVideo.name}</p> : null}</label></div> : <div className="mt-4"><label className="block rounded-xl border border-dashed border-cyan-300 bg-cyan-50 p-5 text-center text-xs text-cyan-700">选择图片或视频（图片 ≤ 10MB，视频 ≤ 200MB）<input type="file" accept="image/jpeg,image/png,image/webp,video/mp4,video/webm,video/quicktime,video/x-msvideo,.mov,.avi" className="sr-only" onChange={(event) => setForm({ ...form, file: event.target.files?.[0] ?? null })} />{form.file ? <p className="mt-2 font-semibold">{form.file.name}{isCustomAvatarVideo(form.file) ? " · 视频源" : " · 图片源"}</p> : null}</label><label className={`mt-4 flex items-center gap-2 text-xs font-semibold text-slate-600 ${isCustomAvatarVideo(form.file) ? "opacity-50" : ""}`}><input type="checkbox" checked={form.removeBackground} disabled={isCustomAvatarVideo(form.file)} onChange={(event) => setForm({ ...form, removeBackground: event.target.checked })} className="h-4 w-4 rounded border-slate-300 text-cyan-600" />上传时抠除背景（视频源不支持）</label></div>}</Modal> : null;
   return <div className="p-6 xl:p-8"><Header eyebrow="数字人中心 / 真实后端" title="数字人形象" description="从 OpenTalking 读取形象和模型；新增时自动使用系统模板，支持图片或视频源文件。GIF 类型需要同时上传等待聆听和张嘴讲话两张动图。" action={<Button onClick={() => setForm((current) => ({ ...current, name: current.name || "新数字人", baseAvatarId: current.baseAvatarId || avatars.find((avatar) => !avatar.is_custom)?.id || "", model: current.model || models[0] || "" }))}>+ 导入形象</Button>} />{error ? <p className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-700" role="alert">{error}</p> : null}{importModal}{loading ? <Card className="p-8"><LoadingSkeleton rows={4} /></Card> : loadError ? <ErrorState title="数字人形象暂时无法加载" description={loadError} onRetry={reload} /> : !avatars.length ? <Card className="p-8"><EmptyState title="暂无可用形象" description="当前 OpenTalking 没有返回可用形象，请先确认形象资产目录和服务配置。" /></Card> : <><div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">{avatarPagination.pageItems.map((avatar) => <Card key={avatar.id} className={`overflow-hidden ${selected === avatar.id ? "border-cyan-400 ring-4 ring-cyan-50" : ""}`}><div className="relative flex h-64 items-center justify-center bg-slate-100 p-3"><AvatarCardPreview avatar={avatar} /><div className="absolute left-3 top-3"><Badge tone={selected === avatar.id ? "cyan" : "slate"}>{selected === avatar.id ? "当前绑定" : avatar.is_custom ? "自定义" : "系统形象"}</Badge></div></div><div className="p-4"><div className="flex items-start justify-between gap-2"><div><h3 className="font-semibold text-slate-900">{avatar.name || avatar.id}</h3><p className="mt-1 text-xs text-slate-400">{avatar.id}</p></div><Badge tone="green">{avatar.model_type}</Badge></div><div className="mt-4 flex gap-2"><Button variant={selected === avatar.id ? "primary" : "secondary"} onClick={() => setSelected(avatar.id)} className="flex-1">{selected === avatar.id ? "已绑定" : "绑定"}</Button><Button variant="ghost" onClick={() => onDebug?.(avatar.id)}>直接调试</Button>{avatar.is_custom ? <Button variant="danger" onClick={() => void remove(avatar)}>删除</Button> : null}</div></div></Card>)}</div><Pagination page={avatarPagination.page} pageCount={avatarPagination.pageCount} total={avatars.length} onChange={avatarPagination.setPage} /></> }</div>;
 }
 

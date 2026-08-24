@@ -473,7 +473,7 @@ export function SettingsPanel({
     return {
       id: m,
       label: modelLabel(m),
-      subtitle: m === "mock" ? "免 GPU / 浏览器动画" : m,
+      subtitle: m === "mock" ? "免 GPU / 浏览器动画" : m === "video" ? "本地视频 · listen/talk" : m,
       connected: badge.connected,
       statusLabel: badge.label,
       statusTone: badge.tone,

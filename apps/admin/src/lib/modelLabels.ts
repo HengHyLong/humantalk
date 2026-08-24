@@ -1,4 +1,5 @@
 const MODEL_LABELS: Record<string, string> = {
+  video: "视频驱动",
   flashhead: "FlashHead",
   fasterliveportrait: "FasterLivePortrait",
   flashtalk: "FlashTalk",

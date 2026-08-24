@@ -31,6 +31,13 @@ type AvatarSelectionStageProps = {
     name: string,
     options?: { removeBackground?: boolean },
   ) => Promise<AvatarSummary | null | void>;
+  videoDriver?: boolean;
+  onVideoAvatarCreate?: (
+    listenFile: File,
+    thinkFile: File,
+    talkFile: File,
+    name: string,
+  ) => Promise<AvatarSummary | null | void>;
   onAvatarDelete?: (avatar: AvatarSummary) => void;
   referenceSaving?: boolean;
   personas: PersonaSummary[];
@@ -80,6 +87,8 @@ export function AvatarSelectionStage({
   onAvatarChange,
   onStart,
   onCustomAvatarCreate,
+  videoDriver = false,
+  onVideoAvatarCreate,
   onAvatarDelete,
   referenceSaving = false,
   personas,
@@ -89,6 +98,9 @@ export function AvatarSelectionStage({
   onPersonaImport,
 }: AvatarSelectionStageProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const listenVideoInputRef = useRef<HTMLInputElement>(null);
+  const thinkVideoInputRef = useRef<HTMLInputElement>(null);
+  const talkVideoInputRef = useRef<HTMLInputElement>(null);
   const personaInputRef = useRef<HTMLInputElement>(null);
   const [customUploadOpen, setCustomUploadOpen] = useState(false);
   const [customName, setCustomName] = useState(() => {
@@ -99,6 +111,9 @@ export function AvatarSelectionStage({
     }
   });
   const [customFile, setCustomFile] = useState<File | null>(null);
+  const [listenVideoFile, setListenVideoFile] = useState<File | null>(null);
+  const [thinkVideoFile, setThinkVideoFile] = useState<File | null>(null);
+  const [talkVideoFile, setTalkVideoFile] = useState<File | null>(null);
   const [customPreviewUrl, setCustomPreviewUrl] = useState<string | null>(null);
   const [customRemoveBackground, setCustomRemoveBackground] = useState(false);
   const [customUploadState, setCustomUploadState] = useState<"idle" | "processing" | "complete">("idle");
@@ -134,19 +149,33 @@ export function AvatarSelectionStage({
     setCustomUploadOpen(false);
     setCustomUploadState("idle");
     setCreatedCustomAvatar(null);
+    setListenVideoFile(null);
+    setThinkVideoFile(null);
+    setTalkVideoFile(null);
   };
 
   useAutoDismiss(customUploadOpen, closeCustomUpload);
 
   const handleCustomUpload = async () => {
     const name = customName.trim();
-    if (!customFile || !name) return;
+    if (!name) return;
     try {
       window.localStorage.setItem(CUSTOM_REFERENCE_NAME_KEY, name);
     } catch {
       /* ignore */
     }
     setCreatedCustomAvatar(null);
+    if (videoDriver) {
+      if (!listenVideoFile || !thinkVideoFile || !talkVideoFile || !onVideoAvatarCreate) return;
+      setCustomUploadState("idle");
+      const created = await onVideoAvatarCreate(listenVideoFile, thinkVideoFile, talkVideoFile, name);
+      if (created) {
+        setCreatedCustomAvatar(created);
+        setCustomUploadOpen(false);
+      }
+      return;
+    }
+    if (!customFile) return;
     setCustomUploadState(customRemoveBackground ? "processing" : "idle");
     const created = await onCustomAvatarCreate(customFile, name, { removeBackground: customRemoveBackground });
     if (created) {
@@ -413,7 +442,9 @@ export function AvatarSelectionStage({
           <div className="w-full max-w-md overflow-hidden rounded-lg border border-slate-200 bg-white shadow-2xl shadow-slate-900/20">
             <div className="border-b border-slate-100 px-4 py-3">
               <p className="text-sm font-semibold text-cyan-700">自定义形象</p>
-              <h3 className="mt-1 text-xl font-semibold text-slate-950">上传参考图</h3>
+              <h3 className="mt-1 text-xl font-semibold text-slate-950">
+                {videoDriver ? "上传聆听和讲话视频" : "上传参考图"}
+              </h3>
             </div>
             <div className="space-y-4 p-4">
               <label className="block">
@@ -426,36 +457,120 @@ export function AvatarSelectionStage({
                   className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-medium text-slate-800 outline-none transition focus:border-cyan-300 focus:bg-white"
                 />
               </label>
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={referenceSaving}
-                className="flex w-full items-center gap-3 rounded-lg border border-dashed border-cyan-300 bg-cyan-50 p-3 text-left transition hover:bg-cyan-100"
-              >
-                <span className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-white text-2xl font-light text-cyan-700">
-                  {customPreviewUrl ? (
-                    <img src={customPreviewUrl} alt="" className="h-full w-full object-contain" />
-                  ) : (
-                    "+"
-                  )}
-                </span>
-                <span className="min-w-0">
-                  <span className="block text-sm font-semibold text-slate-950">
-                    {customFile ? customFile.name : "选择本地图片"}
-                  </span>
-                  <span className="mt-0.5 block text-xs text-slate-500">会作为新资产加入形象库</span>
-                </span>
-              </button>
-              <label className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5">
-                <input
-                  type="checkbox"
-                  checked={customRemoveBackground}
-                  onChange={(event) => setCustomRemoveBackground(event.target.checked)}
-                  disabled={referenceSaving}
-                  className="h-4 w-4 rounded border-slate-300 text-cyan-600 focus:ring-cyan-500"
-                />
-                <span className="text-sm font-medium text-slate-700">上传时抠除背景</span>
-              </label>
+              {videoDriver ? (
+                <div className="space-y-3">
+                  <p className="rounded-lg border border-cyan-200 bg-cyan-50 px-3 py-2.5 text-xs leading-5 text-cyan-800">
+                    当前驱动为 video。请上传同一数字人的聆听、思考和讲话视频，运行时会按状态切换；思考视频会在等待回答和语音合成时循环播放。
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => listenVideoInputRef.current?.click()}
+                    disabled={referenceSaving}
+                    className="flex w-full items-center gap-3 rounded-lg border border-dashed border-cyan-300 bg-cyan-50 p-3 text-left transition hover:bg-cyan-100"
+                  >
+                    <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-white text-xs font-bold text-cyan-700">LISTEN</span>
+                    <span className="min-w-0">
+                      <span className="block text-sm font-semibold text-slate-950">
+                        {listenVideoFile ? listenVideoFile.name : "上传聆听视频（listen）"}
+                      </span>
+                      <span className="mt-0.5 block text-xs text-slate-500">正常聆听状态播放</span>
+                    </span>
+                  </button>
+                  <input
+                    ref={listenVideoInputRef}
+                    type="file"
+                    accept="video/mp4,video/webm,video/quicktime,video/x-msvideo,.mp4,.webm,.mov,.avi"
+                    className="hidden"
+                    tabIndex={-1}
+                    aria-hidden
+                    onChange={(event) => {
+                      setListenVideoFile(event.target.files?.[0] ?? null);
+                      event.target.value = "";
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => thinkVideoInputRef.current?.click()}
+                    disabled={referenceSaving}
+                    className="flex w-full items-center gap-3 rounded-lg border border-dashed border-cyan-300 bg-cyan-50 p-3 text-left transition hover:bg-cyan-100"
+                  >
+                    <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-white text-xs font-bold text-cyan-700">THINK</span>
+                    <span className="min-w-0">
+                      <span className="block text-sm font-semibold text-slate-950">
+                        {thinkVideoFile ? thinkVideoFile.name : "上传思考视频（think）"}
+                      </span>
+                      <span className="mt-0.5 block text-xs text-slate-500">等待回答和语音合成时循环播放</span>
+                    </span>
+                  </button>
+                  <input
+                    ref={thinkVideoInputRef}
+                    type="file"
+                    accept="video/mp4,video/webm,video/quicktime,video/x-msvideo,.mp4,.webm,.mov,.avi"
+                    className="hidden"
+                    tabIndex={-1}
+                    aria-hidden
+                    onChange={(event) => {
+                      setThinkVideoFile(event.target.files?.[0] ?? null);
+                      event.target.value = "";
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => talkVideoInputRef.current?.click()}
+                    disabled={referenceSaving}
+                    className="flex w-full items-center gap-3 rounded-lg border border-dashed border-cyan-300 bg-cyan-50 p-3 text-left transition hover:bg-cyan-100"
+                  >
+                    <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-white text-xs font-bold text-cyan-700">TALK</span>
+                    <span className="min-w-0">
+                      <span className="block text-sm font-semibold text-slate-950">
+                        {talkVideoFile ? talkVideoFile.name : "上传讲话视频（talk）"}
+                      </span>
+                      <span className="mt-0.5 block text-xs text-slate-500">数字人说话时播放</span>
+                    </span>
+                  </button>
+                  <input
+                    ref={talkVideoInputRef}
+                    type="file"
+                    accept="video/mp4,video/webm,video/quicktime,video/x-msvideo,.mp4,.webm,.mov,.avi"
+                    className="hidden"
+                    tabIndex={-1}
+                    aria-hidden
+                    onChange={(event) => {
+                      setTalkVideoFile(event.target.files?.[0] ?? null);
+                      event.target.value = "";
+                    }}
+                  />
+                </div>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={referenceSaving}
+                    className="flex w-full items-center gap-3 rounded-lg border border-dashed border-cyan-300 bg-cyan-50 p-3 text-left transition hover:bg-cyan-100"
+                  >
+                    <span className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-white text-2xl font-light text-cyan-700">
+                      {customPreviewUrl ? <img src={customPreviewUrl} alt="" className="h-full w-full object-contain" /> : "+"}
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block text-sm font-semibold text-slate-950">
+                        {customFile ? customFile.name : "选择本地图片"}
+                      </span>
+                      <span className="mt-0.5 block text-xs text-slate-500">会作为新资产加入形象库</span>
+                    </span>
+                  </button>
+                  <label className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5">
+                    <input
+                      type="checkbox"
+                      checked={customRemoveBackground}
+                      onChange={(event) => setCustomRemoveBackground(event.target.checked)}
+                      disabled={referenceSaving}
+                      className="h-4 w-4 rounded border-slate-300 text-cyan-600 focus:ring-cyan-500"
+                    />
+                    <span className="text-sm font-medium text-slate-700">上传时抠除背景</span>
+                  </label>
+                </>
+              )}
               {customUploadState === "processing" ? (
                 <div className="rounded-lg border border-cyan-200 bg-cyan-50 px-3 py-2.5">
                   <div className="flex items-center justify-between gap-3">
@@ -501,7 +616,7 @@ export function AvatarSelectionStage({
                 <button
                   type="button"
                   onClick={() => void handleCustomUpload()}
-                  disabled={referenceSaving || !customFile || !customName.trim()}
+                  disabled={referenceSaving || !customName.trim() || (videoDriver ? !listenVideoFile || !thinkVideoFile || !talkVideoFile : !customFile)}
                   className="rounded-lg bg-cyan-600 px-3 py-2 text-sm font-semibold text-white transition hover:bg-cyan-500 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {referenceSaving && customRemoveBackground ? "正在抠除背景..." : referenceSaving ? "创建中..." : "保存形象"}

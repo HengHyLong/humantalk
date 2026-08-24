@@ -1985,6 +1985,8 @@ class FlashTalkRunner:
     async def _publish_speech_ended(self, reply_text: str | None = None) -> None:
         if not self._speech_started:
             return
+        if self.webrtc and self._webrtc_started.is_set() and not self._interrupt.is_set():
+            await self.webrtc.wait_for_playback_drain()
         self._speech_started = False
         payload: dict[str, str] = {"session_id": self.session_id}
         if reply_text is not None:

@@ -23,6 +23,12 @@ class ClientRendererCapability(BaseModel):
     recommended_for: list[str] = Field(default_factory=list)
 
 
+class VideoDriverCapability(BaseModel):
+    listen_url: str
+    think_url: str
+    talk_url: str
+
+
 class AvatarSummary(BaseModel):
     id: str
     name: Optional[str] = None
@@ -36,3 +42,4 @@ class AvatarSummary(BaseModel):
     matting_status: str = "unknown"
     duo_dialog: Optional[DuoDialogCapability] = None
     client_renderer: Optional[ClientRendererCapability] = None
+    video_driver: Optional[VideoDriverCapability] = None

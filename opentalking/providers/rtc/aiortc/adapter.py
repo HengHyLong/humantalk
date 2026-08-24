@@ -538,6 +538,30 @@ class WebRTCSession:
         self.video.clear_pending()
         self.audio.clear_pending()
 
+    async def wait_for_playback_drain(self) -> None:
+        """Wait until queued audio has been handed to the WebRTC sender.
+
+        Producers can finish synthesizing before the browser has consumed the
+        audio queue.  Publishing ``speech.ended`` at that point makes clients
+        switch their speaking UI back to idle while audio is still audible.
+        This only waits for the already-queued media and has a bounded timeout
+        so a disconnected peer cannot block a session forever.
+        """
+        audio_queue = self.audio._queue
+        buffered = getattr(self.audio, "_buffer", None)
+        queue_duration = audio_queue.qsize() * 0.02
+        timeout = min(15.0, max(1.0, queue_duration + 2.0))
+        deadline = asyncio.get_running_loop().time() + timeout
+        while asyncio.get_running_loop().time() < deadline:
+            buffered_samples = int(getattr(buffered, "size", 0) or 0)
+            if audio_queue.empty() and buffered_samples == 0:
+                # Let the sender take the final frame before the event is
+                # observed by the browser.
+                await asyncio.sleep(0.08)
+                if audio_queue.empty() and int(getattr(buffered, "size", 0) or 0) == 0:
+                    return
+            await asyncio.sleep(0.02)
+
     async def handle_offer(self, sdp: str, type_: str) -> RTCSessionDescription:
         await self.pc.setRemoteDescription(RTCSessionDescription(sdp=sdp, type=type_))
         answer = await self.pc.createAnswer()

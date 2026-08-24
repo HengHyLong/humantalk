@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type CSSProperties, type ReactNode, t
 import type { ClientRendererDescriptor, SceneBackgroundAsset, SceneComposition } from "../lib/api";
 import { buildApiUrl } from "../lib/api";
 import { Light2dAvatar } from "./Light2dAvatar";
+import { VideoAvatar, type VideoDriverState } from "./VideoAvatar";
 import { VideoBackground } from "./VideoBackground";
 
 type SceneStageProps = {
@@ -20,6 +21,9 @@ type SceneStageProps = {
   className?: string;
   compactSquareStage?: boolean;
   clientRenderer?: ClientRendererDescriptor | null;
+  videoDriver?: boolean;
+  videoState?: VideoDriverState;
+  videoDriverAssets?: { listen_url: string; think_url?: string | null; talk_url: string } | null;
 };
 
 function backgroundUrl(background: SceneBackgroundAsset): string {
@@ -59,6 +63,9 @@ export function SceneStage({
   className = "",
   compactSquareStage = false,
   clientRenderer = null,
+  videoDriver = false,
+  videoState = "listen",
+  videoDriverAssets = null,
 }: SceneStageProps) {
   const [rendererFailed, setRendererFailed] = useState(false);
   useEffect(() => setRendererFailed(false), [clientRenderer?.config_url]);
@@ -113,6 +120,12 @@ export function SceneStage({
         {hasSceneBackground ? <div className="absolute inset-0 bg-slate-950/10" /> : null}
       </div>
 
+      {videoDriver && videoState !== "listen" ? (
+        <div className="pointer-events-none absolute left-4 top-4 z-20 rounded-full border border-white/20 bg-slate-950/70 px-3 py-1.5 text-xs font-semibold text-white shadow-lg backdrop-blur">
+          {videoState === "think" ? "思考中" : "播报中"}
+        </div>
+      ) : null}
+
       <div className={`absolute inset-0 flex p-4 sm:p-6 lg:p-8 ${avatarAnchorClass}`}>
         <div
           className={
@@ -122,12 +135,28 @@ export function SceneStage({
           }
           style={{ transform: avatarTransform, transformOrigin: avatarTransformOrigin }}
         >
-          <VideoBackground
-            ref={videoRef}
-            stream={videoStream}
-            className={`absolute inset-0 h-full w-full ${avatarFit} ${avatarObjectPosition} ${clientRenderer && !rendererFailed ? "opacity-0" : "opacity-100"}`}
-            style={avatarMaskStyle}
-          />
+          {videoDriver ? (
+            <VideoBackground
+              ref={videoRef}
+              stream={videoStream}
+              className="pointer-events-none absolute inset-0 h-full w-full opacity-0"
+            />
+          ) : (
+            <VideoBackground
+              ref={videoRef}
+              stream={videoStream}
+              className={`absolute inset-0 h-full w-full ${avatarFit} ${avatarObjectPosition} ${clientRenderer && !rendererFailed ? "opacity-0" : "opacity-100"}`}
+              style={avatarMaskStyle}
+            />
+          )}
+          {videoDriver ? (
+            <VideoAvatar
+              state={videoState}
+              videoDriver={videoDriverAssets}
+              className={`absolute inset-0 h-full w-full ${avatarFit} ${avatarObjectPosition}`}
+              style={avatarMaskStyle}
+            />
+          ) : null}
           {clientRenderer && !rendererFailed ? (
             <Light2dAvatar
               renderer={clientRenderer}

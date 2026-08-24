@@ -6,6 +6,7 @@ const MODEL_LABELS: Record<string, string> = {
   musetalk: "MuseTalk",
   quicktalk: "QuickTalk",
   wav2lip: "Wav2Lip",
+  video: "视频驱动",
 };
 
 export function modelLabel(modelId: string): string {

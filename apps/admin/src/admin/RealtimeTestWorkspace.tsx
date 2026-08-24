@@ -5,6 +5,7 @@ import { startPlayback, type PlaybackHandle } from "../lib/webrtc";
 import { ChatInput } from "../components/ChatInput";
 import { ChatMessages } from "../components/ChatMessages";
 import { BailianVoiceClone } from "../components/BailianVoiceClone";
+import { VideoAvatar } from "../components/VideoAvatar";
 import { RealtimeConfigPanel, realtimeTtsModels, realtimeTtsVoices, type RuntimeHealth } from "./RealtimeConfigPanel";
 import { adminApi } from "./api";
 import type { AgentConfig } from "../components/AvatarSelectionStage";
@@ -12,10 +13,13 @@ import type { TtsProviderExtended } from "../constants/ttsBailian";
 import type { VoiceCloneApplication } from "../lib/voiceCloneApply";
 import type { MemoryLibrary, Message } from "../types";
 import type { ModelStatus } from "../lib/modelStatus";
+import { modelLabel } from "../lib/modelLabels";
 
 type ConnectionState = "idle" | "connecting" | "queued" | "live" | "error";
 type ChatMessage = Message;
 const MAX_CONVERSATION_MESSAGES = 36;
+const VIDEO_DRIVER = "video";
+const VIDEO_SESSION_MODEL = "mock";
 
 function keepRecentConversation(messages: ChatMessage[]): ChatMessage[] {
   return messages.length > MAX_CONVERSATION_MESSAGES
@@ -107,6 +111,8 @@ export function RealtimeTestWorkspace({ initialAvatarId = "" }: { initialAvatarI
   const [events, setEvents] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const [videoState, setVideoState] = useState<"listen" | "think" | "talk">("listen");
+  const pendingSpeechRef = useRef(false);
   const [panelTab, setPanelTab] = useState<"chat" | "status" | "export">("chat");
   const requestedAvatarId = initialAvatarId || new URLSearchParams(window.location.search).get("avatarId") || "";
   const requestedExhibitionId = new URLSearchParams(window.location.search).get("exhibitionId") || "";
@@ -123,7 +129,10 @@ export function RealtimeTestWorkspace({ initialAvatarId = "" }: { initialAvatarI
     ]).then(([avatarResponse, modelResponse, knowledgeResponse, healthResponse, voiceResponse]) => {
       if (cancelled) return;
       setAvatars(avatarResponse);
-      const statuses = modelResponse.statuses ?? (modelResponse.models ?? []).map((id) => ({ id, connected: true }));
+      const statuses = [
+        ...(modelResponse.statuses ?? (modelResponse.models ?? []).map((id) => ({ id, connected: true }))).filter((item) => item.id !== VIDEO_DRIVER),
+        { id: VIDEO_DRIVER, connected: true },
+      ];
       setModels(statuses);
       setAvatarId((current) => current || requestedAvatarId || avatarResponse[0]?.id || "");
       setModel((current) => current || modelResponse.default_model || statuses[0]?.id || "mock");
@@ -150,7 +159,7 @@ export function RealtimeTestWorkspace({ initialAvatarId = "" }: { initialAvatarI
       const exhibition = exhibitions.find((item) => item.id === requestedExhibitionId);
       if (!exhibition) return;
       if (exhibition.boundAvatarId) setAvatarId(exhibition.boundAvatarId);
-      if (exhibition.boundModel) setModel(exhibition.boundModel);
+      if (exhibition.boundModel) setModel(exhibition.boundModel.trim().toLowerCase());
       if (exhibition.boundVoiceProvider && SUPPORTED_TTS_PROVIDERS.includes(exhibition.boundVoiceProvider as TtsProviderExtended)) setTtsProvider(exhibition.boundVoiceProvider as TtsProviderExtended);
       if (exhibition.boundVoiceModel) setTtsModel(exhibition.boundVoiceModel);
       if (exhibition.boundVoiceId) setTtsVoice(exhibition.boundVoiceId);
@@ -205,7 +214,18 @@ export function RealtimeTestWorkspace({ initialAvatarId = "" }: { initialAvatarI
   const appendEvent = useCallback((event: string, data: unknown) => {
     const detail = textFromEvent(data);
     setEvents((current) => [`${new Date().toLocaleTimeString()} · ${event}${detail ? ` · ${detail}` : ""}`, ...current].slice(0, 24));
-    if (event === "speech.ended" || event === "session.stopped" || event === "error") setIsSpeaking(false);
+    if (event === "speech.started") {
+      pendingSpeechRef.current = false;
+      setVideoState("think");
+    }
+    if (event === "speech.media_started") {
+      setVideoState("talk");
+    }
+    if (event === "speech.ended" || event === "session.stopped" || event === "error") {
+      if (event === "speech.ended" && pendingSpeechRef.current) return;
+      setIsSpeaking(false);
+      setVideoState("listen");
+    }
     if (detail && (event === "subtitle.chunk" || event === "speech.ended" || event === "message")) {
       setMessages((current) => {
         const last = current[current.length - 1];
@@ -226,6 +246,8 @@ export function RealtimeTestWorkspace({ initialAvatarId = "" }: { initialAvatarI
     sessionRef.current = null;
     setSessionId(null);
     setConnection("idle");
+      setIsSpeaking(false);
+      setVideoState("listen");
     if (sid) {
       try { await apiDelete(`/sessions/${encodeURIComponent(sid)}`); } catch { /* session may already be gone */ }
     }
@@ -238,7 +260,10 @@ export function RealtimeTestWorkspace({ initialAvatarId = "" }: { initialAvatarI
       setError("请先选择一个数字人形象。");
       return;
     }
-    const mockCanSkipStt = model === "mock" && !isSttProviderReady(asrProvider, health);
+    // The video driver renders listen/talk locally, while a lightweight mock
+    // session still supplies the normal SSE/TTS events and audio transport.
+    const sessionModel = model === VIDEO_DRIVER ? VIDEO_SESSION_MODEL : model;
+    const mockCanSkipStt = sessionModel === "mock" && !isSttProviderReady(asrProvider, health);
     const configError = audioProviderConfigError({ asrProvider: mockCanSkipStt ? "sensevoice" : asrProvider, ttsProvider, health });
     if (configError) {
       setError(configError);
@@ -250,7 +275,7 @@ export function RealtimeTestWorkspace({ initialAvatarId = "" }: { initialAvatarI
     try {
       const created = await apiPost<{ session_id: string; status: string }>("/sessions", {
         avatar_id: avatarId,
-        model,
+        model: sessionModel,
         tts_provider: ttsProvider,
         stt_provider: mockCanSkipStt ? undefined : asrProvider,
         tts_voice: ttsVoice || undefined,
@@ -286,6 +311,8 @@ export function RealtimeTestWorkspace({ initialAvatarId = "" }: { initialAvatarI
     const sid = sessionRef.current;
     if (!text || !sid || connection !== "live") return;
     setIsSpeaking(true);
+    setVideoState("think");
+    pendingSpeechRef.current = true;
     setMessages((current) => keepRecentConversation([
       ...current,
       { id: `${Date.now()}-user`, role: "user", text, timestamp: Date.now() },
@@ -294,6 +321,7 @@ export function RealtimeTestWorkspace({ initialAvatarId = "" }: { initialAvatarI
     try {
       await apiPost(`/sessions/${encodeURIComponent(sid)}/speak`, { text, tts_provider: ttsProvider, voice: ttsVoice, tts_model: ttsModel || undefined });
     } catch {
+      pendingSpeechRef.current = false;
       setIsSpeaking(false);
       setMessages((current) => keepRecentConversation([...current, { id: `${Date.now()}-error`, role: "assistant", text: "发送失败，请检查当前会话状态。", timestamp: Date.now() }]));
     }
@@ -320,6 +348,8 @@ export function RealtimeTestWorkspace({ initialAvatarId = "" }: { initialAvatarI
   const interruptSession = useCallback(() => {
     const sid = sessionRef.current;
     setIsSpeaking(false);
+    setVideoState("listen");
+    pendingSpeechRef.current = false;
     if (sid) void apiPost(`/sessions/${encodeURIComponent(sid)}/interrupt`, {}).catch(() => {});
   }, []);
 
@@ -377,14 +407,15 @@ export function RealtimeTestWorkspace({ initialAvatarId = "" }: { initialAvatarI
             <div className="absolute left-5 right-5 top-5 z-20 flex flex-wrap items-start justify-between gap-3">
               <div className="flex min-w-0 flex-wrap gap-2">
                 <span className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 shadow-sm"><span className={`h-2 w-2 rounded-full ${connection === "live" ? "bg-emerald-500" : connection === "error" ? "bg-rose-500" : "bg-slate-300"}`} />{connection === "live" ? "已连接" : connection === "connecting" ? "连接中" : connection === "queued" ? "排队中" : connection === "error" ? "连接错误" : "未连接"}</span>
-                <span className="inline-flex items-center rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1.5 text-sm font-semibold text-cyan-700 shadow-sm">WebRTC 舞台</span>
-                <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm font-semibold text-slate-600 shadow-sm">{model || "未选模型"}</span>
+                <span className="inline-flex items-center rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1.5 text-sm font-semibold text-cyan-700 shadow-sm">{model === VIDEO_DRIVER ? "本地视频舞台" : "WebRTC 舞台"}</span>
+                <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm font-semibold text-slate-600 shadow-sm">{model ? modelLabel(model) : "未选模型"}</span>
                 <span className="inline-flex max-w-[14rem] truncate rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-600 shadow-sm">{selectedAvatar?.name || avatarId || "未选形象"}</span>
               </div>
               {isAvatarDebug ? <button type="button" onClick={() => window.history.back()} className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-cyan-300 hover:text-cyan-700">更换形象</button> : null}
             </div>
-            {selectedAvatar && !sessionId ? <img src={buildApiUrl(`/avatars/${encodeURIComponent(selectedAvatar.id)}/preview`)} alt={selectedAvatar.name || selectedAvatar.id} className="max-h-[720px] max-w-full object-contain" /> : null}
-            <video ref={videoRef} autoPlay playsInline className={`max-h-[720px] max-w-full object-contain ${sessionId ? "opacity-100" : "pointer-events-none absolute opacity-0"}`} />
+            {selectedAvatar && !sessionId && model !== VIDEO_DRIVER ? <img src={buildApiUrl(`/avatars/${encodeURIComponent(selectedAvatar.id)}/preview`)} alt={selectedAvatar.name || selectedAvatar.id} className="max-h-[720px] max-w-full object-contain" /> : null}
+            {model === VIDEO_DRIVER ? <VideoAvatar state={videoState} videoDriver={selectedAvatar?.video_driver} className="max-h-[720px] max-w-full object-contain" /> : null}
+            <video ref={videoRef} autoPlay playsInline className={model === VIDEO_DRIVER ? "pointer-events-none absolute h-px w-px opacity-0" : `max-h-[720px] max-w-full object-contain ${sessionId ? "opacity-100" : "pointer-events-none absolute opacity-0"}`} />
             {startupLoading ? <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-white/85 backdrop-blur-[2px]" role="status" aria-live="polite"><div className="flex h-14 w-14 items-center justify-center rounded-full border border-cyan-100 bg-cyan-50 shadow-sm"><span className="h-7 w-7 animate-spin rounded-full border-[3px] border-cyan-200 border-t-cyan-600" /></div><p className="mt-4 text-sm font-semibold text-slate-800">{startupLabel}</p><p className="mt-1 text-xs text-slate-500">数字人舞台正在准备，请稍候…</p></div> : null}
             {!selectedAvatar && !sessionId ? <div className="text-center text-slate-400"><p className="text-lg font-semibold text-slate-700">请选择数字人形象</p><p className="mt-2 text-sm">选择后即可启动实时测试。</p></div> : null}
             {sessionId ? <button type="button" onClick={() => void stopSession()} className="absolute bottom-5 right-5 z-20 rounded-xl border border-rose-200 bg-white px-4 py-2.5 text-sm font-semibold text-rose-600 shadow-sm hover:bg-rose-50">停止会话</button> : null}

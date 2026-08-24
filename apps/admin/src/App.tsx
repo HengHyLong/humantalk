@@ -12,6 +12,7 @@ import {
 } from "./components/SettingsPanel";
 import { RuntimeConfigWorkspace } from "./components/RuntimeConfigWorkspace";
 import { SceneStage } from "./components/SceneStage";
+import type { VideoDriverState } from "./components/VideoAvatar";
 import { TopBar, type ConversationViewMode, type StudioWorkflow } from "./components/TopBar";
 import { ToastStack, type ToastMessage, type ToastTone } from "./components/ToastStack";
 import { AssetLibraryWorkspace, type AssetLibraryTab } from "./components/AssetLibraryWorkspace";
@@ -774,6 +775,8 @@ function pickInitialModel(
   return firstConnected ?? registeredModels[0] ?? avatarModel ?? currentModel;
 }
 
+const VIDEO_MODEL = "video";
+const VIDEO_SESSION_MODEL = "mock";
 const SERVER_AUDIO_RENDERERS = new Set(["flashtalk", "flashhead", "fasterliveportrait", "quicktalk", "musetalk", "wav2lip"]);
 
 function isFlashRenderer(model: string): boolean {
@@ -938,6 +941,7 @@ export default function App() {
   // Chat
   const [messages, setMessages] = useState<Message[]>([]);
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const [videoState, setVideoState] = useState<VideoDriverState>("listen");
   const [currentSubtitle, setCurrentSubtitle] = useState("");
   const [, setRuntimeStatus] = useState<HealthResponse | null>(null);
   const [runtimeConfig, setRuntimeConfig] = useState<RuntimeConfigResponse | null>(null);
@@ -965,7 +969,7 @@ export default function App() {
     );
   }, []);
 
-  const clearSubtitleState = useCallback(() => {
+  const clearSubtitleState = useCallback((resetVideoState = true) => {
     setCurrentSubtitle("");
     subtitleAccRef.current = "";
     subtitleMediaReadyRef.current = false;
@@ -973,6 +977,7 @@ export default function App() {
     streamingAssistantMsgIdRef.current = null;
     pendingAssistantMsgIdRef.current = null;
     setIsSpeaking(false);
+    if (resetVideoState) setVideoState("listen");
   }, [clearSubtitleFallbackTimer]);
 
   const appendAssistantError = useCallback((message: string) => {
@@ -1990,7 +1995,10 @@ export default function App() {
         ]);
         setRuntimeStatus(health);
         setAvatars(av);
-        setModels(mo.models);
+        // `video` is a browser renderer, so it is intentionally advertised
+        // independently of the backend synthesis workers.
+        const registeredModels = Array.from(new Set([...mo.models, VIDEO_MODEL]));
+        setModels(registeredModels);
         if (initialRuntimeConfig) {
           setRuntimeConfig(initialRuntimeConfig);
           syncRuntimeConfigSelection(initialRuntimeConfig);
@@ -2001,10 +2009,15 @@ export default function App() {
             return next;
           });
         }
-        const statuses = mo.statuses ?? mo.models.map((id) => ({ id, connected: true }));
+        const statuses = [
+          ...(mo.statuses ?? mo.models.map((id) => ({ id, connected: true }))).filter(
+            (status) => status.id !== VIDEO_MODEL,
+          ),
+          { id: VIDEO_MODEL, connected: true, backend: "browser" },
+        ];
         setModelStatuses(statuses);
         const storedAvatarSelection = readStoredAvatarSelection();
-        const initialAvatar = pickInitialAvatar(av, mo.models, storedAvatarSelection, mo.default_model);
+        const initialAvatar = pickInitialAvatar(av, registeredModels, storedAvatarSelection, mo.default_model);
         if (initialAvatar) {
           setAvatarId(initialAvatar.id);
           if (initialAvatar.is_custom || storedAvatarSelection?.source === "explicit") {
@@ -2016,7 +2029,7 @@ export default function App() {
           setModel((prev) => {
             const requestedModel = pickInitialModel(
               prev,
-              mo.models,
+              registeredModels,
               statuses,
               initialAvatar,
               mo.default_model,
@@ -2080,9 +2093,10 @@ export default function App() {
         setExpiringCountdown(null);
         setSessionId(null);
         setActiveAsrProvider("");
+        setVideoState("listen");
         const orphanId = streamingAssistantMsgIdRef.current;
         const pendingId = pendingAssistantMsgIdRef.current;
-        clearSubtitleState();
+        clearSubtitleState(false);
         if (orphanId || pendingId) {
           const removeIds = new Set([orphanId, pendingId].filter(Boolean));
           setMessages((prev) => prev.filter((m) => !removeIds.has(m.id)));
@@ -2097,8 +2111,9 @@ export default function App() {
       if (ev === "speech.started") {
         const staleId = streamingAssistantMsgIdRef.current;
         const pendingId = pendingAssistantMsgIdRef.current;
-        clearSubtitleState();
+        clearSubtitleState(false);
         setIsSpeaking(true);
+        setVideoState("think");
         if (staleId) {
           setMessages((prev) => prev.filter((m) => m.id !== staleId));
         }
@@ -2115,6 +2130,7 @@ export default function App() {
         });
       }
       if (ev === "speech.media_started") {
+        setVideoState("talk");
         subtitleMediaReadyRef.current = true;
         clearSubtitleFallbackTimer();
         flushSubtitleDisplay();
@@ -2130,6 +2146,10 @@ export default function App() {
         }
       }
       if (ev === "speech.ended") {
+        // Ignore a late completion from a cancelled turn while a new turn is
+        // still waiting for speech.started.
+        if (pendingAssistantMsgIdRef.current) return;
+        setVideoState("listen");
         const d = data && typeof data === "object" ? (data as { text?: string }) : {};
         const fromEvent = typeof d.text === "string" ? d.text.trim() : "";
         const streamed = subtitleAccRef.current.trim();
@@ -2230,7 +2250,9 @@ export default function App() {
       const created = await apiPost<CreateSessionResponse>("/sessions", {
         persona_id: selectedPersonaId || undefined,
         avatar_id: avatarId,
-        model,
+        // Video mode only needs the existing Mock session as a carrier for
+        // chat/STT/TTS events; its visual output is rendered locally below.
+        model: model === VIDEO_MODEL ? VIDEO_SESSION_MODEL : model,
         llm_system_prompt: llmSystemPrompt.trim() || undefined,
         tts_provider: ttsProvider,
         stt_provider: lockedAsrProvider,
@@ -2512,6 +2534,7 @@ export default function App() {
       const previousPendingId = pendingAssistantMsgIdRef.current;
       pendingAssistantMsgIdRef.current = pendingId;
       setIsSpeaking(true);
+      setVideoState("think");
       setMessages((prev) => [
         ...prev.filter((m) => m.id !== previousPendingId && m.id !== activeAssistantId),
         { id: makeId(), role: "user", text, timestamp: Date.now() },
@@ -2604,6 +2627,7 @@ export default function App() {
 
   const handleInterrupt = useCallback(() => {
     speakAudioAbortRef.current?.abort();
+    setVideoState("listen");
     if (!sessionId) return;
     void apiPost(`/sessions/${sessionId}/interrupt`, {}).catch(() => {});
   }, [sessionId]);
@@ -3126,6 +3150,9 @@ export default function App() {
                 avatarAdjust={immersiveActive ? immersiveAvatarAdjust : undefined}
                 compactSquareStage={compactSquareStage}
                 clientRenderer={!showStart && model === "mock" ? currentAvatar?.client_renderer ?? null : null}
+                videoDriver={!showStart && model === VIDEO_MODEL}
+                videoState={videoState}
+                videoDriverAssets={!showStart ? currentAvatar?.video_driver ?? null : null}
                 className="h-full w-full"
               >
                 {immersiveActive ? (
@@ -3212,7 +3239,7 @@ export default function App() {
                         {connection === "live" || connection === "expiring" ? "已连接" : "待启动"}
                       </span>
                       <span className="inline-flex items-center gap-1 rounded-full border border-cyan-200 bg-cyan-50 px-2.5 py-1 text-xs font-medium text-cyan-700 shadow-sm">
-                        WebRTC 舞台
+                        {model === VIDEO_MODEL ? "本地视频舞台" : "WebRTC 舞台"}
                       </span>
                       <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-600 shadow-sm">
                         {modelLabel(model)}
