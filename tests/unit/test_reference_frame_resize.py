@@ -113,7 +113,7 @@ def test_wav2lip_and_quicktalk_playback_backpressure_defaults(monkeypatch) -> No
         runner = FlashTalkRunner.__new__(FlashTalkRunner)
         runner.model_type = model_type
 
-        assert runner._playback_backpressure_config() == (8, 32, 1200.0)
+        assert runner._playback_backpressure_config() == (8, 64, 1200.0)
 
 
 def test_wav2lip_and_quicktalk_playback_backpressure_accept_env(monkeypatch) -> None:
@@ -127,12 +127,41 @@ def test_wav2lip_and_quicktalk_playback_backpressure_accept_env(monkeypatch) -> 
     assert runner._playback_backpressure_config() == (3, 7, 80.0)
 
 
+@pytest.mark.parametrize(
+    ("model_type", "fps", "chunk_samples", "expected_reserve_ms"),
+    [
+        ("quicktalk", 20, 9600, 1800.0),
+        ("wav2lip", 25, 7680, 1440.0),
+    ],
+)
+def test_low_latency_chunks_get_adaptive_jitter_reserve(
+    monkeypatch,
+    model_type: str,
+    fps: int,
+    chunk_samples: int,
+    expected_reserve_ms: float,
+) -> None:
+    monkeypatch.delenv("AUDIO2VIDEO_PLAYBACK_AUDIO_RESERVE_MS", raising=False)
+    monkeypatch.delenv("AUDIO2VIDEO_PLAYBACK_MAX_QUEUE_FRAMES", raising=False)
+    runner = FlashTalkRunner.__new__(FlashTalkRunner)
+    runner.model_type = model_type
+    runner.flashtalk = SimpleNamespace(
+        fps=fps,
+        slice_len=12,
+        sample_rate=16000,
+        audio_chunk_samples=chunk_samples,
+    )
+
+    assert runner._playback_audio_reserve_ms() == expected_reserve_ms
+    assert runner._playback_backpressure_config() == (8, 48, 1200.0)
+
+
 def test_wav2lip_and_quicktalk_audio_reserve_defaults_and_accepts_env(monkeypatch) -> None:
     monkeypatch.delenv("AUDIO2VIDEO_PLAYBACK_AUDIO_RESERVE_MS", raising=False)
     runner = FlashTalkRunner.__new__(FlashTalkRunner)
     runner.model_type = "quicktalk"
 
-    assert runner._playback_audio_reserve_ms() == 1000.0
+    assert runner._playback_audio_reserve_ms() == 2400.0
 
     monkeypatch.setenv("AUDIO2VIDEO_PLAYBACK_AUDIO_RESERVE_MS", "1200")
     assert runner._playback_audio_reserve_ms() == 1200.0

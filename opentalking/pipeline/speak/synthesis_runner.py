@@ -9,6 +9,7 @@ import asyncio
 import io
 import json
 import logging
+import math
 import os
 import re
 import time
@@ -1787,7 +1788,13 @@ class FlashTalkRunner:
             return (target, max_frames, max_wait_ms)
         if model_type in {"quicktalk", "wav2lip"}:
             target = max(0, _env_int("AUDIO2VIDEO_PLAYBACK_TARGET_QUEUE_FRAMES", 8))
-            max_frames = max(target, _env_int("AUDIO2VIDEO_PLAYBACK_MAX_QUEUE_FRAMES", 32))
+            flashtalk = getattr(self, "flashtalk", None)
+            fps = max(1.0, float(getattr(flashtalk, "fps", 25) or 25))
+            slice_len = max(1, int(getattr(flashtalk, "slice_len", 1) or 1))
+            reserve_frames = int(math.ceil(self._playback_audio_reserve_ms() * fps / 1000.0))
+            adaptive_frames = reserve_frames + slice_len
+            adaptive_max = min(64, max(32, int(math.ceil(adaptive_frames / 8.0) * 8)))
+            max_frames = max(target, _env_int("AUDIO2VIDEO_PLAYBACK_MAX_QUEUE_FRAMES", adaptive_max))
             max_wait_ms = max(0.0, _env_float("AUDIO2VIDEO_PLAYBACK_MAX_WAIT_MS", 1200.0))
             return (target, max_frames, max_wait_ms)
         return (0, 0, 0.0)
@@ -1796,9 +1803,14 @@ class FlashTalkRunner:
         model_type = str(getattr(self, "model_type", "") or "").strip().lower()
         if model_type not in {"quicktalk", "wav2lip"}:
             return 0.0
+        flashtalk = getattr(self, "flashtalk", None)
+        sample_rate = max(1, int(getattr(flashtalk, "sample_rate", 16000) or 16000))
+        chunk_samples = max(1, int(getattr(flashtalk, "audio_chunk_samples", 17920) or 17920))
+        chunk_ms = chunk_samples * 1000.0 / sample_rate
+        adaptive_default_ms = min(2400.0, max(1200.0, chunk_ms * 3.0))
         return max(
             0.0,
-            _env_float("AUDIO2VIDEO_PLAYBACK_AUDIO_RESERVE_MS", 1000.0),
+            _env_float("AUDIO2VIDEO_PLAYBACK_AUDIO_RESERVE_MS", adaptive_default_ms),
         )
 
     async def _wait_for_playback_capacity(

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 import numpy as np
@@ -230,6 +231,51 @@ def test_buffered_audio_duration_counts_track_buffer_and_pending_queue() -> None
     finally:
         session._put_close_sentinel(session.video._queue)
         session._put_close_sentinel(session.audio._queue)
+
+
+def test_buffered_tracks_rebase_shared_clock_after_long_underrun(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        session = WebRTCSession(fps=25.0, sample_rate=16000, mode="buffered")
+        now = [100.0]
+        monkeypatch.setenv("OPENTALKING_RTC_MAX_CATCHUP_MS", "120")
+        monkeypatch.setattr(aiortc_adapter.time, "monotonic", lambda: now[0])
+        try:
+            await session.video.put(
+                VideoFrameData(
+                    data=np.zeros((4, 4, 3), dtype=np.uint8),
+                    width=4,
+                    height=4,
+                    timestamp_ms=0.0,
+                )
+            )
+            await session.video.recv()
+            await session.audio.put_pcm(np.ones((320,), dtype=np.int16))
+            await session.audio.recv()
+
+            now[0] = 105.0
+            await session.video.put(
+                VideoFrameData(
+                    data=np.ones((4, 4, 3), dtype=np.uint8),
+                    width=4,
+                    height=4,
+                    timestamp_ms=40.0,
+                )
+            )
+            await session.video.recv()
+
+            assert session._shared_clock.start_time == pytest.approx(104.96)
+            assert session.video._timeline_start == pytest.approx(104.96)
+
+            await session.audio.put_pcm(np.ones((320,), dtype=np.int16))
+            await session.audio.recv()
+            assert session.audio._start_time == pytest.approx(session._shared_clock.start_time)
+        finally:
+            session._put_close_sentinel(session.video._queue)
+            session._put_close_sentinel(session.audio._queue)
+
+    asyncio.run(scenario())
 
 
 def test_legacy_reset_clocks_rewinds_per_utterance_timeline() -> None:

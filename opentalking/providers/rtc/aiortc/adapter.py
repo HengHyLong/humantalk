@@ -66,6 +66,16 @@ _ORIGINAL_AIORTC_GET_ENCODER = (
 _AIORTC_ENCODER_FACTORY_MODE = "default"
 
 
+def _rtc_max_catchup_seconds() -> float:
+    raw = os.environ.get("OPENTALKING_RTC_MAX_CATCHUP_MS", "120").strip()
+    try:
+        value_ms = float(raw)
+    except ValueError:
+        log.warning("Ignoring invalid OPENTALKING_RTC_MAX_CATCHUP_MS=%r", raw)
+        value_ms = 120.0
+    return max(0.0, value_ms) / 1000.0
+
+
 def _normalized_video_encoder() -> str:
     raw = os.environ.get("OPENTALKING_WEBRTC_VIDEO_ENCODER", "auto").strip().lower()
     aliases = {
@@ -498,11 +508,27 @@ class _BufferedNumpyVideoTrack(MediaStreamTrack):
             self._timeline_start = shared_start
             self._timeline_base_ms = frame_ts_ms
 
+        shared_start = self._shared_clock.start_time if self._shared_clock is not None else None
+        if shared_start is not None and self._timeline_start != shared_start:
+            self._timeline_start = shared_start
+
         target = self._timeline_start + max(
             0.0,
             (frame_ts_ms - self._timeline_base_ms) / 1000.0,
         )
         now = time.monotonic()
+        max_catchup_s = _rtc_max_catchup_seconds()
+        lateness_s = now - target
+        if max_catchup_s > 0.0 and lateness_s > max_catchup_s:
+            self._timeline_start += lateness_s
+            if self._shared_clock is not None:
+                self._shared_clock.start_time = self._timeline_start
+            target = now
+            log.warning(
+                "RTC video underrun recovered without burst catch-up: late_ms=%.1f queue=%d",
+                lateness_s * 1000.0,
+                self._queue.qsize(),
+            )
         if now < target:
             await asyncio.sleep(target - now)
 
@@ -655,8 +681,23 @@ class _BufferedPCM16AudioTrack(MediaStreamTrack):
             self._seen_audio = True
 
         assert self._start_time is not None
+        shared_start = self._shared_clock.start_time if self._shared_clock is not None else None
+        if shared_start is not None and self._start_time != shared_start:
+            self._start_time = shared_start
         target = self._start_time + ((pts - self._clock_start_pts) / self.sample_rate)
         now = time.monotonic()
+        max_catchup_s = _rtc_max_catchup_seconds()
+        lateness_s = now - target
+        if max_catchup_s > 0.0 and lateness_s > max_catchup_s:
+            self._start_time += lateness_s
+            if self._shared_clock is not None:
+                self._shared_clock.start_time = self._start_time
+            target = now
+            log.warning(
+                "RTC audio underrun recovered without burst catch-up: late_ms=%.1f queue=%d",
+                lateness_s * 1000.0,
+                self._queue.qsize(),
+            )
         if now < target:
             await asyncio.sleep(target - now)
 
