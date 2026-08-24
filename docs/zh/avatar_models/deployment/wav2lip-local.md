@@ -38,6 +38,7 @@ export OPENTALKING_WAV2LIP_MODEL_ROOT="$DIGITAL_HUMAN_HOME/opentalking/models/wa
 export OPENTALKING_WAV2LIP_DEVICE=cuda
 export OPENTALKING_WAV2LIP_BATCH_SIZE=16
 export OPENTALKING_WAV2LIP_MAX_LONG_EDGE=832
+export OPENTALKING_WAV2LIP_MAX_REFERENCE_FRAMES=125
 export OPENTALKING_WAV2LIP_FACE_DET_DEVICE=cpu
 
 bash scripts/start_unified.sh --backend local --model wav2lip --api-port 8210 --web-port 5280
@@ -54,6 +55,12 @@ curl -s http://127.0.0.1:8210/models | jq '.statuses[] | select(.id=="wav2lip")'
 
 期望返回 `backend=local`、`connected=true`。首次加载会初始化 checkpoint、S3FD 和 avatar cache，可能需要几十秒。
 
+通过自定义数字人接口上传视频并选择 `wav2lip` 时，OpenTalking 会自动把视频按 avatar FPS
+抽取为参考帧序列，使实时口型同步保留源视频中的眨眼、转头和身体动作。默认最多保留
+125 帧，即 25 FPS 下约 5 秒；播放结束后循环。增加
+`OPENTALKING_WAV2LIP_MAX_REFERENCE_FRAMES` 会保留更长动作，同时增加创建时间、磁盘空间、
+首次人脸检测时间和运行时缓存。
+
 ## 常见错误
 
 | 现象 | 处理 |
@@ -61,6 +68,7 @@ curl -s http://127.0.0.1:8210/models | jq '.statuses[] | select(.id=="wav2lip")'
 | checkpoint 找不到 | 检查 `OPENTALKING_WAV2LIP_MODEL_ROOT` 和两个 `.pth` 文件。 |
 | 显存不足 | 降低 `OPENTALKING_WAV2LIP_BATCH_SIZE` 或 `OPENTALKING_WAV2LIP_MAX_LONG_EDGE`。 |
 | 首帧慢 | 设置 `OPENTALKING_PREWARM_AVATARS=singer` 预热常用 avatar。 |
+| 视频 avatar 只有嘴动 | 重新上传视频生成帧资产，并确认 manifest 中 `reference_mode=frames`。 |
 | 画质增强报错 | `easy_enhanced` 需要 GFPGAN，并配置 `OPENTALKING_WAV2LIP_GFPGAN_CHECKPOINT`。 |
 
 ## 关闭服务

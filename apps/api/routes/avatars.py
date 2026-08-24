@@ -32,6 +32,7 @@ from opentalking.avatar.light2d import (
 )
 from opentalking.avatar.matting import MattingError, image_has_transparency, remove_avatar_background
 from opentalking.avatar.validator import list_avatar_dirs
+from opentalking.avatar.wav2lip_video import prepare_wav2lip_video_frames
 from opentalking.models.quicktalk.paths import resolve_quicktalk_asset_root
 from opentalking.core.model_paths import quicktalk_asset_root
 from opentalking.models.registry import get_adapter
@@ -420,6 +421,51 @@ def _custom_avatar_max_size() -> tuple[int, int]:
     width = int(os.environ.get("OPENTALKING_CUSTOM_AVATAR_MAX_WIDTH", "720"))
     height = int(os.environ.get("OPENTALKING_CUSTOM_AVATAR_MAX_HEIGHT", "1280"))
     return max(1, width), max(1, height)
+
+
+def _positive_env_int(name: str, default: int, *, maximum: int | None = None) -> int:
+    try:
+        value = int(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        value = default
+    value = max(1, value)
+    return min(value, maximum) if maximum is not None else value
+
+
+def _prepare_custom_wav2lip_video_asset(manifest_path: Path, source_video: Path) -> None:
+    raw = _read_manifest(manifest_path)
+    if str(raw.get("model_type") or "").strip().lower() != "wav2lip":
+        return
+
+    frames_dir = manifest_path.parent / "frames"
+    result = prepare_wav2lip_video_frames(
+        source_video,
+        frames_dir,
+        width=max(1, int(raw.get("width") or 1)),
+        height=max(1, int(raw.get("height") or 1)),
+        fps=max(1, int(raw.get("fps") or 25)),
+        max_frames=_positive_env_int("OPENTALKING_WAV2LIP_MAX_REFERENCE_FRAMES", 125),
+        jpeg_quality=_positive_env_int("OPENTALKING_WAV2LIP_JPEG_QUALITY", 95, maximum=100),
+    )
+    metadata = dict(raw.get("metadata") or {})
+    metadata.update(
+        {
+            "idle_mode": "loop",
+            "reference_mode": "frames",
+            "frame_dir": "frames",
+            "frame_metadata": "frames/mouth_metadata.json",
+            # Frame geometry is prepared, but the Wav2Lip model crop is still
+            # detected and cached by the runtime on first load.
+            "preprocessed": False,
+            "preprocess_version": 1,
+            "source_fps": result.source_fps,
+            "source_frame_count": result.source_frame_count,
+            "extracted_frame_count": result.frame_count,
+        }
+    )
+    raw["fps"] = result.fps
+    raw["metadata"] = metadata
+    _write_manifest(manifest_path, raw)
 
 
 def _resize_uploaded_avatar_image(image: Image.Image, *, max_width: int, max_height: int) -> Image.Image:
@@ -1261,7 +1307,8 @@ async def create_custom_avatar(
             _write_manifest(target_dir / "manifest.json", raw)
         elif video_body is not None:
             video_name = f"source_video{video_suffix}"
-            (source_dir / video_name).write_bytes(video_body)
+            source_video_path = source_dir / video_name
+            source_video_path.write_bytes(video_body)
             raw = _read_manifest(target_dir / "manifest.json")
             metadata = dict(raw.get("metadata") or {})
             metadata["idle_mode"] = "loop"
@@ -1270,6 +1317,7 @@ async def create_custom_avatar(
             metadata["source_video"] = f"source/{video_name}"
             raw["metadata"] = metadata
             _write_manifest(target_dir / "manifest.json", raw)
+            _prepare_custom_wav2lip_video_asset(target_dir / "manifest.json", source_video_path)
         mouth_metadata.update_manifest_mouth_metadata(
             target_dir / "manifest.json",
             target_dir / "reference.png",

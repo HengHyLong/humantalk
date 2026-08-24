@@ -1930,6 +1930,80 @@ def test_create_custom_avatar_accepts_uploaded_source_video(tmp_path, monkeypatc
     assert preview_video.content == b"fake-video"
 
 
+def test_create_custom_wav2lip_video_avatar_uses_motion_frames(tmp_path, monkeypatch):
+    from opentalking.avatar.wav2lip_video import Wav2LipVideoFrames
+
+    base = tmp_path / "base-wav2lip"
+    base.mkdir()
+    (base / "preview.png").write_bytes(_png_bytes((416, 704)))
+    (base / "reference.png").write_bytes(_png_bytes((416, 704)))
+    (base / "manifest.json").write_text(
+        json.dumps(
+            {
+                "id": "base-wav2lip",
+                "name": "Base Wav2Lip",
+                "model_type": "wav2lip",
+                "fps": 25,
+                "sample_rate": 16000,
+                "width": 416,
+                "height": 704,
+                "version": "1.0",
+                "metadata": {"bound_voice_id": "voice-1"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    async def fake_read_upload_video(upload):
+        return Image.open(BytesIO(_png_bytes((640, 900)))).convert("RGB"), b"fake-video", ".mp4"
+
+    def fake_prepare(source_video, frames_dir, **kwargs):
+        assert source_video.read_bytes() == b"fake-video"
+        assert kwargs["width"] == 640
+        assert kwargs["height"] == 900
+        assert kwargs["fps"] == 25
+        frames_dir.mkdir(parents=True, exist_ok=True)
+        (frames_dir / "frame_00000.jpg").write_bytes(b"frame")
+        metadata_path = frames_dir / "mouth_metadata.json"
+        metadata_path.write_text('{"version": 1, "frames": {}}\n', encoding="utf-8")
+        return Wav2LipVideoFrames(
+            frame_count=42,
+            fps=25,
+            source_fps=30.0,
+            source_frame_count=60,
+            metadata_path=metadata_path,
+        )
+
+    monkeypatch.setattr(avatars, "_read_upload_video", fake_read_upload_video)
+    monkeypatch.setattr(avatars, "prepare_wav2lip_video_frames", fake_prepare)
+    monkeypatch.setattr(avatars.mouth_metadata, "detect_mouth_landmarks", lambda frame: None)
+
+    app = FastAPI()
+    app.state.settings = SimpleNamespace(avatars_dir=str(tmp_path))
+    app.include_router(avatars.router)
+    client = TestClient(app)
+
+    response = client.post(
+        "/avatars/custom",
+        data={"base_avatar_id": "base-wav2lip", "name": "动作数字人", "model": "wav2lip"},
+        files={"video": ("source.mp4", b"fake-video", "video/mp4")},
+    )
+
+    assert response.status_code == 200
+    created = response.json()
+    custom_dir = tmp_path / created["id"]
+    manifest = json.loads((custom_dir / "manifest.json").read_text(encoding="utf-8"))
+    metadata = manifest["metadata"]
+    assert metadata["reference_mode"] == "frames"
+    assert metadata["frame_dir"] == "frames"
+    assert metadata["frame_metadata"] == "frames/mouth_metadata.json"
+    assert metadata["preprocessed"] is False
+    assert metadata["extracted_frame_count"] == 42
+    assert metadata["source_video"] == "source/source_video.mp4"
+    assert metadata["bound_voice_id"] == "voice-1"
+    assert (custom_dir / "frames" / "frame_00000.jpg").is_file()
+
+
 def test_create_custom_avatar_resizes_large_upload_to_realtime_max(tmp_path, monkeypatch):
     base = tmp_path / "base-wav2lip"
     base.mkdir()
