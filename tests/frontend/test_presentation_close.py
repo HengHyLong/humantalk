@@ -30,10 +30,11 @@ def test_closing_registration_does_not_restore_the_dismissed_product_card() -> N
     assert 'enqueueSpeech(englishConversation ? "The registration QR code is temporarily unavailable. Please try again later." : "登记二维码暂时无法生成，请稍后再试。", text, [], true);' in source
 
 
-def test_registration_dialog_is_centered_on_desktop_and_mobile() -> None:
+def test_registration_dialog_uses_the_same_lower_face_safe_area() -> None:
     source = STYLE_SOURCE.read_text(encoding="utf-8")
-    centered_rule = ".digital-display-presentation-stack.is-registration { top: 50%;"
 
-    assert source.count(centered_rule) == 2
-    assert source.count("transform: translate(-50%, -50%);") >= 2
-    assert ".digital-display-presentation-stack.is-registration { top: 55%;" not in source
+    assert ".digital-display-presentation-stack { position: absolute; top: 52%;" in source
+    assert ".digital-display-presentation-stack { top: 52dvh;" in source
+    assert ".digital-display-presentation-stack.is-registration { width:" in source
+    assert ".digital-display-presentation-stack.is-registration { top:" not in source
+    assert ".digital-display-presentation-stack .digital-display-waist-panel.is-registration { max-height: 100%; overflow-y: auto; }" in source

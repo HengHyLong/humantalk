@@ -20,6 +20,14 @@ def test_presentation_is_bounded_and_long_subtitles_scroll() -> None:
     assert ".digital-display-presentation-stack { top: 55%;" not in styles
 
 
+def test_presentation_reserves_the_upper_half_for_the_avatar_face() -> None:
+    styles = STYLE_SOURCE.read_text(encoding="utf-8")
+
+    assert ".digital-display-presentation-stack { position: absolute; top: 52%;" in styles
+    assert ".digital-display-presentation-stack { top: 52dvh;" in styles
+    assert ".digital-display-presentation-stack.is-registration { top:" not in styles
+
+
 def test_presentation_images_open_an_accessible_lightbox() -> None:
     display = DISPLAY_SOURCE.read_text(encoding="utf-8")
     entity_card = ENTITY_CARD_SOURCE.read_text(encoding="utf-8")
