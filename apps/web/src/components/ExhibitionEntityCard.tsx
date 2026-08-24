@@ -21,6 +21,7 @@ type ExhibitionEntityCardProps = {
   immersive?: boolean;
   onClose?: () => void;
   closeLabel?: string;
+  onImageClick?: (src: string, alt: string) => void;
 };
 
 export function ExhibitionEntityCard({
@@ -28,8 +29,10 @@ export function ExhibitionEntityCard({
   immersive = false,
   onClose,
   closeLabel = "关闭介绍卡片",
+  onImageClick,
 }: ExhibitionEntityCardProps) {
   const imageUrl = entity.image_urls.map(displayImageUrl).find(Boolean);
+  const imageAlt = `${entity.name}${KIND_LABELS[entity.kind]}图片`;
   return (
     <article className={`exhibition-entity-card ${immersive ? "is-immersive" : "is-light"}`}>
       {onClose ? (
@@ -61,12 +64,20 @@ export function ExhibitionEntityCard({
         ) : null}
       </div>
       {imageUrl ? (
-        <img
-          src={imageUrl}
-          alt={`${entity.name}${KIND_LABELS[entity.kind]}图片`}
-          loading="lazy"
-          onError={(event) => { event.currentTarget.style.display = "none"; }}
-        />
+        <button
+          type="button"
+          className="digital-display-zoom-trigger exhibition-entity-card-image"
+          onClick={() => onImageClick?.(imageUrl, imageAlt)}
+          aria-label={`放大查看${imageAlt}`}
+          disabled={!onImageClick}
+        >
+          <img
+            src={imageUrl}
+            alt={imageAlt}
+            loading="lazy"
+            onError={(event) => { event.currentTarget.parentElement?.style.setProperty("display", "none"); }}
+          />
+        </button>
       ) : null}
     </article>
   );

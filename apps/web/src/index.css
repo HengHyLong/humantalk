@@ -199,15 +199,15 @@ body {
 .digital-display-chat-panel.is-presentation-hidden .digital-display-chat-input::before { align-self: center; flex: 0 0 auto; color: rgba(218, 247, 255, .84); content: attr(data-prompt); font-size: 10px; font-weight: 700; white-space: nowrap; }
 .digital-display-chat-reveal { align-self: flex-end; border: 1px solid rgba(181, 232, 255, .4); border-radius: 999px; padding: 7px 12px; color: #dcf7ff; background: rgba(2, 45, 98, .72); font-size: 10px; cursor: pointer; backdrop-filter: blur(8px); }
 .digital-display-chat-reveal:hover { background: rgba(21, 111, 170, .78); }
-.digital-display-presentation-stack { position: absolute; top: 37%; left: 50%; z-index: 34; display: flex; width: min(860px, 92%); max-width: 100%; flex-direction: column; align-items: stretch; transform: translateX(-50%); }
-.digital-display-presentation-stack.is-registration { top: 50%; width: min(620px, 92%); transform: translate(-50%, -50%); }
-.digital-display-presentation-stack .digital-display-waist-panel { position: relative; top: auto; right: auto; bottom: auto; left: auto; width: 100%; max-width: none; flex: 0 0 auto; transform: none; }
+.digital-display-presentation-stack { position: absolute; top: clamp(150px, 28%, 300px); bottom: clamp(72px, 8%, 120px); left: 50%; z-index: 34; display: flex; width: min(860px, 92%); max-width: 100%; min-height: 0; flex-direction: column; align-items: stretch; transform: translateX(-50%); }
+.digital-display-presentation-stack.is-registration { top: 50%; bottom: auto; width: min(620px, 92%); transform: translate(-50%, -50%); }
+.digital-display-presentation-stack .digital-display-waist-panel { position: relative; top: auto; right: auto; bottom: auto; left: auto; width: 100%; max-width: none; min-height: 0; flex: 1 1 auto; transform: none; }
 .digital-display-presentation-stack .digital-display-waist-panel.is-dialog-hidden { display: none; }
 .digital-display-live-subtitle { position: relative; z-index: 26; display: flex; max-width: min(780px, 90%); align-items: flex-start; gap: 8px; margin: 0 auto; pointer-events: none; }
 .digital-display-live-subtitle span { flex: 0 0 auto; border: 1px solid rgba(185, 237, 255, .38); border-radius: 999px; padding: 3px 8px; color: rgba(223, 248, 255, .92); background: rgba(2, 49, 112, .72); font-size: 9px; line-height: 1.45; }
 .digital-display-live-subtitle p { min-width: 0; max-width: 100%; margin: 0; border: 1px solid rgba(173, 243, 255, .38); border-radius: 10px; padding: 8px 12px; color: #f5fdff; background: rgba(7, 104, 163, .78); box-shadow: 0 10px 24px rgba(0, 18, 58, .22); font-size: clamp(13px, 1.55vw, 18px); line-height: 1.5; text-align: center; backdrop-filter: blur(8px); }
 .digital-display-live-subtitle.is-presentation-subtitle { position: relative; right: auto; bottom: auto; left: auto; transform: none; }
-.digital-display-presentation-stack .digital-display-live-subtitle { width: 100%; max-width: none; margin: 0 auto 20px; }
+.digital-display-presentation-stack .digital-display-live-subtitle { width: 100%; max-width: none; max-height: min(22vh, 180px); min-height: 0; flex: 0 1 auto; margin: 0 auto 12px; overflow-y: auto; overscroll-behavior: contain; pointer-events: auto; scrollbar-width: thin; scrollbar-color: rgba(183, 237, 255, .5) transparent; }
 .digital-display-waist-panel { position: absolute; left: 50%; top: 47%; transform: translateX(-50%); z-index: 24; display: flex; align-items: stretch; gap: 10px; width: min(860px, 92%); max-height: 30vh; padding: 8px; overflow-x: auto; overflow-y: auto; border: 1px solid rgba(168, 235, 255, .35); border-radius: 14px; background: transparent; box-shadow: none; backdrop-filter: blur(10px); scrollbar-width: thin; scrollbar-color: rgba(183, 237, 255, .5) transparent; }
 .digital-display-waist-panel.is-registration { width: min(620px, 92%); max-height: none; overflow: visible; border-color: rgba(168, 235, 255, .35); background: transparent; }
 .digital-display-waist-panel.is-registration .digital-display-registration-card { width: 100%; min-width: 0; grid-template-columns: clamp(132px, 36%, 220px) minmax(0, 1fr); padding: 18px; }
@@ -218,9 +218,18 @@ body {
 .digital-display-waist-panel .digital-display-navigation-card,
 .digital-display-waist-panel .exhibition-entity-card.is-immersive { width: min(100%, 420px); min-width: 0; flex: 1 1 250px; max-height: 29vh; }
 .digital-display-waist-panel .digital-display-navigation-card img,
-.digital-display-waist-panel .exhibition-entity-card.is-immersive > img { width: 100%; min-width: 0; max-width: 100%; min-height: 0; object-fit: contain; object-position: center; background: transparent; }
+.digital-display-waist-panel .exhibition-entity-card.is-immersive .exhibition-entity-card-image img { width: 100%; min-width: 0; max-width: 100%; min-height: 0; object-fit: contain; object-position: center; background: transparent; }
 .digital-display-waist-panel .digital-display-navigation-card img { height: auto; max-height: min(18vh, 180px); }
-.digital-display-waist-panel .exhibition-entity-card.is-immersive > img { height: 100%; max-height: 29vh; }
+.digital-display-waist-panel .exhibition-entity-card.is-immersive .exhibition-entity-card-image img { height: 100%; max-height: 29vh; }
+.digital-display-zoom-trigger { display: block; min-width: 0; margin: 0; border: 0; padding: 0; overflow: hidden; color: inherit; background: transparent; cursor: zoom-in; }
+.digital-display-zoom-trigger:disabled { cursor: default; }
+.digital-display-zoom-trigger:focus-visible { outline: 2px solid #8ceaff; outline-offset: -2px; }
+.digital-display-navigation-image { width: 100%; }
+.digital-display-image-lightbox { position: absolute; inset: 0; z-index: 90; display: grid; place-items: center; padding: clamp(20px, 5vw, 64px); background: rgba(0, 10, 28, .9); backdrop-filter: blur(10px); }
+.digital-display-image-lightbox img { display: block; width: auto; height: auto; max-width: 100%; max-height: 100%; border-radius: 12px; object-fit: contain; box-shadow: 0 24px 80px rgba(0, 0, 0, .55); }
+.digital-display-image-lightbox-close { position: absolute; top: max(18px, env(safe-area-inset-top)); right: max(18px, env(safe-area-inset-right)); z-index: 2; display: grid; width: 42px; height: 42px; place-items: center; border: 1px solid rgba(215, 248, 255, .65); border-radius: 999px; color: #fff; background: rgba(2, 37, 76, .88); font-size: 28px; line-height: 1; cursor: pointer; }
+.digital-display-image-lightbox-close:hover { background: rgba(13, 100, 158, .96); }
+.digital-display-image-lightbox-close:focus-visible { outline: 2px solid #8ceaff; outline-offset: 3px; }
 .digital-display-chat-heading { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; color: rgba(230, 249, 255, .8); font-size: 10px; letter-spacing: .16em; }
 .digital-display-chat-state { color: rgba(185, 240, 255, .88); font-size: 9px; letter-spacing: .08em; }
 .digital-display-chat-feed { position: relative; display: flex; height: var(--digital-display-latest-round-height, auto); max-height: min(27vh, 300px); min-height: 0; flex: 0 1 auto; flex-direction: column; gap: 8px; overflow-y: auto; padding: 2px 3px; scrollbar-width: thin; scrollbar-color: rgba(183, 237, 255, .5) transparent; transition: height .2s ease; }
@@ -271,11 +280,13 @@ body {
 .exhibition-entity-card dl div { display: flex; min-width: 0; align-items: center; gap: 5px; border-radius: 8px; padding: 5px 8px; }
 .exhibition-entity-card dt, .exhibition-entity-card dd { margin: 0; font-size: 10px; line-height: 1.45; }
 .exhibition-entity-card dd { min-width: 0; overflow: hidden; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
-.exhibition-entity-card > img { display: block; width: 100%; max-width: 100%; height: clamp(145px, 23vh, 230px); object-fit: contain; background: transparent; }
+.exhibition-entity-card-image { width: 100%; height: clamp(145px, 23vh, 230px); }
+.exhibition-entity-card-image img { display: block; width: 100%; max-width: 100%; height: 100%; object-fit: contain; background: transparent; }
 .exhibition-entity-card.is-immersive { display: grid; min-height: 132px; grid-template-columns: minmax(0, 1.25fr) minmax(150px, .75fr); border: 1px solid rgba(165, 233, 255, .46); color: #f3fbff; background: transparent; box-shadow: none; backdrop-filter: blur(10px); }
 .exhibition-entity-card.is-immersive .exhibition-entity-card-copy { min-width: 0; }
 .exhibition-entity-card.is-immersive .exhibition-entity-card-copy > p { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
-.exhibition-entity-card.is-immersive > img { height: 100%; min-height: 132px; max-height: 170px; object-fit: contain; object-position: center; }
+.exhibition-entity-card.is-immersive .exhibition-entity-card-image { height: 100%; min-height: 132px; max-height: 170px; }
+.exhibition-entity-card.is-immersive .exhibition-entity-card-image img { object-fit: contain; object-position: center; }
 .exhibition-entity-card.is-immersive .exhibition-entity-card-heading span { color: #dff8ff; background: rgba(34, 183, 225, .44); }
 .exhibition-entity-card.is-immersive .exhibition-entity-card-copy > p { color: rgba(229, 246, 255, .86); }
 .exhibition-entity-card.is-immersive dl div { border: 1px solid rgba(174, 232, 255, .2); background: rgba(1, 35, 86, .38); }
@@ -294,8 +305,9 @@ body {
 .exhibition-product-list-count { flex: 0 0 auto; border: 1px solid rgba(174, 232, 255, .3); border-radius: 999px; padding: 5px 9px; color: #dff8ff; background: rgba(34, 183, 225, .24); font-size: 10px; font-weight: 700; }
 .exhibition-product-list-track { display: grid; min-width: 0; max-height: min(28vh, 300px); grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: rgba(183, 237, 255, .5) transparent; }
 .exhibition-product-list-item { min-width: 0; overflow: hidden; border: 1px solid rgba(174, 232, 255, .28); border-radius: 13px; background: transparent; }
-.exhibition-product-list-item img,
+.exhibition-product-list-image,
 .exhibition-product-list-item-placeholder { display: block; width: 100%; height: clamp(92px, 15vh, 150px); object-fit: cover; object-position: center; background: transparent; }
+.exhibition-product-list-image img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: center; }
 .exhibition-product-list-item-placeholder { display: grid; place-items: center; color: rgba(223, 248, 255, .74); font-size: 12px; }
 .exhibition-product-list-item > strong { display: -webkit-box; min-height: 2.8em; overflow: hidden; padding: 8px 9px 9px; color: #f3fbff; font-size: 12px; line-height: 1.4; text-overflow: ellipsis; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .digital-display-chat-suggestions { display: flex; flex: 0 0 auto; flex-wrap: wrap; gap: 7px; }
@@ -332,7 +344,7 @@ body {
   .digital-display-waist-panel.is-registration { top: 31%; max-height: 58vh; overflow-y: auto; }
   .digital-display-waist-panel.is-registration .digital-display-registration-card { display: block; padding: 15px; text-align: center; }
   .digital-display-waist-panel.is-registration .digital-display-registration-card > img { width: min(68vw, 180px); height: auto; max-height: min(32vh, 180px); margin: 0 auto 12px; }
-  .digital-display-presentation-stack { top: 55%; width: 94%; }
+  .digital-display-presentation-stack { top: max(120px, 20dvh); bottom: max(72px, 10dvh); width: 94%; }
   .digital-display-presentation-stack.is-registration { top: 50%; width: 94%; transform: translate(-50%, -50%); }
   .digital-display-presentation-stack .digital-display-waist-panel.is-registration { top: auto; }
   .digital-display-root { min-height: 100dvh; }
@@ -363,20 +375,21 @@ body {
     overflow-y: auto;
     scrollbar-width: thin;
   }
-  .digital-display-waist-panel .exhibition-entity-card.is-immersive > img {
+  .digital-display-waist-panel .exhibition-entity-card.is-immersive .exhibition-entity-card-image {
     width: 100%;
     height: 100%;
     min-height: 0;
     max-height: none;
     object-fit: contain;
   }
+  .digital-display-waist-panel .exhibition-entity-card.is-immersive .exhibition-entity-card-image img { height: 100%; max-height: none; }
   .digital-display-live-subtitle { max-width: none; }
   .digital-display-live-subtitle.is-presentation-subtitle { right: auto; bottom: auto; left: auto; transform: none; }
-  .digital-display-presentation-stack .digital-display-live-subtitle { margin: 0 auto 20px; }
+  .digital-display-presentation-stack .digital-display-live-subtitle { max-height: min(24vh, 150px); margin: 0 auto 10px; }
   .digital-display-live-subtitle p { font-size: 13px; }
   .exhibition-product-list { min-width: 0; padding: 10px; }
   .exhibition-product-list-track { max-height: min(30vh, 260px); gap: 8px; }
-  .exhibition-product-list-item img,
+  .exhibition-product-list-image,
   .exhibition-product-list-item-placeholder { height: clamp(78px, 14vh, 116px); }
   .digital-display-chat-panel.is-presentation-hidden { right: 4%; bottom: 2%; left: 4%; }
 }

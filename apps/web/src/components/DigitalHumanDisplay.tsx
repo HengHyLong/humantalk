@@ -126,6 +126,7 @@ export function DigitalHumanDisplay({
   const [conversationVisible, setConversationVisible] = useState(true);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [latestRoundHeight, setLatestRoundHeight] = useState<number | null>(null);
+  const [lightboxImage, setLightboxImage] = useState<{ src: string; alt: string } | null>(null);
   const chatFeedRef = useRef<HTMLDivElement>(null);
   const chatFeedContentRef = useRef<HTMLDivElement>(null);
   const latestRoundRef = useRef<HTMLDivElement>(null);
@@ -197,9 +198,27 @@ export function DigitalHumanDisplay({
   }, [scrollChatToBottom]);
 
   const closePresentation = useCallback((onClose?: () => void) => {
+    setLightboxImage(null);
     onClose?.();
     revealConversation();
   }, [revealConversation]);
+
+  const openImageLightbox = useCallback((src: string, alt: string) => {
+    setLightboxImage({ src, alt });
+  }, []);
+
+  useEffect(() => {
+    if (!lightboxImage) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setLightboxImage(null);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [lightboxImage]);
+
+  useEffect(() => {
+    setLightboxImage(null);
+  }, [presentationKey]);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -332,12 +351,22 @@ export function DigitalHumanDisplay({
                     ×
                   </button>
                   {navigationResult.image_url ? (
-                    <img
-                      src={navigationImageUrl(navigationResult.image_url)}
-                      alt={navigationResult.title || (english ? "Navigation map" : "导航示意图")}
-                      loading="lazy"
-                      onError={(event) => { event.currentTarget.style.display = "none"; }}
-                    />
+                    <button
+                      type="button"
+                      className="digital-display-zoom-trigger digital-display-navigation-image"
+                      onClick={() => openImageLightbox(
+                        navigationImageUrl(navigationResult.image_url ?? ""),
+                        navigationResult.title || (english ? "Navigation map" : "导航示意图"),
+                      )}
+                      aria-label={english ? "Enlarge navigation map" : "放大查看导航示意图"}
+                    >
+                      <img
+                        src={navigationImageUrl(navigationResult.image_url)}
+                        alt={navigationResult.title || (english ? "Navigation map" : "导航示意图")}
+                        loading="lazy"
+                        onError={(event) => { event.currentTarget.parentElement?.style.setProperty("display", "none"); }}
+                      />
+                    </button>
                   ) : null}
                   <div className="digital-display-navigation-copy">
                     <strong>{navigationResult.title || (english ? "Navigation directions" : "导航指引")}</strong>
@@ -506,12 +535,22 @@ export function DigitalHumanDisplay({
                     ×
                   </button>
                   {navigationResult.image_url ? (
-                    <img
-                      src={navigationImageUrl(navigationResult.image_url)}
-                      alt={navigationResult.title || (english ? "Navigation map" : "导航示意图")}
-                      loading="lazy"
-                      onError={(event) => { event.currentTarget.style.display = "none"; }}
-                    />
+                    <button
+                      type="button"
+                      className="digital-display-zoom-trigger digital-display-navigation-image"
+                      onClick={() => openImageLightbox(
+                        navigationImageUrl(navigationResult.image_url ?? ""),
+                        navigationResult.title || (english ? "Navigation map" : "导航示意图"),
+                      )}
+                      aria-label={english ? "Enlarge navigation map" : "放大查看导航示意图"}
+                    >
+                      <img
+                        src={navigationImageUrl(navigationResult.image_url)}
+                        alt={navigationResult.title || (english ? "Navigation map" : "导航示意图")}
+                        loading="lazy"
+                        onError={(event) => { event.currentTarget.parentElement?.style.setProperty("display", "none"); }}
+                      />
+                    </button>
                   ) : null}
                   <div className="digital-display-navigation-copy">
                     <strong>{navigationResult.title || (english ? "Navigation directions" : "导航指引")}</strong>
@@ -548,6 +587,7 @@ export function DigitalHumanDisplay({
                       products={entities}
                       immersive
                       english={english}
+                      onImageClick={openImageLightbox}
                     />,
                   ];
                 }
@@ -558,11 +598,35 @@ export function DigitalHumanDisplay({
                     immersive
                     onClose={onCloseEntity ? () => closePresentation(() => onCloseEntity(entity.id)) : undefined}
                     closeLabel={english ? `Close ${entity.name}` : `关闭${entity.name}介绍`}
+                    onImageClick={openImageLightbox}
                   />
                 ));
               }) : null}
                 </section>
               ) : null}
+            </div>
+          ) : null}
+
+          {lightboxImage ? (
+            <div
+              className="digital-display-image-lightbox"
+              role="dialog"
+              aria-modal="true"
+              aria-label={english ? "Image preview" : "图片放大预览"}
+              onMouseDown={(event) => {
+                if (event.target === event.currentTarget) setLightboxImage(null);
+              }}
+            >
+              <button
+                type="button"
+                className="digital-display-image-lightbox-close"
+                onClick={() => setLightboxImage(null)}
+                aria-label={english ? "Close image preview" : "关闭图片预览"}
+                autoFocus
+              >
+                ×
+              </button>
+              <img src={lightboxImage.src} alt={lightboxImage.alt} />
             </div>
           ) : null}
 

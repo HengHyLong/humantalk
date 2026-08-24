@@ -10,12 +10,14 @@ type ExhibitionProductListProps = {
   products: ExhibitionEntityCardData[];
   immersive?: boolean;
   english?: boolean;
+  onImageClick?: (src: string, alt: string) => void;
 };
 
 export function ExhibitionProductList({
   products,
   immersive = false,
   english = false,
+  onImageClick,
 }: ExhibitionProductListProps) {
   return (
     <section
@@ -33,15 +35,24 @@ export function ExhibitionProductList({
       <div className="exhibition-product-list-track" role="list">
         {products.map((product) => {
           const imageUrl = product.image_urls.map(displayImageUrl).find(Boolean);
+          const imageAlt = english ? `${product.name} product image` : `${product.name}展品图片`;
           return (
             <article className="exhibition-product-list-item" key={`${product.kind}-${product.id}`} role="listitem">
               {imageUrl ? (
-                <img
-                  src={imageUrl}
-                  alt={english ? `${product.name} product image` : `${product.name}展品图片`}
-                  loading="lazy"
-                  onError={(event) => { event.currentTarget.style.display = "none"; }}
-                />
+                <button
+                  type="button"
+                  className="digital-display-zoom-trigger exhibition-product-list-image"
+                  onClick={() => onImageClick?.(imageUrl, imageAlt)}
+                  aria-label={english ? `Enlarge ${product.name} product image` : `放大查看${product.name}展品图片`}
+                  disabled={!onImageClick}
+                >
+                  <img
+                    src={imageUrl}
+                    alt={imageAlt}
+                    loading="lazy"
+                    onError={(event) => { event.currentTarget.parentElement?.style.setProperty("display", "none"); }}
+                  />
+                </button>
               ) : (
                 <div className="exhibition-product-list-item-placeholder" aria-hidden="true">{english ? "Product" : "展品"}</div>
               )}
