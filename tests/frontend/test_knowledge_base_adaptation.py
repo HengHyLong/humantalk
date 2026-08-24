@@ -137,3 +137,20 @@ def test_realtime_settings_panel_does_not_manage_knowledge_documents() -> None:
     assert "handleKnowledgeUpload" not in app_source
     assert 'if (workflow === "realtime") void refreshKnowledgeBases();' in app_source
     assert "knowledgeUploading" not in app_source
+
+
+def test_default_conversation_shortcuts_use_database_records_without_rag() -> None:
+    app_source = (ROOT / "apps/web/src/App.tsx").read_text(encoding="utf-8")
+    display_source = (ROOT / "apps/web/src/components/DigitalHumanDisplay.tsx").read_text(encoding="utf-8")
+
+    for label in ("展馆导航", "预约洽谈", "会议服务", "关于展览"):
+        assert label in app_source
+    assert "DATABASE_SUGGESTIONS" in app_source
+    assert 'databaseShortcut === "venue_navigation"' in app_source
+    assert 'databaseShortcut === "conference_services"' in app_source
+    assert 'databaseShortcut === "about_exhibition"' in app_source
+    assert 'databaseShortcut === "appointment"' in app_source
+    assert "当前展会数据库暂未配置" in app_source
+    assert "onSuggestionSend={handleSuggestionSend}" in app_source
+    assert "onSuggestionSend?: (text: string) => void" in display_source
+    assert "(onSuggestionSend ?? onSend)(suggestion)" in display_source

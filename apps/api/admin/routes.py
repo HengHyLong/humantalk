@@ -2546,7 +2546,14 @@ def public_exhibition_entities(exhibition_id: str, request: Request) -> dict[str
         name=str(exhibition.get("name") or exhibition.get("code") or ""),
         description=exhibition.get("description"),
         images=_public_image_urls(exhibition),
-        details=[("展会编码", exhibition.get("code")), ("状态", exhibition.get("status"))],
+        details=[
+            ("展会编码", exhibition.get("code")),
+            ("展期", " 至 ".join(value for value in [str(exhibition.get("startDate") or exhibition.get("start_date") or "").strip(), str(exhibition.get("endDate") or exhibition.get("end_date") or "").strip()] if value)),
+            ("主办单位", exhibition.get("hostUnit") or exhibition.get("host_unit")),
+            ("承办单位", exhibition.get("organizerUnit") or exhibition.get("organizer_unit")),
+            ("协办单位", exhibition.get("coOrganizerUnits") or exhibition.get("co_organizer_units")),
+            ("状态", exhibition.get("status")),
+        ],
         keywords=[exhibition.get("code")],
         source=exhibition,
     )

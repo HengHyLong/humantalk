@@ -30,8 +30,21 @@ _MD_LIST_RE = re.compile(r"^\s*[-*+]\s+", re.MULTILINE)
 _MD_NUMLIST_RE = re.compile(r"^\s*\d+\.\s+", re.MULTILINE)
 # Markdown inline code: `text`
 _MD_CODE_RE = re.compile(r"`([^`]*)`")
+# Markdown images: ![alt](url)
+_MD_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\([^)]*\)")
 # Markdown links: [text](url)
 _MD_LINK_RE = re.compile(r"\[([^\]]*)\]\([^)]*\)")
+# Markdown block quotes and horizontal rules.
+_MD_QUOTE_RE = re.compile(r"^\s*>+\s?", re.MULTILINE)
+_MD_RULE_RE = re.compile(r"^\s*(?:[-*_]\s*){3,}$", re.MULTILINE)
+_MD_STRIKE_RE = re.compile(r"~~")
+# URLs are useful in source cards, but should never be read aloud or rendered
+# inside the digital-human answer bubble.
+_URL_RE = re.compile(r"(?:https?://|www\.)[^\s<>()\[\]{}]+", re.I)
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+_EMPTY_SOURCE_RE = re.compile(r"(?:信息来源|参考来源|来源)\s*[：:]\s*(?=$|[。；;，,])")
+_MULTISPACE_RE = re.compile(r"[ \t]{2,}")
+_MULTILINE_RE = re.compile(r"\s*\n+\s*")
 _EDGE_BOUNDARY_CLOSERS = "”’」』）》】〕〉）)]}\"'"
 _EDGE_BOUNDARY_OPENERS = "“‘「『《【〔〈（([{\"'"
 _SPEECH_CONTENT_RE = re.compile(r"[\w\u3400-\u9fff]", flags=re.UNICODE)
@@ -43,14 +56,22 @@ def strip_emoji(text: str) -> str:
 
 
 def strip_markdown(text: str) -> str:
-    """Remove markdown formatting so TTS reads clean prose."""
-    text = _MD_LINK_RE.sub(r"\1", text)     # [text](url) → text
-    text = _MD_CODE_RE.sub(r"\1", text)      # `code` → code
-    text = _MD_BOLD_ITALIC_RE.sub("", text)  # **bold** → bold
-    text = _MD_HEADER_RE.sub("", text)       # ## Header → Header
-    text = _MD_NUMLIST_RE.sub("", text)      # 1. item → item
-    text = _MD_LIST_RE.sub("", text)         # - item → item
-    return text
+    """Convert model-produced Markdown into compact plain text for UI and TTS."""
+    text = _MD_IMAGE_RE.sub(r"\1", text)      # ![alt](url) → alt
+    text = _MD_LINK_RE.sub(r"\1", text)       # [text](url) → text
+    text = _URL_RE.sub("", text)               # remove linked labels / bare URLs
+    text = _HTML_TAG_RE.sub("", text)
+    text = _MD_CODE_RE.sub(r"\1", text)       # `code` → code
+    text = _MD_HEADER_RE.sub("", text)         # ## Header → Header
+    text = _MD_NUMLIST_RE.sub("", text)        # 1. item → item
+    text = _MD_LIST_RE.sub("", text)           # - item → item
+    text = _MD_QUOTE_RE.sub("", text)
+    text = _MD_RULE_RE.sub("", text)
+    text = _MD_STRIKE_RE.sub("", text)
+    text = _MD_BOLD_ITALIC_RE.sub("", text)    # **bold** → bold
+    text = _EMPTY_SOURCE_RE.sub("", text)
+    text = _MULTILINE_RE.sub(" ", text)
+    return _MULTISPACE_RE.sub(" ", text).strip()
 
 
 def sanitize_tts_text(text: str) -> str:

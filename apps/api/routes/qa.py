@@ -387,7 +387,7 @@ async def query_exhibition_qa(
             targets=dify_targets,
             timeout_sec=float(_setting(settings, "dify_timeout_sec", 12.0)),
             top_k=int(_setting(settings, "qa_retrieval_top_k", 3)),
-            score_threshold=float(_setting(settings, "qa_retrieval_score_threshold", 0.45)),
+            score_threshold=float(_setting(settings, "qa_retrieval_score_threshold", 0.55)),
         )
     else:
         local_kb_ids = _resolve_local_kb_ids(store, resolved_exhibition_id)

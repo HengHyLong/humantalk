@@ -495,7 +495,7 @@ class Settings(BaseSettings):
     dify_timeout_sec: float = Field(default=12.0)
     qa_fuzzy_threshold: float = Field(default=0.74)
     qa_retrieval_top_k: int = Field(default=3)
-    qa_retrieval_score_threshold: float = Field(default=0.45)
+    qa_retrieval_score_threshold: float = Field(default=0.55)
     qa_human_channel: str = Field(default="请前往现场服务台或咨询工作人员获取帮助。")
     # ---- Dify knowledge provider ----
     agent_dify_base_url: str = Field(default="")

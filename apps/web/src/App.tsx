@@ -127,6 +127,28 @@ import {
 
 const MEMORY_PROFILE_ID = "default";
 
+type DatabaseShortcut = "venue_navigation" | "appointment" | "conference_services" | "about_exhibition";
+
+const DATABASE_SUGGESTIONS: Record<ConversationLanguage, Record<string, DatabaseShortcut>> = {
+  "zh-CN": {
+    展馆导航: "venue_navigation",
+    预约洽谈: "appointment",
+    会议服务: "conference_services",
+    关于展览: "about_exhibition",
+  },
+  "en-US": {
+    "Venue navigation": "venue_navigation",
+    "Book a meeting": "appointment",
+    "Conference services": "conference_services",
+    "About the exhibition": "about_exhibition",
+  },
+};
+
+type RecognizedTextOptions = {
+  databaseShortcut?: DatabaseShortcut;
+  displayText?: string;
+};
+
 type PendingShoppingRegistration = {
   strategyId: string;
   exhibitId?: string;
@@ -2786,14 +2808,66 @@ export default function App() {
     [appendAssistantError, bailianVoices, conversationLanguage, edgeVoice, isSpeaking, notify, qwenModel, qwenVoice, sessionId, ttsProvider],
   );
 
-  const routeRecognizedText = useCallback(async (rawText: string) => {
+  const routeRecognizedText = useCallback(async (rawText: string, options: RecognizedTextOptions = {}) => {
     const text = rawText.trim();
     if (!text || !sessionId) return;
+    const databaseShortcut = options.databaseShortcut;
+    const displayText = options.displayText?.trim() || text;
     const relatedEntities = matchExhibitionEntities(text, exhibitionEntities);
     const explicitContentRequest = classifyExplicitContentRequest(text);
 
+    if (databaseShortcut === "venue_navigation") {
+      const venues = exhibitionEntities.filter((entity) => entity.kind === "venue");
+      const venueSummary = venues.slice(0, 4).map((venue) => {
+        const address = venue.details.find((detail) => detail.label === "地址")?.value;
+        return address ? `${venue.name}，地址是${address}` : venue.name;
+      }).join("；");
+      enqueueSpeech(
+        venueSummary
+          ? `本届展会已配置以下展馆：${venueSummary}。请选择具体展馆或目的地，我可以继续为您查询路线。`
+          : "当前展会数据库暂未配置展馆和导航信息，请先在后台补充场地、点位与路线。",
+        displayText,
+        venues.slice(0, 4),
+        true,
+      );
+      return;
+    }
+
+    if (databaseShortcut === "conference_services") {
+      const schedules = exhibitionEntities.filter((entity) => entity.kind === "schedule");
+      const scheduleSummary = schedules.slice(0, 4).map((schedule) => {
+        const time = schedule.details.find((detail) => detail.label === "时间")?.value;
+        const location = schedule.details.find((detail) => detail.label === "地点")?.value;
+        return [schedule.name, time, location].filter(Boolean).join("，");
+      }).join("；");
+      enqueueSpeech(
+        scheduleSummary
+          ? `本届展会数据库已配置以下会议安排：${scheduleSummary}。具体安排以现场最新通知为准。`
+          : "当前展会数据库暂未配置会议日程和服务信息，请先在后台补充活动排期。",
+        displayText,
+        schedules.slice(0, 4),
+        true,
+      );
+      return;
+    }
+
+    if (databaseShortcut === "about_exhibition") {
+      const exhibition = exhibitionEntities.find((entity) => entity.kind === "exhibition");
+      const detailText = exhibition?.details
+        .map((detail) => `${detail.label}：${detail.value}`)
+        .join("；");
+      const overview = [exhibition?.name, exhibition?.description, detailText].filter(Boolean).join("。 ");
+      enqueueSpeech(
+        overview || "当前展会数据库暂未配置展会介绍，请先在后台完善展会基础信息。",
+        displayText,
+        exhibition ? [exhibition] : [],
+        true,
+      );
+      return;
+    }
+
     const pendingExhibition = pendingExhibitionFollowupRef.current;
-    if (pendingExhibition) {
+    if (pendingExhibition && !databaseShortcut) {
       if (pendingExhibition.stage === "exhibitor_products") {
         const decision = classifyRegistrationDecision(
           text,
@@ -2912,7 +2986,7 @@ export default function App() {
     }
 
     const pendingShopping = pendingShoppingRegistrationRef.current;
-    if (pendingShopping && explicitContentRequest !== "unknown") {
+    if (pendingShopping && !databaseShortcut && explicitContentRequest !== "unknown") {
       pendingShoppingRegistrationRef.current = null;
       setShoppingRegistration(null);
       setMessages((current) => current.map((message) => (
@@ -2920,7 +2994,7 @@ export default function App() {
           ? { ...message, relatedEntities: [] }
           : message
       )));
-    } else if (pendingShopping) {
+    } else if (pendingShopping && !databaseShortcut) {
       setLastVoiceIntent("shopping");
       setNavigationResult(null);
       const decision = classifyRegistrationDecision(
@@ -2971,7 +3045,7 @@ export default function App() {
     }
 
     const pendingContent = pendingContentClarificationRef.current;
-    if (pendingContent) {
+    if (pendingContent && !databaseShortcut) {
       const destination = pendingContent.routeResult.route?.to?.trim() || pendingContent.routeResult.title?.trim() || "";
       const choice = classifyContentClarification(text, pendingContent.entity.name, destination);
       if (choice === "route") {
@@ -3013,7 +3087,9 @@ export default function App() {
         ],
       },
     });
-    const match = explicitContentRequest === "route"
+    const match = databaseShortcut
+      ? { intent: "unknown" as const, keyword: null }
+      : explicitContentRequest === "route"
       ? { intent: "navigation" as const, keyword: null }
       : explicitContentRequest === "entity" && relatedEntities.length > 0
         ? { intent: "exhibition_content" as const, keyword: null }
@@ -3137,41 +3213,56 @@ export default function App() {
         return;
     }
 
-    try {
-      const shopping = await queryExhibitionShopping(configuredExhibitionId, {
-        text,
-        session_id: sessionId,
-        language: conversationLanguage,
-      });
-      if (shopping.matched && shopping.strategy_id) {
-        const entityIds = new Set(shopping.related_entity_ids ?? shopping.exhibit_ids ?? []);
-        const shoppingEntities = exhibitionEntities.filter((entity) => entityIds.has(entity.id));
-        const presentedShoppingEntities = selectShoppingPresentationEntities(explicitIntroductionEntity, shoppingEntities);
-        const registrationPrompt = ensureExhibitorContactPrompt(
-          shopping.registration_prompt || "",
-          englishConversation,
-        );
-        pendingShoppingRegistrationRef.current = {
-          strategyId: shopping.strategy_id,
-          exhibitId: presentedShoppingEntities.length === 1 ? presentedShoppingEntities[0].id : undefined,
-          title: shopping.title?.trim() || (englishConversation ? "Shopping assistant" : "虚拟导购"),
-          retryPrompt: shopping.confirmation_retry_prompt?.trim() || (englishConversation ? "Please answer yes or no to registration." : "请回答需要或不需要登记。"),
-          confirmKeywords: shopping.confirm_keywords?.length ? shopping.confirm_keywords : (englishConversation ? ["yes", "okay", "register", "agree"] : ["需要", "好的", "可以", "同意", "登记"]),
-          declineKeywords: shopping.decline_keywords?.length ? shopping.decline_keywords : (englishConversation ? ["no", "not now", "cancel", "do not register"] : ["不需要", "不用", "不要", "暂不", "取消", "不登记"]),
-          relatedEntities: presentedShoppingEntities,
-        };
-        setLastVoiceIntent("shopping");
-        setShoppingRegistration(null);
-        const introductionEntity = presentedShoppingEntities.find((entity) => entity.kind === "exhibit")
-          || explicitIntroductionEntity;
-        const introduction = introductionEntity?.spoken_text?.trim()
-          || introductionEntity?.description.trim()
-          || shopping.spoken_text?.trim();
-        enqueueSpeech([introduction, registrationPrompt].filter(Boolean).join("\n"), text, presentedShoppingEntities, true);
-        return;
+    if (!databaseShortcut || databaseShortcut === "appointment") {
+      try {
+        const shopping = await queryExhibitionShopping(configuredExhibitionId, {
+          text,
+          session_id: sessionId,
+          language: conversationLanguage,
+        });
+        if (shopping.matched && shopping.strategy_id) {
+          const entityIds = new Set(shopping.related_entity_ids ?? shopping.exhibit_ids ?? []);
+          const shoppingEntities = exhibitionEntities.filter((entity) => entityIds.has(entity.id));
+          const presentedShoppingEntities = selectShoppingPresentationEntities(explicitIntroductionEntity, shoppingEntities);
+          const registrationPrompt = ensureExhibitorContactPrompt(
+            shopping.registration_prompt || "",
+            englishConversation,
+          );
+          pendingShoppingRegistrationRef.current = {
+            strategyId: shopping.strategy_id,
+            exhibitId: presentedShoppingEntities.length === 1 ? presentedShoppingEntities[0].id : undefined,
+            title: shopping.title?.trim() || (englishConversation ? "Shopping assistant" : "虚拟导购"),
+            retryPrompt: shopping.confirmation_retry_prompt?.trim() || (englishConversation ? "Please answer yes or no to registration." : "请回答需要或不需要登记。"),
+            confirmKeywords: shopping.confirm_keywords?.length ? shopping.confirm_keywords : (englishConversation ? ["yes", "okay", "register", "agree"] : ["需要", "好的", "可以", "同意", "登记"]),
+            declineKeywords: shopping.decline_keywords?.length ? shopping.decline_keywords : (englishConversation ? ["no", "not now", "cancel", "do not register"] : ["不需要", "不用", "不要", "暂不", "取消", "不登记"]),
+            relatedEntities: presentedShoppingEntities,
+          };
+          setLastVoiceIntent("shopping");
+          setShoppingRegistration(null);
+          const introductionEntity = presentedShoppingEntities.find((entity) => entity.kind === "exhibit")
+            || explicitIntroductionEntity;
+          const introduction = introductionEntity?.spoken_text?.trim()
+            || introductionEntity?.description.trim()
+            || shopping.spoken_text?.trim();
+          enqueueSpeech([introduction, registrationPrompt].filter(Boolean).join("\n"), text, presentedShoppingEntities, true);
+          return;
+        }
+      } catch (error) {
+        console.warn("shopping keyword query failed", error);
       }
-    } catch (error) {
-      console.warn("shopping keyword query failed", error);
+    }
+
+    if (databaseShortcut === "appointment") {
+      const exhibitors = exhibitionEntities.filter((entity) => entity.kind === "exhibitor");
+      enqueueSpeech(
+        exhibitors.length
+          ? `本届展会数据库已配置${exhibitors.length}家展商。请选择希望预约洽谈的展商或展品，我会继续为您查询已配置的预约登记流程。`
+          : "当前展会数据库暂未配置展商和预约洽谈策略，请先在后台补充展商及虚拟导购配置。",
+        displayText,
+        exhibitors.slice(0, 4),
+        true,
+      );
+      return;
     }
 
     const introductionEntity = relatedEntities.find((entity) => entity.kind === "venue" || entity.kind === "point" || entity.kind === "exhibit" || entity.kind === "exhibitor");
@@ -3203,7 +3294,7 @@ export default function App() {
     setIsSpeaking(true);
     setMessages((prev) => [
       ...prev.filter((message) => message.id !== previousPendingId && message.id !== activeAssistantId),
-      { id: makeId(), role: "user", text, timestamp: Date.now() },
+      { id: makeId(), role: "user", text: displayText, timestamp: Date.now() },
       {
         id: pendingId,
         role: "assistant",
@@ -3265,6 +3356,18 @@ export default function App() {
   const handleSend = useCallback((text: string) => {
     void routeRecognizedText(text);
   }, [routeRecognizedText]);
+
+  const handleSuggestionSend = useCallback((label: string) => {
+    const databaseShortcut = DATABASE_SUGGESTIONS[conversationLanguage][label];
+    if (!databaseShortcut) {
+      void routeRecognizedText(label);
+      return;
+    }
+    void routeRecognizedText(label, {
+      databaseShortcut,
+      displayText: label,
+    });
+  }, [conversationLanguage, routeRecognizedText]);
 
   const handleAutoClosePresentation = useCallback(() => {
     setNavigationResult(null);
@@ -3853,6 +3956,7 @@ export default function App() {
           queueInfo={queueInfo}
           onStart={() => void handleStart()}
           onSend={handleSend}
+          onSuggestionSend={handleSuggestionSend}
            onInterrupt={handleInterrupt}
            onSpeakAudio={handleRealtimeVoiceAudio}
            onSpeakAudioStreamResult={exhibitionVoiceConfig?.supports_deferred_speak ? handleSpeakAudioStreamResult : undefined}

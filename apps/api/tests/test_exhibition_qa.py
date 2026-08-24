@@ -16,6 +16,7 @@ from apps.api.services.exhibition_qa import (
     KnowledgeRetrievalError,
     KnowledgeSource,
     RetrievalResult,
+    build_grounding_context,
     fuzzy_score,
 )
 import apps.api.services.exhibition_qa as exhibition_qa_module
@@ -309,7 +310,16 @@ async def test_dify_retriever_uses_official_dataset_retrieve_contract(monkeypatc
                             "document": {"name": "服务指南.docx"},
                         },
                         "score": 0.93,
-                    }
+                    },
+                    {
+                        "segment": {
+                            "id": "seg-low",
+                            "document_id": "doc-low",
+                            "content": "这是一条低相关度内容。",
+                            "document": {"name": "无关资料.docx"},
+                        },
+                        "score": 0.12,
+                    },
                 ]
             }
 
@@ -341,6 +351,8 @@ async def test_dify_retriever_uses_official_dataset_retrieve_contract(monkeypatc
         "Content-Type": "application/json",
     }
     assert captured["json"]["query"] == "服务中心在哪里？"  # type: ignore[index]
+    assert captured["json"]["retrieval_model"]["score_threshold"] == 0.45  # type: ignore[index]
+    assert len(result.sources) == 1
     assert result.sources[0].title == "服务指南.docx"
     assert result.sources[0].score == 0.93
 
@@ -436,6 +448,77 @@ async def test_published_qa_fuzzy_match_has_priority_over_retrieval(tmp_path) ->
     assert result.speak_mode == "direct"
     assert result.answer == "本届博览会在中国西部国际博览城举办。"
     assert len(store.list_records("knowledge_hits", exhibition_id="expo-2026")) == 1
+
+
+@pytest.mark.asyncio
+async def test_official_qa_does_not_match_a_different_core_intent(tmp_path) -> None:
+    store = _store(tmp_path)
+    store.save_record(
+        "qa",
+        {
+            "id": "qa-acronym",
+            "exhibitionId": "expo-2026",
+            "question": "中国计算机大会的简称是什么？",
+            "keywords": ["CNCC", "中国计算机大会"],
+            "answer": "简称 CNCC。",
+            "status": "published",
+        },
+        "expo-2026",
+    )
+    retriever = FakeRetriever(
+        RetrievalResult(
+            provider="dify",
+            sources=[KnowledgeSource("s-location", "大会指南", "大会在北京举办。", 0.88)],
+        )
+    )
+    service = ExhibitionQaService(store=store, retriever=retriever)
+
+    result = await service.query(
+        exhibition_id="expo-2026",
+        question="CNCC2026在哪里举办？",
+        turn_id="turn-location",
+        trace_id="trace-location",
+    )
+
+    assert result.match_type == "rag"
+    assert result.sources[0].id == "s-location"
+
+
+@pytest.mark.asyncio
+async def test_official_qa_answer_is_returned_as_plain_text(tmp_path) -> None:
+    store = _store(tmp_path)
+    store.save_record(
+        "qa",
+        {
+            "id": "qa-service",
+            "exhibitionId": "expo-2026",
+            "question": "会议服务有哪些？",
+            "answer": "**签到服务**：请使用 [CCFLink](https://example.com)。\n- 现场可咨询服务台。",
+            "status": "published",
+        },
+        "expo-2026",
+    )
+    service = ExhibitionQaService(store=store, retriever=FakeRetriever())
+
+    result = await service.query(
+        exhibition_id="expo-2026",
+        question="会议服务有哪些？",
+        turn_id="turn-service",
+        trace_id="trace-service",
+    )
+
+    assert result.match_type == "official_qa"
+    assert result.answer == "签到服务：请使用 CCFLink。 现场可咨询服务台。"
+
+
+def test_grounding_context_requires_plain_text_answer() -> None:
+    context = build_grounding_context(
+        [KnowledgeSource("s1", "指南", "会议服务位于一楼。", 0.9)]
+    )
+
+    assert "纯文本" in context
+    assert "不得使用 Markdown" in context
+    assert "不要输出信息来源" in context
 
 
 @pytest.mark.asyncio

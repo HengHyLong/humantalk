@@ -2723,7 +2723,9 @@ class FlashTalkRunner:
                 _tc,
             )
 
-            stored_response = _merge_spoken_reply(spoken_prefix, full_response)
+            stored_response = sanitize_tts_text(
+                _merge_spoken_reply(spoken_prefix, full_response)
+            )
             if stored_response and not direct:
                 self.conversation.add_assistant(stored_response)
                 await self._save_agent_turn(user_text=text, assistant_text=stored_response)

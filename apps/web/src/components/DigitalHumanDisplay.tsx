@@ -42,6 +42,7 @@ type DigitalHumanDisplayProps = {
   queueInfo?: { position: number; message: string } | null;
   onStart: () => void;
   onSend: (text: string) => void;
+  onSuggestionSend?: (text: string) => void;
   onInterrupt: () => void;
   onSpeakAudio?: (blob: Blob) => void | Promise<void>;
   onSpeakAudioStreamResult?: (payload: { text: string }) => void | Promise<void>;
@@ -86,6 +87,7 @@ export function DigitalHumanDisplay({
   queueInfo,
   onStart,
   onSend,
+  onSuggestionSend,
   onInterrupt,
   onSpeakAudio,
   onSpeakAudioStreamResult,
@@ -397,7 +399,12 @@ export function DigitalHumanDisplay({
 
             <div className="digital-display-chat-suggestions" aria-label={english ? "Suggested questions" : "常见问题"}>
               {suggestions.map((suggestion) => (
-                <button key={suggestion} type="button" onClick={() => live && onSend(suggestion)} disabled={!live}>
+                <button
+                  key={suggestion}
+                  type="button"
+                  onClick={() => live && (onSuggestionSend ?? onSend)(suggestion)}
+                  disabled={!live}
+                >
                   {suggestion}
                 </button>
               ))}
