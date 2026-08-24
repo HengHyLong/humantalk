@@ -2877,6 +2877,65 @@ export default function App() {
     const relatedEntities = matchExhibitionEntities(text, exhibitionEntities);
     const explicitContentRequest = classifyExplicitContentRequest(text);
 
+    const introduceExhibitAndOfferRegistration = async (
+      exhibit: ExhibitionEntityCard,
+      userText: string,
+    ) => {
+      const introduction = exhibit.spoken_text?.trim()
+        || exhibit.description.trim()
+        || (englishConversation ? `Here is the introduction to ${exhibit.name}.` : `为您介绍${exhibit.name}。`);
+      try {
+        // Always query by the canonical exhibit name. The original utterance
+        // may contain filler words, an alias, or a minor ASR error even though
+        // the entity matcher has already resolved the intended exhibit.
+        const shopping = await queryExhibitionShopping(configuredExhibitionId, {
+          text: exhibit.name,
+          session_id: sessionId,
+          language: conversationLanguage,
+        });
+        const linkedEntityIds = new Set(shopping.related_entity_ids ?? shopping.exhibit_ids ?? []);
+        if (shopping.matched && shopping.strategy_id && linkedEntityIds.has(exhibit.id)) {
+          pendingShoppingRegistrationRef.current = {
+            strategyId: shopping.strategy_id,
+            exhibitId: exhibit.id,
+            title: shopping.title?.trim() || (englishConversation ? "Exhibition registration" : "展品登记"),
+            retryPrompt: shopping.confirmation_retry_prompt?.trim() || (englishConversation ? "Please answer yes or no to registration." : "请回答是否愿意登记。"),
+            confirmKeywords: shopping.confirm_keywords?.length ? shopping.confirm_keywords : (englishConversation ? ["yes", "okay", "register", "agree"] : ["愿意", "需要", "好的", "可以", "同意", "登记"]),
+            declineKeywords: shopping.decline_keywords?.length ? shopping.decline_keywords : (englishConversation ? ["no", "not now", "cancel"] : ["不愿意", "不需要", "不用", "暂不", "取消", "不登记"]),
+            relatedEntities: [exhibit],
+          };
+          setLastVoiceIntent("shopping");
+          setShoppingRegistration(null);
+          enqueueSpeech(
+            [introduction, ensureExhibitorContactPrompt(shopping.registration_prompt || "", englishConversation)].join("\n"),
+            userText,
+            [exhibit],
+            true,
+          );
+          return;
+        }
+
+        pendingShoppingRegistrationRef.current = null;
+        setLastVoiceIntent("exhibition_content");
+        enqueueSpeech(
+          `${introduction}\n${englishConversation ? "This exhibit has not configured a registration QR code yet." : "当前展品暂未配置登记二维码。"}`,
+          userText,
+          [exhibit],
+          true,
+        );
+      } catch (error) {
+        console.warn("exhibit shopping query failed", error);
+        pendingShoppingRegistrationRef.current = null;
+        setLastVoiceIntent("exhibition_content");
+        enqueueSpeech(
+          `${introduction}\n${englishConversation ? "The registration service is temporarily unavailable. Please try again later." : "登记服务暂时不可用，请稍后再试。"}`,
+          userText,
+          [exhibit],
+          true,
+        );
+      }
+    };
+
     if (databaseShortcut === "venue_navigation") {
       const venues = exhibitionEntities.filter((entity) => entity.kind === "venue");
       const venueSummary = venues.slice(0, 4).map((venue) => {
@@ -2993,56 +3052,7 @@ export default function App() {
       }
       pendingExhibitionFollowupRef.current = null;
       setExhibitionFollowupStage(null);
-      try {
-        const shopping = await queryExhibitionShopping(configuredExhibitionId, {
-          text: selectedProduct.name,
-          session_id: sessionId,
-          language: conversationLanguage,
-        });
-        const introduction = selectedProduct.spoken_text?.trim()
-          || selectedProduct.description.trim()
-          || (englishConversation ? `Here is the introduction to ${selectedProduct.name}.` : `为您介绍${selectedProduct.name}。`);
-        if (shopping.matched && shopping.strategy_id) {
-          const registrationEntities = exhibitionEntities.filter((entity) =>
-            (shopping.related_entity_ids ?? shopping.exhibit_ids ?? []).includes(entity.id),
-          );
-          const presentedEntities = registrationEntities.some((entity) => entity.id === selectedProduct.id)
-            ? [selectedProduct]
-            : [selectedProduct, ...registrationEntities.filter((entity) => entity.id !== selectedProduct.id)];
-          pendingShoppingRegistrationRef.current = {
-            strategyId: shopping.strategy_id,
-            exhibitId: selectedProduct.id,
-            title: shopping.title?.trim() || (englishConversation ? "Exhibition registration" : "展品登记"),
-            retryPrompt: shopping.confirmation_retry_prompt?.trim() || (englishConversation ? "Please answer yes or no to registration." : "请回答是否愿意登记。"),
-            confirmKeywords: shopping.confirm_keywords?.length ? shopping.confirm_keywords : (englishConversation ? ["yes", "okay", "register", "agree"] : ["愿意", "需要", "好的", "可以", "同意", "登记"]),
-            declineKeywords: shopping.decline_keywords?.length ? shopping.decline_keywords : (englishConversation ? ["no", "not now", "cancel"] : ["不愿意", "不需要", "不用", "暂不", "取消", "不登记"]),
-            relatedEntities: presentedEntities,
-          };
-          setLastVoiceIntent("shopping");
-          setShoppingRegistration(null);
-          enqueueSpeech(
-            [introduction, ensureExhibitorContactPrompt(shopping.registration_prompt || "", englishConversation)].join("\n"),
-            text,
-            presentedEntities,
-            true,
-          );
-          return;
-        }
-        enqueueSpeech(
-          `${introduction}\n${englishConversation ? "This exhibit has not configured a registration form yet." : "如您有意愿登记，当前展品暂未配置登记表单，请联系现场工作人员。"}`,
-          text,
-          [selectedProduct],
-          true,
-        );
-      } catch (error) {
-        console.warn("selected exhibit shopping query failed", error);
-        enqueueSpeech(
-          `${selectedProduct.spoken_text?.trim() || selectedProduct.description.trim() || `为您介绍${selectedProduct.name}。`}\n${englishConversation ? "Would you like the exhibitor to contact you later?" : "您是否有意愿登记，后续由展商主动联系？"}`,
-          text,
-          [selectedProduct],
-          true,
-        );
-      }
+      await introduceExhibitAndOfferRegistration(selectedProduct, text);
       return;
     }
 
@@ -3120,6 +3130,10 @@ export default function App() {
         pendingContentClarificationRef.current = null;
         setLastVoiceIntent("exhibition_content");
         setNavigationResult(null);
+        if (pendingContent.entity.kind === "exhibit") {
+          await introduceExhibitAndOfferRegistration(pendingContent.entity, text);
+          return;
+        }
         const introductionText = pendingContent.entity.spoken_text?.trim()
           || pendingContent.entity.description.trim()
           || (englishConversation
@@ -3177,6 +3191,10 @@ export default function App() {
         if (result.matched && competingEntity && explicitContentChoice === "entity") {
           setLastVoiceIntent("exhibition_content");
           setNavigationResult(null);
+          if (competingEntity.kind === "exhibit") {
+            await introduceExhibitAndOfferRegistration(competingEntity, text);
+            return;
+          }
           const introductionText = competingEntity.spoken_text?.trim()
             || competingEntity.description.trim()
             || (englishConversation
@@ -3243,6 +3261,12 @@ export default function App() {
         || entity.kind === "exhibitor"
       ))
       : undefined;
+    const matchedExhibit = relatedEntities.find((entity) => entity.kind === "exhibit");
+    if (matchedExhibit && match.intent !== "navigation") {
+      setNavigationResult(null);
+      await introduceExhibitAndOfferRegistration(matchedExhibit, text);
+      return;
+    }
     const matchedExhibitor = relatedEntities.find((entity) => entity.kind === "exhibitor");
     if (matchedExhibitor && (match.intent === "exhibition_content" || explicitContentRequest === "entity")) {
       const products = exhibitionEntities.filter((entity) => (
