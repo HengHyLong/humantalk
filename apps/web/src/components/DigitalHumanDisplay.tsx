@@ -508,7 +508,7 @@ export function DigitalHumanDisplay({
               <LiveSubtitle text={subtitle ?? ""} english={english} />
               {shoppingRegistration || navigationResult || presentationMessages.some((message) => message.relatedEntities?.length) ? (
                 <section
-                  className={`digital-display-waist-panel ${shoppingRegistration ? "is-registration" : ""} ${presentationDialogVisible ? "" : "is-dialog-hidden"}`}
+                  className={`digital-display-waist-panel ${shoppingRegistration ? "is-registration" : ""} ${exhibitionProductList && !shoppingRegistration && !navigationResult ? "is-product-list" : ""} ${presentationDialogVisible ? "" : "is-dialog-hidden"}`}
                   aria-hidden={!presentationDialogVisible}
                   aria-label={shoppingRegistration ? (english ? "Registration QR code" : "登记二维码") : (english ? "Exhibition content" : "展会内容展示")}
                 >

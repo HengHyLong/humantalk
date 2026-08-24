@@ -28,6 +28,20 @@ def test_presentation_reserves_the_upper_half_for_the_avatar_face() -> None:
     assert ".digital-display-presentation-stack.is-registration { top:" not in styles
 
 
+def test_multi_row_product_list_owns_the_vertical_scroll_area() -> None:
+    display = DISPLAY_SOURCE.read_text(encoding="utf-8")
+    styles = STYLE_SOURCE.read_text(encoding="utf-8")
+
+    assert '"is-product-list"' in display
+    assert ".digital-display-presentation-stack .digital-display-waist-panel.is-product-list { height: 100%; max-height: 100%; overflow: hidden; }" in styles
+    track_rule = styles.split(".exhibition-product-list-track {", 1)[1].split("}", 1)[0]
+    assert "min-height: 0" in track_rule
+    assert "flex: 1 1 auto" in track_rule
+    assert "overflow-y: auto" in track_rule
+    assert "touch-action: pan-y" in track_rule
+    assert "scrollbar-gutter: stable" in track_rule
+
+
 def test_presentation_images_open_an_accessible_lightbox() -> None:
     display = DISPLAY_SOURCE.read_text(encoding="utf-8")
     entity_card = ENTITY_CARD_SOURCE.read_text(encoding="utf-8")
