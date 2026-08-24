@@ -7,11 +7,21 @@ import logging
 import os
 import time
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Iterator
 
 import numpy as np
 try:
-    from aiortc import RTCConfiguration, RTCIceServer, RTCPeerConnection, RTCSessionDescription
+    import av
+    from aiortc import (
+        RTCConfiguration,
+        RTCIceServer,
+        RTCPeerConnection,
+        RTCRtpSender,
+        RTCSessionDescription,
+    )
+    from aiortc import rtcrtpsender as aiortc_rtcrtpsender
+    from aiortc.codecs import h264 as aiortc_h264
+    from aiortc.codecs.h264 import H264Encoder
     from aiortc.contrib.media import MediaBlackhole
     from av import AudioFrame, VideoFrame
     WEBRTC_AVAILABLE = True
@@ -41,12 +51,184 @@ except ImportError:  # Admin/API-only startup can run without video wheels insta
     class MediaBlackhole:  # type: ignore[no-redef]
         pass
 
+    RTCRtpSender = Any  # type: ignore[misc,assignment]
     AudioFrame = Any  # type: ignore[misc,assignment]
     VideoFrame = Any  # type: ignore[misc,assignment]
+    H264Encoder = object  # type: ignore[misc,assignment]
 
 from opentalking.core.types.frames import VideoFrameData
 
 log = logging.getLogger(__name__)
+
+_ORIGINAL_AIORTC_GET_ENCODER = (
+    aiortc_rtcrtpsender.get_encoder if WEBRTC_AVAILABLE else None
+)
+_AIORTC_ENCODER_FACTORY_MODE = "default"
+
+
+def _normalized_video_encoder() -> str:
+    raw = os.environ.get("OPENTALKING_WEBRTC_VIDEO_ENCODER", "auto").strip().lower()
+    aliases = {
+        "": "auto",
+        "software": "libx264",
+        "cpu": "libx264",
+        "h264_nvenc": "nvenc",
+    }
+    normalized = aliases.get(raw, raw)
+    if normalized not in {"auto", "libx264", "nvenc"}:
+        log.warning(
+            "Ignoring invalid OPENTALKING_WEBRTC_VIDEO_ENCODER=%r; "
+            "expected auto, libx264, or nvenc",
+            raw,
+        )
+        return "auto"
+    return normalized
+
+
+class _NvencH264Encoder(H264Encoder):
+    """aiortc H.264 packetizer backed by FFmpeg's NVIDIA NVENC encoder."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._nvenc_failed = False
+        self._active_codec_name: str | None = None
+
+    def _create_nvenc_codec(self, frame: "av.VideoFrame") -> Any:
+        codec = av.CodecContext.create("h264_nvenc", "w")
+        codec.width = frame.width
+        codec.height = frame.height
+        codec.bit_rate = self.target_bitrate
+        codec.pix_fmt = "yuv420p"
+        codec.framerate = fractions.Fraction(aiortc_h264.MAX_FRAME_RATE, 1)
+        codec.time_base = fractions.Fraction(1, aiortc_h264.MAX_FRAME_RATE)
+        codec.options = {
+            "preset": os.environ.get("OPENTALKING_WEBRTC_NVENC_PRESET", "p1").strip() or "p1",
+            "tune": os.environ.get("OPENTALKING_WEBRTC_NVENC_TUNE", "ull").strip() or "ull",
+            "zerolatency": "1",
+            "bf": "0",
+            "gpu": os.environ.get("OPENTALKING_WEBRTC_NVENC_DEVICE", "0").strip() or "0",
+        }
+        codec.open()
+        self._active_codec_name = "h264_nvenc"
+        log.info(
+            "WebRTC H.264 encoder active: codec=h264_nvenc device=%s preset=%s "
+            "resolution=%dx%d bitrate=%d",
+            codec.options.get("gpu", "0"),
+            codec.options.get("preset", "p1"),
+            frame.width,
+            frame.height,
+            self.target_bitrate,
+        )
+        return codec
+
+    def _should_recreate_codec(self, frame: "av.VideoFrame") -> bool:
+        if self.codec is None:
+            return True
+        current_bitrate = int(self.codec.bit_rate or 0)
+        return (
+            frame.width != self.codec.width
+            or frame.height != self.codec.height
+            or current_bitrate <= 0
+            or abs(self.target_bitrate - current_bitrate) / current_bitrate > 0.1
+        )
+
+    def _encode_frame(
+        self,
+        frame: "av.VideoFrame",
+        force_keyframe: bool,
+    ) -> Iterator[bytes]:
+        if self._nvenc_failed:
+            yield from super()._encode_frame(frame, force_keyframe)
+            return
+
+        try:
+            if self._should_recreate_codec(frame):
+                self.buffer_data = b""
+                self.buffer_pts = None
+                self.codec = self._create_nvenc_codec(frame)
+
+            frame.pict_type = (
+                av.video.frame.PictureType.I
+                if force_keyframe
+                else av.video.frame.PictureType.NONE
+            )
+            data_to_send = b""
+            assert self.codec is not None
+            for package in self.codec.encode(frame):
+                data_to_send += bytes(package)
+            if data_to_send:
+                yield from self._split_bitstream(data_to_send)
+        except Exception as exc:
+            self.codec = None
+            self.buffer_data = b""
+            self.buffer_pts = None
+            self._nvenc_failed = True
+            self._active_codec_name = "libx264"
+            log.warning(
+                "NVENC initialization or encoding failed; falling back to libx264: %s: %s",
+                type(exc).__name__,
+                exc,
+            )
+            # The software encoder starts a new bitstream and therefore needs a keyframe.
+            yield from super()._encode_frame(frame, True)
+
+
+def _configure_aiortc_video_encoder() -> None:
+    """Install the requested H.264 encoder factory before RTP sending starts."""
+    global _AIORTC_ENCODER_FACTORY_MODE
+    if not WEBRTC_AVAILABLE or _ORIGINAL_AIORTC_GET_ENCODER is None:
+        return
+
+    encoder = _normalized_video_encoder()
+    if encoder == "nvenc":
+        if _AIORTC_ENCODER_FACTORY_MODE == "nvenc":
+            return
+
+        def get_encoder(codec: Any) -> Any:
+            if str(codec.mimeType).lower() == "video/h264":
+                return _NvencH264Encoder()
+            return _ORIGINAL_AIORTC_GET_ENCODER(codec)
+
+        aiortc_rtcrtpsender.get_encoder = get_encoder
+        _AIORTC_ENCODER_FACTORY_MODE = "nvenc"
+        log.info("Configured WebRTC video encoder: requested=nvenc codec=h264")
+        return
+
+    if _AIORTC_ENCODER_FACTORY_MODE != "default":
+        aiortc_rtcrtpsender.get_encoder = _ORIGINAL_AIORTC_GET_ENCODER
+    _AIORTC_ENCODER_FACTORY_MODE = "default"
+
+
+def _preferred_video_codec() -> str:
+    raw = os.environ.get("OPENTALKING_WEBRTC_VIDEO_CODEC", "auto").strip().lower()
+    if raw in {"h264", "vp8"}:
+        if _normalized_video_encoder() == "nvenc" and raw != "h264":
+            log.warning("NVENC requires H.264; overriding requested WebRTC codec %s", raw)
+            return "h264"
+        return raw
+    if raw not in {"", "auto"}:
+        log.warning(
+            "Ignoring invalid OPENTALKING_WEBRTC_VIDEO_CODEC=%r; expected auto, h264, or vp8",
+            raw,
+        )
+    return "h264" if _normalized_video_encoder() == "nvenc" else "auto"
+
+
+def _configure_video_codec_preferences(pc: Any) -> None:
+    preferred = _preferred_video_codec()
+    if not WEBRTC_AVAILABLE or preferred == "auto":
+        return
+    capabilities = RTCRtpSender.getCapabilities("video").codecs
+    codecs = [codec for codec in capabilities if codec.mimeType.lower() == f"video/{preferred}"]
+    if not codecs:
+        log.warning("Requested WebRTC video codec is unavailable: %s", preferred)
+        return
+    configured = 0
+    for transceiver in pc.getTransceivers():
+        if transceiver.kind == "video":
+            transceiver.setCodecPreferences(codecs)
+            configured += 1
+    log.info("Configured WebRTC video codec preference: codec=%s tracks=%d", preferred, configured)
 
 
 def _positive_env_int(name: str) -> int | None:
@@ -502,6 +684,7 @@ class WebRTCSession:
         except RuntimeError:
             asyncio.set_event_loop(asyncio.new_event_loop())
         _configure_aiortc_video_bitrate()
+        _configure_aiortc_video_encoder()
         self.pc = RTCPeerConnection(RTCConfiguration(iceServers=get_webrtc_server_ice_servers()))
         normalized_mode = mode.strip().lower()
         self._shared_clock = _SharedWallClock()
@@ -564,6 +747,7 @@ class WebRTCSession:
 
     async def handle_offer(self, sdp: str, type_: str) -> RTCSessionDescription:
         await self.pc.setRemoteDescription(RTCSessionDescription(sdp=sdp, type=type_))
+        _configure_video_codec_preferences(self.pc)
         answer = await self.pc.createAnswer()
         await self.pc.setLocalDescription(answer)
         return self.pc.localDescription  # type: ignore[return-value]

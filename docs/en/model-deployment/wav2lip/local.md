@@ -54,3 +54,20 @@ bash scripts/quickstart/start_frontend.sh --api-port 8000 --web-port 5173 --host
 For a remote server, forward your local browser port to the server `5173`, then open `http://127.0.0.1:5173`.
 
 Local Wav2Lip defaults to `easy_improved` post-processing. The frontend exposes `auto`, `basic`, `opentalking_improved`, and `easy_improved`. The backend also accepts `easy_enhanced` for API/env driven tests, but that mode requires GFPGAN to be installed and `OPENTALKING_WAV2LIP_GFPGAN_CHECKPOINT` to point to a checkpoint.
+
+## NVIDIA NVENC for Full-HD WebRTC Output
+
+Wav2Lip CUDA inference and WebRTC video encoding are separate paths. After confirming that both FFmpeg and PyAV expose `h264_nvenc`, use:
+
+```env title=".env"
+OPENTALKING_WEBRTC_VIDEO_ENCODER=nvenc
+OPENTALKING_WEBRTC_VIDEO_CODEC=h264
+OPENTALKING_WEBRTC_NVENC_DEVICE=0
+OPENTALKING_WEBRTC_NVENC_PRESET=p1
+OPENTALKING_WEBRTC_NVENC_TUNE=ull
+OPENTALKING_WEBRTC_VIDEO_START_BITRATE=4000000
+OPENTALKING_WEBRTC_VIDEO_MAX_BITRATE=8000000
+OPENTALKING_WAV2LIP_MAX_LONG_EDGE=1920
+```
+
+Use the runtime log `WebRTC H.264 encoder active: codec=h264_nvenc` to confirm that GPU encoding is actually active. CUDA model-loading logs alone do not prove that WebRTC uses NVENC. OpenTalking falls back to `libx264` if NVENC is unavailable.

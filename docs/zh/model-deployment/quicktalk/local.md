@@ -116,3 +116,31 @@ curl -s http://127.0.0.1:8000/models | python3 -m json.tool
 ```json
 {"id":"quicktalk","backend":"local","connected":true,"reason":"local_runtime"}
 ```
+
+## 8. 使用 NVIDIA NVENC 输出全高清视频
+
+模型运行在 CUDA 上不代表 WebRTC 会自动使用 GPU 编码。默认 aiortc 会使用软件编码器；如需降低 1080×1920 实时会话的 CPU 编码压力，先确认服务器 FFmpeg/PyAV 支持 `h264_nvenc`：
+
+```bash title="终端"
+ffmpeg -hide_banner -encoders | grep h264_nvenc
+python - <<'PY'
+import av
+print(av.codec.Codec("h264_nvenc", "w"))
+PY
+```
+
+然后配置：
+
+```env title=".env"
+OPENTALKING_WEBRTC_VIDEO_ENCODER=nvenc
+OPENTALKING_WEBRTC_VIDEO_CODEC=h264
+OPENTALKING_WEBRTC_NVENC_DEVICE=0
+OPENTALKING_WEBRTC_NVENC_PRESET=p1
+OPENTALKING_WEBRTC_NVENC_TUNE=ull
+OPENTALKING_WEBRTC_VIDEO_START_BITRATE=4000000
+OPENTALKING_WEBRTC_VIDEO_MAX_BITRATE=8000000
+OPENTALKING_QUICKTALK_MAX_LONG_EDGE=1920
+OPENTALKING_QUICKTALK_FPS=20
+```
+
+服务启动并建立 WebRTC 会话后，日志应出现 `WebRTC H.264 encoder active: codec=h264_nvenc`。如果驱动、PyAV 或 NVENC 会话不可用，OpenTalking 会记录原因并自动回退到 `libx264`。NVENC 只降低最终视频压缩开销；如果 `FlashTalk live generate` 日志中的模型生成耗时已经超过对应音频时长，仍需降低模型实时输出尺寸或帧率。

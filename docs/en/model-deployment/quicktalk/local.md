@@ -56,3 +56,31 @@ Verify:
 ```bash title="Terminal"
 curl -s http://127.0.0.1:8000/models | python3 -m json.tool
 ```
+
+## NVIDIA NVENC for Full-HD WebRTC Output
+
+Running the model on CUDA does not automatically move WebRTC encoding to the GPU. Verify that the server's FFmpeg/PyAV build exposes `h264_nvenc`:
+
+```bash title="Terminal"
+ffmpeg -hide_banner -encoders | grep h264_nvenc
+python - <<'PY'
+import av
+print(av.codec.Codec("h264_nvenc", "w"))
+PY
+```
+
+Then configure:
+
+```env title=".env"
+OPENTALKING_WEBRTC_VIDEO_ENCODER=nvenc
+OPENTALKING_WEBRTC_VIDEO_CODEC=h264
+OPENTALKING_WEBRTC_NVENC_DEVICE=0
+OPENTALKING_WEBRTC_NVENC_PRESET=p1
+OPENTALKING_WEBRTC_NVENC_TUNE=ull
+OPENTALKING_WEBRTC_VIDEO_START_BITRATE=4000000
+OPENTALKING_WEBRTC_VIDEO_MAX_BITRATE=8000000
+OPENTALKING_QUICKTALK_MAX_LONG_EDGE=1920
+OPENTALKING_QUICKTALK_FPS=20
+```
+
+After a WebRTC session starts, the log should contain `WebRTC H.264 encoder active: codec=h264_nvenc`. OpenTalking logs the error and falls back to `libx264` if NVENC cannot be initialized. NVENC reduces final video compression cost only; model generation must still complete faster than the corresponding audio duration.

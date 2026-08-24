@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 
@@ -31,6 +33,109 @@ def test_configure_aiortc_video_bitrate_from_environment(monkeypatch: pytest.Mon
         h264.MAX_BITRATE = originals["h264_max"]
         vpx.DEFAULT_BITRATE = originals["vpx_default"]
         vpx.MAX_BITRATE = originals["vpx_max"]
+
+
+def test_configure_nvenc_encoder_factory_and_restore(monkeypatch: pytest.MonkeyPatch) -> None:
+    from aiortc import rtcrtpsender
+
+    original = aiortc_adapter._ORIGINAL_AIORTC_GET_ENCODER
+    codec = SimpleNamespace(mimeType="video/H264")
+    try:
+        monkeypatch.setenv("OPENTALKING_WEBRTC_VIDEO_ENCODER", "nvenc")
+        aiortc_adapter._configure_aiortc_video_encoder()
+
+        encoder = rtcrtpsender.get_encoder(codec)
+        assert isinstance(encoder, aiortc_adapter._NvencH264Encoder)
+        assert aiortc_adapter._preferred_video_codec() == "h264"
+
+        monkeypatch.setenv("OPENTALKING_WEBRTC_VIDEO_ENCODER", "auto")
+        aiortc_adapter._configure_aiortc_video_encoder()
+        assert rtcrtpsender.get_encoder is original
+    finally:
+        monkeypatch.setenv("OPENTALKING_WEBRTC_VIDEO_ENCODER", "auto")
+        aiortc_adapter._configure_aiortc_video_encoder()
+
+
+def test_nvenc_encoder_builds_low_latency_codec(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeCodec:
+        width = 0
+        height = 0
+        bit_rate = 0
+        pix_fmt = ""
+        framerate = None
+        time_base = None
+        options: dict[str, str] = {}
+        opened = False
+
+        def open(self) -> None:
+            self.opened = True
+
+    fake_codec = FakeCodec()
+    monkeypatch.setenv("OPENTALKING_WEBRTC_NVENC_DEVICE", "1")
+    monkeypatch.setenv("OPENTALKING_WEBRTC_NVENC_PRESET", "p2")
+    monkeypatch.setattr(
+        aiortc_adapter.av.CodecContext,
+        "create",
+        lambda name, mode: fake_codec if (name, mode) == ("h264_nvenc", "w") else None,
+    )
+
+    encoder = aiortc_adapter._NvencH264Encoder()
+    codec = encoder._create_nvenc_codec(SimpleNamespace(width=1080, height=1920))
+
+    assert codec is fake_codec
+    assert fake_codec.opened is True
+    assert fake_codec.width == 1080
+    assert fake_codec.height == 1920
+    assert fake_codec.options["gpu"] == "1"
+    assert fake_codec.options["preset"] == "p2"
+    assert fake_codec.options["tune"] == "ull"
+    assert fake_codec.options["zerolatency"] == "1"
+    assert fake_codec.options["bf"] == "0"
+
+
+def test_nvenc_encoder_falls_back_to_libx264(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        aiortc_adapter._NvencH264Encoder,
+        "_create_nvenc_codec",
+        lambda self, frame: (_ for _ in ()).throw(RuntimeError("NVENC unavailable")),
+    )
+    monkeypatch.setattr(
+        aiortc_adapter.H264Encoder,
+        "_encode_frame",
+        lambda self, frame, force_keyframe: iter([b"software-frame"]),
+    )
+    encoder = aiortc_adapter._NvencH264Encoder()
+
+    encoded = list(
+        encoder._encode_frame(SimpleNamespace(width=1080, height=1920), False)
+    )
+
+    assert encoded == [b"software-frame"]
+    assert encoder._nvenc_failed is True
+    assert encoder._active_codec_name == "libx264"
+
+
+def test_configure_video_codec_preferences_selects_h264(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeTransceiver:
+        kind = "video"
+
+        def __init__(self) -> None:
+            self.codecs = []
+
+        def setCodecPreferences(self, codecs) -> None:
+            self.codecs = codecs
+
+    transceiver = FakeTransceiver()
+    pc = SimpleNamespace(getTransceivers=lambda: [transceiver])
+    monkeypatch.setenv("OPENTALKING_WEBRTC_VIDEO_ENCODER", "nvenc")
+    monkeypatch.setenv("OPENTALKING_WEBRTC_VIDEO_CODEC", "h264")
+
+    aiortc_adapter._configure_video_codec_preferences(pc)
+
+    assert transceiver.codecs
+    assert all(codec.mimeType.lower() == "video/h264" for codec in transceiver.codecs)
 
 
 def test_buffered_reset_clocks_resets_timeline_without_rewinding_pts() -> None:

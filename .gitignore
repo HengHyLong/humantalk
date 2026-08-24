@@ -9,6 +9,10 @@ build/
 .docs-venv/
 venv/
 .env
+.env.*
+!.env.example
+!**/.env.example
+!**/.env.production.example
 .deploy.env
 quick_start_draft.md
 scripts/quickstart/env

@@ -78,6 +78,23 @@ bash scripts/quickstart/start_frontend.sh --api-port 8000 --web-port 5173 --host
 | `OPENTALKING_WAV2LIP_JPEG_QUALITY` | `85` | 输出帧 JPEG 质量。 |
 | `OPENTALKING_PREWARM_AVATARS` | `singer` | 服务启动时提前预热形象。 |
 
+### 全高清实时输出使用 NVENC
+
+Wav2Lip 的 CUDA 推理和 WebRTC 视频编码是两条独立链路。需要保留 1080×1920 实时输出时，可在确认 `ffmpeg -encoders` 和 PyAV 均提供 `h264_nvenc` 后配置：
+
+```env title=".env"
+OPENTALKING_WEBRTC_VIDEO_ENCODER=nvenc
+OPENTALKING_WEBRTC_VIDEO_CODEC=h264
+OPENTALKING_WEBRTC_NVENC_DEVICE=0
+OPENTALKING_WEBRTC_NVENC_PRESET=p1
+OPENTALKING_WEBRTC_NVENC_TUNE=ull
+OPENTALKING_WEBRTC_VIDEO_START_BITRATE=4000000
+OPENTALKING_WEBRTC_VIDEO_MAX_BITRATE=8000000
+OPENTALKING_WAV2LIP_MAX_LONG_EDGE=1920
+```
+
+建立会话后，以 `WebRTC H.264 encoder active: codec=h264_nvenc` 日志作为真正启用 GPU 编码的判断依据。仅看到 CUDA 模型加载日志并不能证明 WebRTC 已经使用 NVENC。NVENC 不可用时会自动回退 `libx264`。
+
 ## 6. 验证
 
 ```bash title="终端"
