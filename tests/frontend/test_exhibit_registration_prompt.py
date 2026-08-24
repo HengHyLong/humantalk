@@ -22,8 +22,19 @@ def test_registration_query_uses_canonical_exhibit_name_and_link_validation() ->
     assert "linkedEntityIds.has(exhibit.id)" in helper
     assert "exhibitId: exhibit.id" in helper
     assert "relatedEntities: [exhibit]" in helper
+    assert "shopping.survey_path?.trim()" in helper
+    assert "!shopping.strategy_id ? exhibit.survey_path?.trim() : undefined" in helper
+    assert "registrationPath" in helper
     assert "当前展品暂未配置登记二维码。" in helper
     assert "登记服务暂时不可用，请稍后再试。" in helper
+
+
+def test_existing_exhibit_survey_path_skips_strategy_registration_api() -> None:
+    source = APP_SOURCE.read_text(encoding="utf-8")
+
+    assert "pendingShopping.registrationPath" in source
+    assert 'strategy_id: pendingShopping.strategyId || "exhibit-survey"' in source
+    assert "path: pendingShopping.registrationPath" in source
 
 
 def test_exhibit_match_takes_priority_over_an_overlapping_exhibitor_match() -> None:

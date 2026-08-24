@@ -19,6 +19,8 @@ export type ExhibitionEntityCard = {
   keywords: string[];
   fuzzy_keywords?: string[];
   spoken_text?: string;
+  /** 管理后台为展品生成的调研二维码链接。 */
+  survey_path?: string;
 };
 
 export interface Message {

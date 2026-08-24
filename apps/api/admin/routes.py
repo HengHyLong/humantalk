@@ -2538,6 +2538,11 @@ def public_exhibition_entities(exhibition_id: str, request: Request) -> dict[str
             "keywords": clean_keywords,
             "fuzzy_keywords": clean_keywords if source.get("fuzzyMatch", source.get("fuzzy_match", True)) else [],
             "spoken_text": str(source.get("spokenText") or source.get("spoken_text") or "").strip() or _public_description(description),
+            "survey_path": (
+                f"/survey/{str(source.get('surveyToken') or source.get('survey_token')).strip()}"
+                if kind == "exhibit" and str(source.get("surveyToken") or source.get("survey_token") or "").strip()
+                else None
+            ),
         })
 
     append_entity(
@@ -2742,7 +2747,38 @@ def shopping_query(exhibition_id: str, request: Request, body: ShoppingQueryBody
             ranked.append((best_score, len(_normalize_navigation_text(best_term)), strategy, best_term, exhibit_ids))
     ranked.sort(key=lambda item: (item[0], item[1], str(item[2].get("updatedAt") or item[2].get("updated_at") or "")), reverse=True)
     if not ranked:
-        return {"matched": False}
+        # 展品调研二维码属于展品自身配置，不应强制要求额外创建导购策略。
+        # 数字人前端会使用展品规范名称查询，因此优先做名称精确匹配。
+        survey_exhibit = next((
+            item for item in exhibits.values()
+            if _normalize_navigation_text(item.get("name")) == query
+            and str(item.get("surveyToken") or item.get("survey_token") or "").strip()
+        ), None)
+        if not survey_exhibit:
+            return {"matched": False}
+        token = str(survey_exhibit.get("surveyToken") or survey_exhibit.get("survey_token") or "").strip()
+        exhibit_id = str(survey_exhibit["id"])
+        return {
+            "language": body.language,
+            "matched": True,
+            "title": str(survey_exhibit.get("name") or "展品登记"),
+            "spoken_text": _public_description(survey_exhibit.get("description")),
+            "registration_prompt": (
+                "Would you like me to display the registration QR code?"
+                if body.language == "en-US"
+                else "需要为您弹出登记二维码吗？"
+            ),
+            "confirmation_retry_prompt": (
+                "Please answer yes or no to registration."
+                if body.language == "en-US"
+                else "请回答需要或不需要登记。"
+            ),
+            "confirm_keywords": (["yes", "okay", "register", "agree"] if body.language == "en-US" else ["需要", "好的", "可以", "同意", "登记", "我要登记"]),
+            "decline_keywords": (["no", "not now", "cancel", "do not register"] if body.language == "en-US" else ["不需要", "不用", "不要", "暂不", "取消", "不登记"]),
+            "exhibit_ids": [exhibit_id],
+            "related_entity_ids": [exhibit_id],
+            "survey_path": f"/survey/{token}",
+        }
 
     _, _, strategy, matched_term, exhibit_ids = ranked[0]
     selected_exhibits = [exhibits[exhibit_id] for exhibit_id in exhibit_ids if exhibit_id in exhibits]

@@ -517,7 +517,7 @@ def test_public_exhibition_entities_include_display_fields_and_image_fallbacks(t
         )
         store.save_record(
             "exhibits",
-            {"id": "exhibit-public", "exhibitionId": "expo-test", "exhibitorId": exhibitor["id"], "name": "智能导览终端", "modelNo": "DH-01", "description": "支持智能问答。"},
+            {"id": "exhibit-public", "exhibitionId": "expo-test", "exhibitorId": exhibitor["id"], "name": "智能导览终端", "modelNo": "DH-01", "description": "支持智能问答。", "surveyToken": "survey-public-token"},
             "expo-test",
         )
         venue = store.save_record("venues", {"id": "venue-public", "exhibitionId": "expo-test", "name": "未来馆"}, "expo-test")
@@ -535,6 +535,7 @@ def test_public_exhibition_entities_include_display_fields_and_image_fallbacks(t
         assert items["exhibitor-public"]["spoken_text"] == "星河科技专注智能制造解决方案。"
         assert items["exhibit-public"]["image_urls"] == ["/scene-assets/exhibitor.jpg"]
         assert items["exhibit-public"]["parent_id"] == "exhibitor-public"
+        assert items["exhibit-public"]["survey_path"] == "/survey/survey-public-token"
         assert not any(detail["value"] == "13800138000" for item in items.values() for detail in item["details"])
 
 
@@ -696,6 +697,34 @@ def test_public_shopping_keyword_match_and_confirmed_registration(tmp_path) -> N
             json={"text": "卫生间在哪里", "session_id": "session-shopping"},
         )
         assert unmatched.json() == {"matched": False}
+
+
+def test_exhibit_survey_qr_is_available_without_shopping_strategy(tmp_path) -> None:
+    with _client(tmp_path) as client:
+        store = client.app.state.admin_store
+        store.save_record(
+            "exhibits",
+            {
+                "id": "exhibit-survey-only",
+                "exhibitionId": "expo-test",
+                "name": "独立调研展品",
+                "description": "该展品只配置了调研二维码。",
+                "surveyToken": "survey-only-token",
+            },
+            "expo-test",
+        )
+
+        response = client.post(
+            "/exhibitions/expo-test/shopping/query",
+            json={"text": "独立调研展品", "session_id": "session-survey-only"},
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["matched"] is True
+        assert payload.get("strategy_id") is None
+        assert payload["related_entity_ids"] == ["exhibit-survey-only"]
+        assert payload["survey_path"] == "/survey/survey-only-token"
 
 
 def test_admin_reads_and_failed_requests_are_audited(tmp_path) -> None:

@@ -347,6 +347,7 @@ export type ShoppingQueryResult = {
   decline_keywords?: string[];
   exhibit_ids?: string[];
   related_entity_ids?: string[];
+  survey_path?: string;
 };
 
 export type ShoppingRegistrationResult = {

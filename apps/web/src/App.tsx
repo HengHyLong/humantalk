@@ -151,7 +151,8 @@ type RecognizedTextOptions = {
 };
 
 type PendingShoppingRegistration = {
-  strategyId: string;
+  strategyId?: string;
+  registrationPath?: string;
   exhibitId?: string;
   title: string;
   retryPrompt: string;
@@ -2902,9 +2903,14 @@ export default function App() {
           language: conversationLanguage,
         });
         const linkedEntityIds = new Set(shopping.related_entity_ids ?? shopping.exhibit_ids ?? []);
-        if (shopping.matched && shopping.strategy_id && linkedEntityIds.has(exhibit.id)) {
+        const registrationPath = shopping.survey_path?.trim()
+          || (!shopping.strategy_id ? exhibit.survey_path?.trim() : undefined);
+        const registrationAvailable = Boolean(shopping.strategy_id || registrationPath);
+        const exhibitLinked = linkedEntityIds.has(exhibit.id) || Boolean(exhibit.survey_path?.trim());
+        if (shopping.matched && registrationAvailable && exhibitLinked) {
           pendingShoppingRegistrationRef.current = {
             strategyId: shopping.strategy_id,
+            registrationPath,
             exhibitId: exhibit.id,
             title: shopping.title?.trim() || (englishConversation ? "Exhibition registration" : "展品登记"),
             retryPrompt: shopping.confirmation_retry_prompt?.trim() || (englishConversation ? "Please answer yes or no to registration." : "请回答是否愿意登记。"),
@@ -3092,13 +3098,24 @@ export default function App() {
         return;
       }
       try {
-        const registration = await createShoppingRegistration(configuredExhibitionId, {
-          strategy_id: pendingShopping.strategyId,
-          session_id: sessionId,
-          confirmation_text: text,
-          exhibit_id: pendingShopping.exhibitId,
-          language: conversationLanguage,
-        });
+        const registration = pendingShopping.registrationPath
+          ? {
+              language: conversationLanguage,
+              strategy_id: pendingShopping.strategyId || "exhibit-survey",
+              exhibit_id: pendingShopping.exhibitId || "",
+              title: pendingShopping.title,
+              path: pendingShopping.registrationPath,
+              spoken_text: englishConversation
+                ? "The registration QR code is ready. Please scan it with your phone to complete the form."
+                : "好的，登记二维码已为您打开，请使用手机扫码填写信息。",
+            }
+          : await createShoppingRegistration(configuredExhibitionId, {
+              strategy_id: pendingShopping.strategyId || "",
+              session_id: sessionId,
+              confirmation_text: text,
+              exhibit_id: pendingShopping.exhibitId,
+              language: conversationLanguage,
+            });
         const url = new URL(registration.path, window.location.origin).toString();
         const { toDataURL } = await import("qrcode");
         const qrDataUrl = await toDataURL(url, {
