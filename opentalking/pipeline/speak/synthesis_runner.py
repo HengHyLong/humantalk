@@ -3160,13 +3160,11 @@ class FlashTalkRunner:
     async def _queue_av_chunk(self, pcm_chunk: np.ndarray, frames: list[Any]) -> None:
         """Queue generated audio and video while preserving real-time A/V pacing.
 
-        QuickTalk and Wav2Lip keep a complete PCM chunk together, but must not
-        enqueue that *new* audio before video backpressure has finished. Doing
-        so lets the browser start playing the chunk while its matching video is
-        still waiting to enter the queue, which accumulates audio lead over
-        long replies. The wait observes only previously queued audio and stops
-        at the configured reserve, then matching audio/video are queued back to
-        back. Other backends retain frame-by-frame audio interleaving.
+        Backpressure observes only previously queued media and stops before the
+        old audio reserve is drained. Once capacity is available, every video
+        frame is immediately followed by its proportional audio slice. This
+        keeps the two sender tasks supplied in lockstep instead of exposing a
+        complete future audio chunk before any of its matching video exists.
         """
         t0 = getattr(self, "_speak_t0_wall", None)
         ms = getattr(self, "_speak_milestones", None)
@@ -3208,7 +3206,6 @@ class FlashTalkRunner:
             return
 
         await self._append_recording_frames_if_enabled(frames)
-        audio_first = self.model_type in {"quicktalk", "wav2lip"}
         audio_buffer_before_wait_ms = (
             self.webrtc.buffered_audio_duration_ms() if self.webrtc else 0.0
         )
@@ -3217,11 +3214,6 @@ class FlashTalkRunner:
             first_media_this_speak=first_media_this_speak,
         )
         audio_buffer_after_wait_ms = (
-            self.webrtc.buffered_audio_duration_ms() if self.webrtc else 0.0
-        )
-        if audio_first and total_samples > 0:
-            await self._audio_put_safe(arr)
-        audio_buffer_after_enqueue_ms = (
             self.webrtc.buffered_audio_duration_ms() if self.webrtc else 0.0
         )
 
@@ -3247,7 +3239,7 @@ class FlashTalkRunner:
             # Use _audio_put_safe (20ms sub-chunks) for clean opus encoding,
             # but feed them right after the matching video frame so A/V stay
             # in lockstep within the queue.
-            if not audio_first and len(audio_slice) > 0:
+            if len(audio_slice) > 0:
                 await self._audio_put_safe(audio_slice)
             self._av_ts_ms += audio_duration_ms
 
@@ -3258,10 +3250,19 @@ class FlashTalkRunner:
         audio_ms = total_samples * 1000.0 / sample_rate if total_samples else 0.0
         vq_after = self.webrtc.video._queue.qsize() if self.webrtc else -1
         aq_after = self.webrtc.audio._queue.qsize() if self.webrtc else -1
+        audio_buffer_after_enqueue_ms = (
+            self.webrtc.buffered_audio_duration_ms() if self.webrtc else 0.0
+        )
+        queued_frame_duration_ms = audio_ms / n_frames if audio_ms > 0.0 else default_frame_interval_ms
+        video_buffer_after_enqueue_ms = (
+            vq_after * queued_frame_duration_ms if vq_after >= 0 else 0.0
+        )
+        av_queue_skew_ms = audio_buffer_after_enqueue_ms - video_buffer_after_enqueue_ms
         log.info(
             "FlashTalk queue AV chunk: session=%s model=%s frames=%d audio_ms=%.1f "
             "queue_ms=%.1f playback_wait_ms=%.1f queue_fps=%.2f vq=%d->%d aq=%d->%d "
-            "audio_buffer_ms=%.1f->%.1f->%.1f av_ts_ms=%.1f",
+            "audio_buffer_ms=%.1f->%.1f->%.1f video_buffer_ms=%.1f "
+            "av_queue_skew_ms=%.1f av_ts_ms=%.1f",
             self.session_id,
             self.model_type,
             n_frames,
@@ -3276,6 +3277,8 @@ class FlashTalkRunner:
             audio_buffer_before_wait_ms,
             audio_buffer_after_wait_ms,
             audio_buffer_after_enqueue_ms,
+            video_buffer_after_enqueue_ms,
+            av_queue_skew_ms,
             self._av_ts_ms,
         )
 
