@@ -62,6 +62,13 @@ def _quicktalk_fps() -> int:
     return _positive_int_env("OPENTALKING_QUICKTALK_FPS") or 25
 
 
+def _wav2lip_slice_len() -> int | None:
+    return _positive_int_env(
+        "OPENTALKING_WAV2LIP_SLICE_LEN",
+        "OPENTALKING_WAV2LIP_CHUNK_FRAMES",
+    )
+
+
 @runtime_checkable
 class Audio2VideoClient(Protocol):
     """Common realtime audio-to-video client contract for local and OmniRT backends."""
@@ -391,6 +398,14 @@ class LocalAudio2VideoClient:
                 1,
                 int(round(float(self.sample_rate) * float(self.slice_len) / max(1, self.fps))),
             )
+        elif self._is_wav2lip_adapter():
+            wav2lip_slice_len = _wav2lip_slice_len()
+            if wav2lip_slice_len is not None:
+                self.slice_len = wav2lip_slice_len
+                self.audio_chunk_samples = max(
+                    1,
+                    int(round(float(self.sample_rate) * float(self.slice_len) / max(1, self.fps))),
+                )
         elif self._is_musetalk_adapter():
             try:
                 from opentalking.core.model_config import get_model_config
@@ -427,6 +442,17 @@ class LocalAudio2VideoClient:
         if manifest_model_type == "quicktalk":
             return True
         return self.adapter.__class__.__name__.lower().startswith("quicktalk")
+
+    def _is_wav2lip_adapter(self) -> bool:
+        adapter_model_type = str(getattr(self.adapter, "model_type", "") or "").strip().lower()
+        if adapter_model_type == "wav2lip":
+            return True
+        state = self.avatar_state
+        manifest = getattr(state, "manifest", None)
+        manifest_model_type = str(getattr(manifest, "model_type", "") or "").strip().lower()
+        if manifest_model_type == "wav2lip":
+            return True
+        return self.adapter.__class__.__name__.lower().startswith("wav2lip")
 
     async def prewarm(self) -> dict[str, Any]:
         if self.avatar_state is None:

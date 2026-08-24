@@ -2056,7 +2056,7 @@ class FlashTalkRunner:
             await publish_event(
                 self.redis, self.session_id,
                 "speech.started",
-                {"session_id": self.session_id, "text": text},
+                {"session_id": self.session_id, "text": text, "direct": direct},
             )
             self._speech_started = True
 

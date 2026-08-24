@@ -2332,11 +2332,18 @@ export default function App() {
         notify(`对话失败：${detail}`, "error");
       }
       if (ev === "speech.started") {
+        const started = data && typeof data === "object"
+          ? data as { text?: string; direct?: boolean }
+          : {};
+        const immediateText = started.direct && typeof started.text === "string"
+          ? started.text.trim()
+          : "";
         const staleId = streamingAssistantMsgIdRef.current;
         const pendingId = pendingAssistantMsgIdRef.current;
         clearSubtitleState(false);
         setIsSpeaking(true);
         setVideoState("think");
+        if (immediateText) setCurrentSubtitle(immediateText);
         if (staleId) {
           setMessages((prev) => prev.filter((m) => m.id !== staleId));
         }
@@ -2344,11 +2351,11 @@ export default function App() {
         streamingAssistantMsgIdRef.current = id;
         setMessages((prev) => {
           if (prev.some((m) => m.id === id)) {
-            return prev.map((m) => (m.id === id ? { ...m, text: "" } : m));
+            return prev.map((m) => (m.id === id ? { ...m, text: immediateText } : m));
           }
           return [
             ...prev,
-            { id, role: "assistant", text: "", timestamp: Date.now() },
+            { id, role: "assistant", text: immediateText, timestamp: Date.now() },
           ];
         });
       }
@@ -2836,10 +2843,11 @@ export default function App() {
       pendingAssistantMsgIdRef.current = pendingId;
       setIsSpeaking(true);
       setVideoState("think");
+      if (direct) setCurrentSubtitle(text);
       setMessages((prev) => [
         ...prev.filter((m) => m.id !== previousPendingId && m.id !== activeAssistantId),
         ...(user ? [{ id: makeId(), role: "user" as const, text: user, timestamp: Date.now() }] : []),
-        { id: pendingId, role: "assistant", text: "正在合成语音和口型...", timestamp: Date.now(), relatedEntities },
+        { id: pendingId, role: "assistant", text: direct ? text : "正在合成语音和口型...", timestamp: Date.now(), relatedEntities },
       ]);
       if (isSpeaking) {
         void apiPost(`/sessions/${sessionId}/interrupt`, {}).catch(() => {});

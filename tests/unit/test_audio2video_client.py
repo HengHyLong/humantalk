@@ -308,6 +308,25 @@ class FakeQuickTalkLocalAdapter(FakeLocalAdapter):
         )
 
 
+class FakeWav2LipLocalAdapter(FakeLocalAdapter):
+    model_type = "wav2lip"
+
+    def load_avatar(self, avatar_path: str) -> FakeState:
+        self.loaded_avatar = avatar_path
+        return FakeState(
+            manifest=AvatarManifest(
+                id="wav2lip-avatar",
+                model_type="wav2lip",
+                fps=25,
+                sample_rate=16000,
+                width=720,
+                height=1280,
+                version="1.0",
+            ),
+            extra={},
+        )
+
+
 @pytest.mark.asyncio
 async def test_local_quicktalk_uses_omnirt_chunk_defaults(tmp_path: Path) -> None:
     adapter = FakeQuickTalkLocalAdapter()
@@ -379,3 +398,21 @@ async def test_local_quicktalk_fps_env_can_lower_mps_playback_rate(
     assert init["slice_len"] == 12
     assert init["chunk_samples"] == 13714
     assert client.audio_chunk_samples == 13714
+
+
+def test_local_wav2lip_slice_len_env_reduces_first_chunk_latency(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENTALKING_WAV2LIP_SLICE_LEN", "12")
+    adapter = FakeWav2LipLocalAdapter()
+    client = LocalAudio2VideoClient(adapter, device="cuda:0")
+    avatar = tmp_path / "avatar"
+    avatar.mkdir()
+
+    init = asyncio.run(client.init_session(avatar_path=avatar))
+
+    assert init["fps"] == 25
+    assert init["slice_len"] == 12
+    assert init["chunk_samples"] == 7680
+    assert client.audio_chunk_samples == 7680
