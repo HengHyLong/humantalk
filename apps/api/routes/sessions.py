@@ -413,6 +413,21 @@ def _resolve_avatar_dir(settings: object, avatar_id: str) -> tuple[Path, Path]:
     return avatars_root, avatar_dir
 
 
+def _local_wav2lip_uses_frame_references(
+    model: str,
+    backend_name: str,
+    avatar_dir: Path,
+) -> bool:
+    if model != "wav2lip" or backend_name != "local":
+        return False
+    try:
+        raw = json.loads((avatar_dir / "manifest.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    metadata = raw.get("metadata") if isinstance(raw, dict) else None
+    return isinstance(metadata, dict) and str(metadata.get("reference_mode") or "").lower() == "frames"
+
+
 async def _wait_for_session_worker_ready(
     r: redis.Redis,
     session_id: str,
@@ -737,6 +752,7 @@ async def create_session(body: CreateSessionRequest, request: Request) -> Create
             )
             or model == "quicktalk"
             or (model == "musetalk" and backend_name == "local")
+            or _local_wav2lip_uses_frame_references(model, backend_name, avatar_dir)
         ):
             return CreateSessionResponse(session_id=sid, status="initializing")
 

@@ -340,6 +340,14 @@ def test_presentation_close_keeps_voice_listener_mounted_and_restores_conversati
     assert "closePresentation(onAutoClosePresentation)" in auto_close_block
 
 
+def test_realtime_frontends_allow_slow_frame_avatar_session_initialization():
+    web_app = (WEB / "App.tsx").read_text(encoding="utf-8")
+    admin_app = Path("apps/admin/src/App.tsx").read_text(encoding="utf-8")
+
+    assert "timeoutMs = 360_000" in web_app
+    assert "timeoutMs = 360_000" in admin_app
+
+
 def test_frontend_preserves_custom_avatar_selection_across_model_changes():
     app = (WEB / "App.tsx").read_text(encoding="utf-8")
 

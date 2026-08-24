@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -1189,6 +1190,41 @@ def test_unified_quicktalk_create_waits_for_runner_ready() -> None:
     source = Path(sessions_routes.__file__).read_text(encoding="utf-8")
 
     assert 'if body.model == "quicktalk":' not in source
+
+
+def test_local_wav2lip_frame_avatar_uses_async_session_initialization(tmp_path: Path) -> None:
+    avatar_dir = tmp_path / "motion-avatar"
+    avatar_dir.mkdir()
+    (avatar_dir / "manifest.json").write_text(
+        json.dumps({"metadata": {"reference_mode": "frames"}}),
+        encoding="utf-8",
+    )
+
+    assert sessions_routes._local_wav2lip_uses_frame_references(
+        "wav2lip",
+        "local",
+        avatar_dir,
+    ) is True
+    assert sessions_routes._local_wav2lip_uses_frame_references(
+        "wav2lip",
+        "omnirt",
+        avatar_dir,
+    ) is False
+
+
+def test_local_wav2lip_image_avatar_keeps_fast_session_initialization(tmp_path: Path) -> None:
+    avatar_dir = tmp_path / "image-avatar"
+    avatar_dir.mkdir()
+    (avatar_dir / "manifest.json").write_text(
+        json.dumps({"metadata": {"reference_mode": "image"}}),
+        encoding="utf-8",
+    )
+
+    assert sessions_routes._local_wav2lip_uses_frame_references(
+        "wav2lip",
+        "local",
+        avatar_dir,
+    ) is False
 
 
 def test_split_flashtalk_create_returns_queued_until_worker_ready(

@@ -2410,7 +2410,7 @@ export default function App() {
   // Resolves when FlashTalk slot is acquired (session.queued position=0)
   const slotAcquiredRef = useRef<(() => void) | null>(null);
 
-  const waitForSessionReady = useCallback(async (sid: string, timeoutMs = 180_000) => {
+  const waitForSessionReady = useCallback(async (sid: string, timeoutMs = 360_000) => {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       const rec = await apiGet<SessionRecord>(`/sessions/${sid}`);
