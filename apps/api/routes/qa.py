@@ -159,7 +159,16 @@ def _record_value(record: dict[str, object], *keys: str) -> str:
     return ""
 
 
-def _load_dify_registry(settings: object) -> dict[str, dict[str, str]]:
+def _record_exhibition_ids(record: dict[str, object]) -> list[str]:
+    raw = record.get("exhibition_ids", record.get("exhibitionIds"))
+    result = _clean_ids(raw)
+    legacy = _record_value(record, "exhibition_id", "exhibitionId")
+    if legacy and legacy not in result:
+        result.insert(0, legacy)
+    return result
+
+
+def _load_dify_registry(settings: object) -> dict[str, dict[str, object]]:
     raw = str(_setting(settings, "agent_dify_knowledge_base_registry", "") or "").strip()
     registry_path = str(_setting(settings, "agent_dify_registry_path", "") or "").strip()
     if not registry_path and hasattr(settings, "agent_knowledge_root"):
@@ -181,7 +190,7 @@ def _load_dify_registry(settings: object) -> dict[str, dict[str, str]]:
         return {}
     if not isinstance(payload, dict):
         return {}
-    result: dict[str, dict[str, str]] = {}
+    result: dict[str, dict[str, object]] = {}
     for key, value in payload.items():
         if not isinstance(value, dict):
             continue
@@ -193,6 +202,7 @@ def _load_dify_registry(settings: object) -> dict[str, dict[str, str]]:
             "knowledge_base_id": kb_id,
             "dify_dataset_id": dataset_id,
             "exhibition_id": _record_value(value, "exhibition_id", "exhibitionId"),
+            "exhibition_ids": _record_exhibition_ids(value),
             "namespace_id": _record_value(value, "namespace_id", "namespaceId"),
         }
     return result
@@ -213,12 +223,12 @@ def _resolve_dify_targets(
         dataset_id = _record_value(record, "dify_dataset_id", "difyDatasetId", "dataset_id", "datasetId")
         if not kb_id or not dataset_id:
             return
-        record_exhibition = _record_value(record, "exhibition_id", "exhibitionId")
-        if record_exhibition and record_exhibition != exhibition_id:
+        record_exhibition_ids = _record_exhibition_ids(record)
+        if record_exhibition_ids and exhibition_id not in record_exhibition_ids:
             if kb_id in requested_kb_ids:
                 mismatched.add(kb_id)
             return
-        if require_exhibition and not record_exhibition:
+        if require_exhibition and not record_exhibition_ids:
             return
         known.setdefault(
             kb_id,
@@ -297,6 +307,40 @@ def _resolve_dify_targets(
     return unique
 
 
+def _resolve_query_dify_targets(
+    settings: object,
+    store: object,
+    exhibition_id: str,
+    explicit_kb_ids: list[str],
+    session: dict[str, object] | None,
+) -> list[DifyKnowledgeTarget]:
+    """Resolve QA targets without leaking a previous exhibition's session state.
+
+    Browser sessions and avatar preferences can outlive an exhibition switch. An
+    explicit request remains strict, while implicit session selections are only
+    applied when they belong to the current exhibition. If none of the stored
+    IDs are in scope, all knowledge bases bound to the exhibition are used.
+    """
+
+    if explicit_kb_ids:
+        return _resolve_dify_targets(settings, store, exhibition_id, explicit_kb_ids)
+
+    exhibition_targets = _resolve_dify_targets(settings, store, exhibition_id, [])
+    if session is None:
+        return exhibition_targets
+
+    session_ids = _session_knowledge_base_ids(session)
+    if not session_ids:
+        return exhibition_targets
+    targets_by_id = {
+        target.knowledge_base_id: target
+        for target in exhibition_targets
+        if target.knowledge_base_id
+    }
+    scoped_targets = [targets_by_id[item] for item in session_ids if item in targets_by_id]
+    return scoped_targets or exhibition_targets
+
+
 def _resolve_local_kb_ids(store: object, exhibition_id: str) -> list[str]:
     ids: list[str] = []
     for item in getattr(store, "list_records")("knowledge_bases", exhibition_id=exhibition_id):
@@ -325,14 +369,13 @@ async def query_exhibition_qa(
             raise HTTPException(status_code=404, detail="session not found")
 
     settings = getattr(request.app.state, "settings", object())
-    requested_kb_ids = list(body.knowledge_base_ids or [])
-    if not requested_kb_ids and session is not None:
-        requested_kb_ids = _session_knowledge_base_ids(session)
-    dify_targets = _resolve_dify_targets(
+    explicit_kb_ids = list(body.knowledge_base_ids or [])
+    dify_targets = _resolve_query_dify_targets(
         settings,
         store,
         resolved_exhibition_id,
-        requested_kb_ids,
+        explicit_kb_ids,
+        session,
     )
     dify_base_url, dify_key = _resolve_dify_connection(settings)
     if bool(dify_targets) != bool(dify_key):

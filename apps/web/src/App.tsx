@@ -1578,12 +1578,12 @@ export default function App() {
   }, [conversationViewMode, workflow]);
 
   useEffect(() => {
-    if (selectedPersonaId) return;
+    if (selectedPersonaId || exhibitionConfirmed) return;
     void refreshAvatarKnowledgeBases(avatarId);
-  }, [avatarId, refreshAvatarKnowledgeBases, selectedPersonaId]);
+  }, [avatarId, exhibitionConfirmed, refreshAvatarKnowledgeBases, selectedPersonaId]);
 
   useEffect(() => {
-    if (selectedPersonaId) return;
+    if (selectedPersonaId || exhibitionConfirmed) return;
     if (!avatarKnowledgeBasesSyncReadyRef.current || !avatarId) return;
     const selectedIds = normalizeKnowledgeBaseIds(agentConfig.knowledgeBaseIds);
     const lastPersisted = lastPersistedAvatarKnowledgeBasesRef.current.get(avatarId) ?? [];
@@ -1612,7 +1612,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [agentConfig.knowledgeBaseIds, avatarId, notify, selectedPersonaId]);
+  }, [agentConfig.knowledgeBaseIds, avatarId, exhibitionConfirmed, notify, selectedPersonaId]);
 
   const cleanupRealtimeRecordStreams = useCallback(() => {
     if (realtimeRecordMicStreamRef.current) {
@@ -3445,13 +3445,19 @@ export default function App() {
       return;
     }
     writeStoredExhibitionId(selectedExhibition.id);
+    avatarKnowledgeBasesLoadSeqRef.current += 1;
+    setAgentConfig({
+      ...agentConfig,
+      knowledgeEnabled: true,
+      knowledgeBaseIds: normalizeKnowledgeBaseIds(selectedExhibition.knowledge_base_ids),
+    });
     setAvatarId(selectedExhibition.bound_avatar_id);
     setModel(boundModel);
     setExhibitionBindingsReady(false);
     setExhibitionConfirmed(true);
     autoStartTriggeredRef.current = false;
     setConnection("connecting");
-  }, [notify, selectedExhibition]);
+  }, [agentConfig, notify, selectedExhibition, setAgentConfig]);
 
   const handleAvatarChange = useCallback(
     (newId: string) => {

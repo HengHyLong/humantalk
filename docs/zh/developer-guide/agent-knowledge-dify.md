@@ -24,7 +24,7 @@ OPENTALKING_AGENT_DIFY_DEFAULT_NAMESPACE_ID=namespace-001
 多知识库场景建议使用 registry：
 
 ```dotenv
-OPENTALKING_AGENT_DIFY_KNOWLEDGE_BASE_REGISTRY={"kb-001":{"name":"四川博览集团知识库","exhibition_id":"expo-2026","namespace_id":"namespace-001","dify_dataset_id":"dataset-001","status":"active"}}
+OPENTALKING_AGENT_DIFY_KNOWLEDGE_BASE_REGISTRY={"kb-001":{"name":"共享知识库","exhibition_ids":["expo-2026","expo-2027"],"namespace_id":"namespace-001","dify_dataset_id":"dataset-001","status":"active"}}
 ```
 
 也可以把 JSON 放在 `OPENTALKING_AGENT_DIFY_REGISTRY_PATH` 指定的文件中。
@@ -37,9 +37,10 @@ OPENTALKING_AGENT_DIFY_KNOWLEDGE_BASE_REGISTRY={"kb-001":{"name":"四川博览�
 `knowledge_base_id`，但不会把 Dify dataset ID 返回浏览器。
 
 在“本届工作台 → 数字人与知识库”中保存运行配置时，后端会把选中的一个或多个
-`knowledgeBaseIds` 一次性同步到 Dify registry，并把 registry 中的
-`exhibition_id` 更新为展会记录的真实 ID。取消选择的旧知识库会保留映射，但清空
-展会归属，后续可重新绑定到其他展会。默认 registry 文件位于
+`knowledgeBaseIds` 一次性同步到 Dify registry，并把展会 ID 追加到 registry 的
+`exhibition_ids`。同一个知识库可以同时绑定多个展会；在某个展会取消选择时，只移除
+该展会的绑定，不影响其他展会继续使用。旧版单值 `exhibition_id` 配置会被自动识别，
+无需手工迁移。默认 registry 文件位于
 `OPENTALKING_AGENT_KNOWLEDGE_ROOT/knowledge_base_registry.json`；如配置了
 `OPENTALKING_AGENT_DIFY_REGISTRY_PATH`，则以指定路径为准。
 

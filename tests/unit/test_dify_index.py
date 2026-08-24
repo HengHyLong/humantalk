@@ -121,6 +121,7 @@ def test_discovery_includes_datasets_created_in_dify_console(tmp_path, monkeypat
         "knowledge_base_id": discovered_id,
         "name": "Dify 网页知识库",
         "exhibition_id": "",
+        "exhibition_ids": [],
         "namespace_id": "default",
         "dify_dataset_id": "c0393c81-cce3-4ec4-8d1e-96a0ffdf9ed7",
         "status": "active",
@@ -200,9 +201,87 @@ def test_sync_exhibition_bindings_supports_many_and_unbinds_removed(tmp_path):
 
     assert [record["knowledge_base_id"] for record in bound] == ["kb-a", "kb-b"]
     records = index.knowledge_base_records()
-    assert records["kb-a"]["exhibition_id"] == "expo-cncc"
-    assert records["kb-b"]["exhibition_id"] == "expo-cncc"
+    assert records["kb-a"]["exhibition_ids"] == ["other-expo", "expo-cncc"]
+    assert records["kb-b"]["exhibition_ids"] == ["expo-cncc"]
     assert records["kb-old"]["exhibition_id"] == ""
     with pytest.raises(DifyKnowledgeError) as caught:
         index.validate_scope(kb_id="kb-old", exhibition_id="expo-cncc")
     assert caught.value.code == "KNOWLEDGE_BASE_EXHIBITION_MISMATCH"
+
+
+def test_syncing_second_exhibition_preserves_first_exhibition_binding(tmp_path):
+    index = DifyKnowledgeIndex(
+        root=tmp_path,
+        base_url="http://dify.test/v1",
+        api_key="server-only-key",
+        default_namespace_id="namespace-default",
+        registry={
+            "kb-first": {
+                "name": "展会一知识库",
+                "exhibition_id": "expo-first",
+                "namespace_id": "namespace-first",
+                "dify_dataset_id": "dataset-first",
+                "status": "active",
+            },
+            "kb-second": {
+                "name": "展会二知识库",
+                "exhibition_id": "",
+                "namespace_id": "namespace-second",
+                "dify_dataset_id": "dataset-second",
+                "status": "active",
+            },
+        },
+    )
+
+    index.sync_exhibition_bindings(
+        exhibition_id="expo-second",
+        knowledge_base_ids=["kb-second"],
+    )
+
+    records = index.knowledge_base_records()
+    assert records["kb-first"]["exhibition_id"] == "expo-first"
+    assert records["kb-second"]["exhibition_id"] == "expo-second"
+
+
+def test_one_knowledge_base_can_be_shared_and_unbound_per_exhibition(tmp_path):
+    index = DifyKnowledgeIndex(
+        root=tmp_path,
+        base_url="http://dify.test/v1",
+        api_key="server-only-key",
+        default_namespace_id="namespace-shared",
+        registry={
+            "kb-shared": {
+                "name": "共享知识库",
+                "exhibition_id": "expo-first",
+                "namespace_id": "namespace-shared",
+                "dify_dataset_id": "dataset-shared",
+                "status": "active",
+            }
+        },
+    )
+
+    index.sync_exhibition_bindings(
+        exhibition_id="expo-second",
+        knowledge_base_ids=["kb-shared"],
+    )
+
+    shared = index.knowledge_base_records()["kb-shared"]
+    assert shared["exhibition_ids"] == ["expo-first", "expo-second"]
+    assert index.validate_scope(
+        kb_id="kb-shared", exhibition_id="expo-first"
+    )["exhibition_id"] == "expo-first"
+    assert index.validate_scope(
+        kb_id="kb-shared", exhibition_id="expo-second"
+    )["exhibition_id"] == "expo-second"
+
+    index.sync_exhibition_bindings(
+        exhibition_id="expo-second",
+        knowledge_base_ids=[],
+        previous_knowledge_base_ids=["kb-shared"],
+    )
+
+    remaining = index.knowledge_base_records()["kb-shared"]
+    assert remaining["exhibition_ids"] == ["expo-first"]
+    assert index.validate_scope(kb_id="kb-shared", exhibition_id="expo-first")
+    with pytest.raises(DifyKnowledgeError):
+        index.validate_scope(kb_id="kb-shared", exhibition_id="expo-second")

@@ -2472,6 +2472,7 @@ def public_exhibitions(request: Request) -> dict[str, Any]:
             "bound_stt_provider": item.get("boundSttProvider") or item.get("bound_stt_provider"),
             "bound_stt_model": item.get("boundSttModel") or item.get("bound_stt_model"),
             "bound_scene": item.get("boundScene") or item.get("bound_scene"),
+            "knowledge_base_ids": _knowledge_base_ids(item),
         })
     return {"items": items}
 

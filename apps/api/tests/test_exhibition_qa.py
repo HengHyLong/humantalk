@@ -141,6 +141,107 @@ def test_qa_rejects_unknown_or_cross_exhibition_knowledge_base() -> None:
     assert missing.value.status_code == 404
 
 
+def test_qa_ignores_stale_session_knowledge_base_after_exhibition_switch(tmp_path) -> None:
+    registry_path = tmp_path / "knowledge_base_registry.json"
+    registry_path.write_text(
+        json.dumps(
+            {
+                "kb-first": {
+                    "dify_dataset_id": "dataset-first",
+                    "exhibition_id": "expo-first",
+                    "namespace_id": "ns-first",
+                },
+                "kb-second": {
+                    "dify_dataset_id": "dataset-second",
+                    "exhibition_id": "expo-second",
+                    "namespace_id": "ns-second",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class MappingStore:
+        def list_records(self, kind: str, *, exhibition_id: str | None = None):
+            del kind, exhibition_id
+            return []
+
+    settings = SimpleNamespace(
+        dify_dataset_map="{}",
+        agent_dify_dataset_map="",
+        agent_dify_knowledge_base_registry="",
+        agent_dify_registry_path=str(registry_path),
+        agent_dify_knowledge_base_id="",
+        agent_dify_dataset_id="",
+        dify_default_dataset_id="",
+    )
+
+    targets = qa_routes._resolve_query_dify_targets(
+        settings,
+        MappingStore(),
+        "expo-first",
+        [],
+        {"knowledge_base_ids": '["kb-second"]'},
+    )
+
+    assert [(target.knowledge_base_id, target.dataset_id) for target in targets] == [
+        ("kb-first", "dataset-first")
+    ]
+
+    with pytest.raises(HTTPException) as mismatch:
+        qa_routes._resolve_query_dify_targets(
+            settings,
+            MappingStore(),
+            "expo-first",
+            ["kb-second"],
+            None,
+        )
+    assert mismatch.value.status_code == 409
+
+
+def test_qa_resolves_a_shared_knowledge_base_for_each_bound_exhibition(tmp_path) -> None:
+    registry_path = tmp_path / "knowledge_base_registry.json"
+    registry_path.write_text(
+        json.dumps(
+            {
+                "kb-shared": {
+                    "dify_dataset_id": "dataset-shared",
+                    "exhibition_id": "expo-first",
+                    "exhibition_ids": ["expo-first", "expo-second"],
+                    "namespace_id": "ns-shared",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class MappingStore:
+        def list_records(self, kind: str, *, exhibition_id: str | None = None):
+            del kind, exhibition_id
+            return []
+
+    settings = SimpleNamespace(
+        dify_dataset_map="{}",
+        agent_dify_dataset_map="",
+        agent_dify_knowledge_base_registry="",
+        agent_dify_registry_path=str(registry_path),
+        agent_dify_knowledge_base_id="",
+        agent_dify_dataset_id="",
+        dify_default_dataset_id="",
+    )
+
+    for exhibition_id in ("expo-first", "expo-second"):
+        targets = qa_routes._resolve_dify_targets(
+            settings,
+            MappingStore(),
+            exhibition_id,
+            ["kb-shared"],
+        )
+        assert [(target.knowledge_base_id, target.dataset_id) for target in targets] == [
+            ("kb-shared", "dataset-shared")
+        ]
+
+
 def test_qa_loads_default_dify_registry_from_knowledge_root(tmp_path) -> None:
     knowledge_root = tmp_path / "knowledge"
     knowledge_root.mkdir()

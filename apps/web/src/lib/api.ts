@@ -393,6 +393,7 @@ export type ExhibitionSummary = {
   bound_stt_provider?: string | null;
   bound_stt_model?: string | null;
   bound_scene?: string | null;
+  knowledge_base_ids?: string[];
 };
 
 export async function listExhibitions(): Promise<{ items: ExhibitionSummary[] }> {
@@ -707,6 +708,9 @@ export type KnowledgeBaseSummary = {
   error_document_count: number;
   created_at: string;
   updated_at: string;
+  exhibition_id?: string;
+  exhibition_ids?: string[];
+  namespace_id?: string;
 };
 
 export type KnowledgeBasesResponse = {

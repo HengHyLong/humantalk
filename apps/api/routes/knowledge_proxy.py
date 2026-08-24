@@ -84,13 +84,16 @@ def _handle_error(exc: DifyKnowledgeError, trace_id: str) -> JSONResponse:
     return _error(exc.status_code, exc.code, str(exc), trace_id)
 
 
-def _record_response(record: dict[str, str]) -> dict[str, Any]:
+def _record_response(
+    record: dict[str, Any], *, exhibition_id: str = ""
+) -> dict[str, Any]:
     # dify_dataset_id is deliberately not returned to browser clients.
     return {
         "id": record["knowledge_base_id"],
         "knowledge_base_id": record["knowledge_base_id"],
         "name": record["name"],
-        "exhibition_id": record["exhibition_id"],
+        "exhibition_id": exhibition_id or record["exhibition_id"],
+        "exhibition_ids": DifyKnowledgeIndex.exhibition_ids_for_record(record),
         "namespace_id": record["namespace_id"],
         "status": record["status"],
     }
@@ -136,9 +139,9 @@ async def list_knowledge_bases(
             logger.warning("Dify dataset discovery failed; using registry only", exc_info=True)
             records = index.knowledge_base_records().values()
         items = [
-            _record_response(record)
+            _record_response(record, exhibition_id=exhibition_id or "")
             for record in records
-            if (not exhibition_id or record["exhibition_id"] == exhibition_id)
+            if index.record_matches_exhibition(record, exhibition_id or "")
             and (not namespace_id or record["namespace_id"] == namespace_id)
         ]
     except DifyKnowledgeError as exc:

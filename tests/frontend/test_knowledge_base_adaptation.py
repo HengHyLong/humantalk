@@ -117,6 +117,15 @@ def test_realtime_knowledge_selection_can_sync_to_live_session() -> None:
     assert "disabled={!knowledgeBaseReady}" in settings_source
 
 
+def test_exhibition_selection_uses_exhibition_scoped_knowledge_bases() -> None:
+    app_source = (ROOT / "apps/web/src/App.tsx").read_text(encoding="utf-8")
+    api_source = (ROOT / "apps/web/src/lib/api.ts").read_text(encoding="utf-8")
+
+    assert "knowledge_base_ids?: string[]" in api_source
+    assert "normalizeKnowledgeBaseIds(selectedExhibition.knowledge_base_ids)" in app_source
+    assert "selectedPersonaId || exhibitionConfirmed" in app_source
+
+
 def test_realtime_settings_panel_does_not_manage_knowledge_documents() -> None:
     settings_source = (ROOT / "apps/web/src/components/SettingsPanel.tsx").read_text(encoding="utf-8")
     app_source = (ROOT / "apps/web/src/App.tsx").read_text(encoding="utf-8")

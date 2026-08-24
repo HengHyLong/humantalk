@@ -492,6 +492,9 @@ export type KnowledgeBaseSummary = {
   error_document_count: number;
   created_at: string;
   updated_at: string;
+  exhibition_id?: string;
+  exhibition_ids?: string[];
+  namespace_id?: string;
 };
 
 export type KnowledgeBasesResponse = {

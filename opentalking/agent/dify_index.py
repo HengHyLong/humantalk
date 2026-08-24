@@ -221,7 +221,7 @@ class DifyKnowledgeIndex:
     def resolve_dataset_id(self, kb_id: str) -> str:
         return self._dataset_for(kb_id)
 
-    def get_scope_record(self, kb_id: str) -> dict[str, str] | None:
+    def get_scope_record(self, kb_id: str) -> dict[str, Any] | None:
         record = self.knowledge_base_records().get(kb_id.strip())
         if record:
             return record
@@ -232,6 +232,7 @@ class DifyKnowledgeIndex:
             "knowledge_base_id": kb_id.strip(),
             "name": kb_id.strip(),
             "exhibition_id": "",
+            "exhibition_ids": [],
             "namespace_id": "",
             "dify_dataset_id": dataset_id,
             "status": "active",
@@ -243,7 +244,7 @@ class DifyKnowledgeIndex:
         kb_id: str,
         exhibition_id: str = "",
         namespace_id: str = "",
-    ) -> dict[str, str]:
+    ) -> dict[str, Any]:
         record = self.get_scope_record(kb_id)
         if record is None:
             raise DifyKnowledgeError(
@@ -251,7 +252,8 @@ class DifyKnowledgeIndex:
                 code="KNOWLEDGE_BASE_NOT_FOUND",
                 status_code=404,
             )
-        if exhibition_id and record["exhibition_id"] != exhibition_id:
+        exhibition_ids = self.exhibition_ids_for_record(record)
+        if exhibition_id and exhibition_id not in exhibition_ids:
             raise DifyKnowledgeError(
                 "知识库不属于当前展会",
                 code="KNOWLEDGE_BASE_EXHIBITION_MISMATCH",
@@ -263,14 +265,16 @@ class DifyKnowledgeIndex:
                 code="KNOWLEDGE_BASE_NAMESPACE_MISMATCH",
                 status_code=409,
             )
+        if exhibition_id:
+            return {**record, "exhibition_id": exhibition_id}
         return record
 
-    def knowledge_base_records(self) -> dict[str, dict[str, str]]:
+    def knowledge_base_records(self) -> dict[str, dict[str, Any]]:
         records = dict(self._configured_registry)
         records.update(self._load_registry_file())
         return records
 
-    def discover_knowledge_base_records(self) -> dict[str, dict[str, str]]:
+    def discover_knowledge_base_records(self) -> dict[str, dict[str, Any]]:
         """Return registry mappings plus datasets that only exist in Dify.
 
         Dify datasets created from the Dify web console do not automatically
@@ -302,6 +306,7 @@ class DifyKnowledgeIndex:
                 "knowledge_base_id": knowledge_base_id,
                 "name": str(dataset.get("name", "") or knowledge_base_id).strip(),
                 "exhibition_id": "",
+                "exhibition_ids": [],
                 "namespace_id": self.default_namespace_id,
                 "dify_dataset_id": dataset_id,
                 "status": "active",
@@ -320,7 +325,7 @@ class DifyKnowledgeIndex:
         exhibition_id: str,
         knowledge_base_ids: list[str],
         previous_knowledge_base_ids: list[str] | None = None,
-    ) -> list[dict[str, str]]:
+    ) -> list[dict[str, Any]]:
         """Atomically bind multiple logical knowledge bases to one exhibition."""
 
         clean_exhibition_id = exhibition_id.strip()
@@ -347,22 +352,37 @@ class DifyKnowledgeIndex:
             current = self.knowledge_base_records()
             for knowledge_base_id in selected_ids:
                 source = records[knowledge_base_id]
+                bound_exhibition_ids = self.exhibition_ids_for_record(source)
+                if clean_exhibition_id not in bound_exhibition_ids:
+                    bound_exhibition_ids.append(clean_exhibition_id)
                 current[knowledge_base_id] = {
                     **source,
                     "knowledge_base_id": knowledge_base_id,
-                    "exhibition_id": clean_exhibition_id,
+                    "exhibition_id": str(source.get("exhibition_id") or clean_exhibition_id),
+                    "exhibition_ids": bound_exhibition_ids,
                     "namespace_id": source.get("namespace_id") or self.default_namespace_id,
                     "status": "active",
                 }
             for knowledge_base_id in set(previous_ids) - set(selected_ids):
                 source = current.get(knowledge_base_id)
-                if source and source.get("exhibition_id") == clean_exhibition_id:
-                    current[knowledge_base_id] = {**source, "exhibition_id": ""}
+                if source:
+                    remaining_exhibition_ids = [
+                        item
+                        for item in self.exhibition_ids_for_record(source)
+                        if item != clean_exhibition_id
+                    ]
+                    current[knowledge_base_id] = {
+                        **source,
+                        "exhibition_id": remaining_exhibition_ids[0]
+                        if remaining_exhibition_ids
+                        else "",
+                        "exhibition_ids": remaining_exhibition_ids,
+                    }
             self._write_registry_records(current)
             self.dataset_map.update(self._dataset_map_from_records(current))
         return [current[item] for item in selected_ids]
 
-    def set_knowledge_base_record(self, record: dict[str, str]) -> dict[str, str]:
+    def set_knowledge_base_record(self, record: dict[str, Any]) -> dict[str, Any]:
         required = (
             "knowledge_base_id",
             "name",
@@ -371,6 +391,9 @@ class DifyKnowledgeIndex:
             "dify_dataset_id",
         )
         normalized = {key: str(record.get(key, "") or "").strip() for key in required}
+        normalized["exhibition_ids"] = self.exhibition_ids_for_record(record)
+        if normalized["exhibition_id"] not in normalized["exhibition_ids"]:
+            normalized["exhibition_ids"].insert(0, normalized["exhibition_id"])
         normalized["status"] = str(record.get("status", "active") or "active").strip()
         if not all(normalized[key] for key in required):
             raise ValueError("knowledge-base mapping fields must not be empty")
@@ -560,14 +583,14 @@ class DifyKnowledgeIndex:
             raise DifyKnowledgeError("Dify 返回结果必须是对象")
         return payload
 
-    def _load_registry_file(self) -> dict[str, dict[str, str]]:
+    def _load_registry_file(self) -> dict[str, dict[str, Any]]:
         try:
             payload = json.loads(self.registry_path.read_text(encoding="utf-8"))
         except (FileNotFoundError, json.JSONDecodeError, OSError):
             return {}
         return self._parse_registry(payload)
 
-    def _write_registry_records(self, records: dict[str, dict[str, str]]) -> None:
+    def _write_registry_records(self, records: dict[str, dict[str, Any]]) -> None:
         self.registry_path.parent.mkdir(parents=True, exist_ok=True)
         temporary = self.registry_path.with_suffix(self.registry_path.suffix + ".tmp")
         temporary.write_text(
@@ -593,7 +616,28 @@ class DifyKnowledgeIndex:
         return result
 
     @classmethod
-    def _parse_registry(cls, source: str | dict[str, Any] | None) -> dict[str, dict[str, str]]:
+    def exhibition_ids_for_record(cls, record: dict[str, Any]) -> list[str]:
+        raw = record.get("exhibition_ids", record.get("exhibitionIds", []))
+        if isinstance(raw, str):
+            values = [raw]
+        elif isinstance(raw, (list, tuple, set)):
+            values = [str(item) for item in raw]
+        else:
+            values = []
+        legacy = str(
+            record.get("exhibition_id", record.get("exhibitionId", "")) or ""
+        ).strip()
+        if legacy:
+            values.insert(0, legacy)
+        return cls._unique_ids(values)
+
+    @classmethod
+    def record_matches_exhibition(cls, record: dict[str, Any], exhibition_id: str) -> bool:
+        clean_exhibition_id = exhibition_id.strip()
+        return not clean_exhibition_id or clean_exhibition_id in cls.exhibition_ids_for_record(record)
+
+    @classmethod
+    def _parse_registry(cls, source: str | dict[str, Any] | None) -> dict[str, dict[str, Any]]:
         payload: Any = source
         if isinstance(source, str):
             raw = source.strip()
@@ -613,7 +657,7 @@ class DifyKnowledgeIndex:
                     return {}
         if not isinstance(payload, dict):
             return {}
-        records: dict[str, dict[str, str]] = {}
+        records: dict[str, dict[str, Any]] = {}
         for key, value in payload.items():
             if not isinstance(value, dict):
                 continue
@@ -625,6 +669,9 @@ class DifyKnowledgeIndex:
                 "dify_dataset_id": str(value.get("dify_dataset_id", value.get("dataset_id", "")) or "").strip(),
                 "status": str(value.get("status", "active") or "active").strip(),
             }
+            record["exhibition_ids"] = cls.exhibition_ids_for_record(value)
+            if not record["exhibition_id"] and record["exhibition_ids"]:
+                record["exhibition_id"] = record["exhibition_ids"][0]
             if record["knowledge_base_id"] and record["dify_dataset_id"]:
                 records[record["knowledge_base_id"]] = record
         return records
@@ -651,7 +698,7 @@ class DifyKnowledgeIndex:
         return {str(key).strip(): str(value).strip() for key, value in payload.items() if str(key).strip() and str(value).strip()}
 
     @staticmethod
-    def _dataset_map_from_records(records: dict[str, dict[str, str]]) -> dict[str, str]:
+    def _dataset_map_from_records(records: dict[str, dict[str, Any]]) -> dict[str, str]:
         return {
             key: value["dify_dataset_id"]
             for key, value in records.items()

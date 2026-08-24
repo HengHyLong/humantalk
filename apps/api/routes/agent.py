@@ -11,7 +11,7 @@ from typing import Any, Literal
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from opentalking.agent.dify_index import DifyKnowledgeError, DifyKnowledgeIndex
 from opentalking.agent.context_builder import default_knowledge_store, default_memory_store
@@ -80,6 +80,7 @@ class KnowledgeBaseResponse(BaseModel):
     created_at: str
     updated_at: str
     exhibition_id: str = ""
+    exhibition_ids: list[str] = Field(default_factory=list)
     namespace_id: str = ""
     status: str = "active"
 
@@ -351,6 +352,7 @@ async def list_knowledge_bases() -> KnowledgeBasesResponse:
                         created_at="",
                         updated_at="",
                         exhibition_id=record["exhibition_id"],
+                        exhibition_ids=store.knowledge_index.exhibition_ids_for_record(record),
                         namespace_id=record["namespace_id"],
                         status=record["status"],
                     )
@@ -556,6 +558,9 @@ async def query_rag_index(
         "indexed": status.indexed,
         "reason": status.reason,
         "exhibition_id": record.get("exhibition_id", exhibition_id),
+        "exhibition_ids": DifyKnowledgeIndex.exhibition_ids_for_record(record)
+        if isinstance(store.knowledge_index, DifyKnowledgeIndex)
+        else ([exhibition_id] if exhibition_id else []),
         "knowledge_base_id": record.get("knowledge_base_id", kb_id),
         "namespace_id": record.get("namespace_id", namespace_id),
         "results": [

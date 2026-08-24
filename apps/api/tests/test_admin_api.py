@@ -103,8 +103,57 @@ def test_exhibition_save_syncs_multiple_dify_registry_bindings(tmp_path, monkeyp
         assert response.status_code == 200, response.text
         assert response.json()["knowledgeBaseIds"] == ["kb-cncc-main", "kb-cncc-agenda"]
         records = index.knowledge_base_records()
-        assert records["kb-cncc-main"]["exhibition_id"] == "expo-test"
-        assert records["kb-cncc-agenda"]["exhibition_id"] == "expo-test"
+        assert records["kb-cncc-main"]["exhibition_ids"] == ["old-exhibition", "expo-test"]
+        assert records["kb-cncc-agenda"]["exhibition_ids"] == ["expo-test"]
+        public = client.get("/exhibitions")
+        public_exhibition = next(item for item in public.json()["items"] if item["id"] == "expo-test")
+        assert public_exhibition["knowledge_base_ids"] == ["kb-cncc-main", "kb-cncc-agenda"]
+
+
+def test_two_exhibitions_can_share_one_dify_knowledge_base(tmp_path, monkeypatch) -> None:
+    index = DifyKnowledgeIndex(
+        root=tmp_path / "knowledge",
+        base_url="http://dify.test/v1",
+        api_key="server-only-key",
+        registry={
+            "kb-shared": {
+                "name": "共享知识库",
+                "exhibition_id": "",
+                "namespace_id": "namespace-shared",
+                "dify_dataset_id": "dataset-shared",
+                "status": "active",
+            }
+        },
+    )
+    monkeypatch.setattr(
+        admin_routes,
+        "default_knowledge_store",
+        lambda: SimpleNamespace(knowledge_index=index),
+    )
+
+    with _client(tmp_path) as client:
+        headers = _login(client)
+        first = client.patch(
+            "/api/v1/admin/event/exhibitions/expo-test",
+            headers=headers,
+            json={"knowledgeBaseIds": ["kb-shared"]},
+        )
+        assert first.status_code == 200, first.text
+        second = client.post(
+            "/api/v1/admin/event/exhibitions",
+            headers=headers,
+            json={
+                "id": "expo-second",
+                "name": "第二展会",
+                "knowledgeBaseIds": ["kb-shared"],
+            },
+        )
+        assert second.status_code == 200, second.text
+
+        record = index.knowledge_base_records()["kb-shared"]
+        assert record["exhibition_ids"] == ["expo-test", "expo-second"]
+        assert index.validate_scope(kb_id="kb-shared", exhibition_id="expo-test")
+        assert index.validate_scope(kb_id="kb-shared", exhibition_id="expo-second")
 
 
 def test_point_creation_infers_exhibition_from_venue(tmp_path) -> None:
