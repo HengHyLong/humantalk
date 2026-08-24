@@ -325,6 +325,21 @@ def test_frontend_surfaces_runtime_audio_errors_in_chat_panel():
     assert "voice segment failed" in chat_input
 
 
+def test_presentation_close_keeps_voice_listener_mounted_and_restores_conversation():
+    display = (WEB / "components" / "DigitalHumanDisplay.tsx").read_text(encoding="utf-8")
+
+    input_start = display.index('<div className="digital-display-chat-input"')
+    input_end = display.index("</section>", input_start)
+    input_block = display[input_start:input_end]
+    auto_close_start = display.index("if (!presentationKey || !onAutoClosePresentation) return;")
+    auto_close_end = display.index("const submit =", auto_close_start)
+    auto_close_block = display[auto_close_start:auto_close_end]
+
+    assert "<ChatInput" in input_block
+    assert "!subtitleActive" not in display[input_start - 80:input_start]
+    assert "closePresentation(onAutoClosePresentation)" in auto_close_block
+
+
 def test_frontend_preserves_custom_avatar_selection_across_model_changes():
     app = (WEB / "App.tsx").read_text(encoding="utf-8")
 

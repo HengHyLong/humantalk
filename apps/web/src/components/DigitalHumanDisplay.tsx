@@ -247,9 +247,12 @@ export function DigitalHumanDisplay({
 
   useEffect(() => {
     if (!presentationKey || !onAutoClosePresentation) return;
-    const timer = window.setTimeout(onAutoClosePresentation, PRESENTATION_AUTO_CLOSE_MS);
+    const timer = window.setTimeout(
+      () => closePresentation(onAutoClosePresentation),
+      PRESENTATION_AUTO_CLOSE_MS,
+    );
     return () => window.clearTimeout(timer);
-  }, [onAutoClosePresentation, presentationKey]);
+  }, [closePresentation, onAutoClosePresentation, presentationKey]);
 
   const submit = () => {
     const text = draft.trim();
@@ -420,7 +423,6 @@ export function DigitalHumanDisplay({
               ))}
             </div>
 
-            {!subtitleActive ? (
             <div className="digital-display-chat-input" data-prompt={english ? "Ask another question" : "继续提问"}>
               {inputMode === "voice" ? (
                 <ChatInput
@@ -470,7 +472,6 @@ export function DigitalHumanDisplay({
                 {inputMode === "voice" ? (english ? "Keyboard" : "键盘输入") : (english ? "Voice" : "语音输入")}
               </button>
             </div>
-            ) : null}
           </section>
 
           {presentationActive ? (
