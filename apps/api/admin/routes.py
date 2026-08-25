@@ -30,6 +30,7 @@ from .event_import import (
     public_preview,
 )
 from apps.api.routes.runtime_config import RuntimeConfigPayload, apply_runtime_config
+from opentalking.providers.stt.factory import normalize_stt_provider, stt_provider_config
 from opentalking.agent.context_builder import default_knowledge_store
 from opentalking.agent.dify_index import DifyKnowledgeError, DifyKnowledgeIndex
 from opentalking.scene_assets import SceneAssetStore
@@ -2458,6 +2459,13 @@ def public_exhibitions(request: Request) -> dict[str, Any]:
     store = get_store(request)
     items: list[dict[str, Any]] = []
     for item in store.list_records("exhibitions"):
+        bound_stt_provider = item.get("boundSttProvider") or item.get("bound_stt_provider")
+        bound_stt_status = None
+        if bound_stt_provider:
+            try:
+                bound_stt_status = stt_provider_config(normalize_stt_provider(str(bound_stt_provider), default=None))
+            except ValueError:
+                bound_stt_status = {"runtime_ready": False, "availability_error": "展会绑定的语音识别服务不受支持"}
         items.append({
             "id": item["id"],
             "name": item.get("name") or item.get("code") or item["id"],
@@ -2469,8 +2477,10 @@ def public_exhibitions(request: Request) -> dict[str, Any]:
             "bound_voice_id": item.get("boundVoiceId") or item.get("bound_voice_id"),
             "bound_voice_provider": item.get("boundVoiceProvider") or item.get("bound_voice_provider"),
             "bound_voice_model": item.get("boundVoiceModel") or item.get("bound_voice_model"),
-            "bound_stt_provider": item.get("boundSttProvider") or item.get("bound_stt_provider"),
+            "bound_stt_provider": bound_stt_provider,
             "bound_stt_model": item.get("boundSttModel") or item.get("bound_stt_model"),
+            "bound_stt_runtime_ready": bound_stt_status.get("runtime_ready") if bound_stt_status else None,
+            "bound_stt_availability_error": bound_stt_status.get("availability_error") if bound_stt_status else None,
             "bound_scene": item.get("boundScene") or item.get("bound_scene"),
             "knowledge_base_ids": _knowledge_base_ids(item),
         })

@@ -556,6 +556,9 @@ function validateAudioProviderConfigBeforeStart({
         ? "小米 MiMo 语音识别缺少 OPENTALKING_STT_XIAOMI_API_KEY 或 OPENTALKING_STT_XIAOMI_BASE_URL"
         : "API 语音识别缺少 OPENTALKING_STT_DASHSCOPE_API_KEY");
   }
+  if (normalizeAsrProvider(sttProvider, "dashscope") === "sensevoice" && sttStatus?.runtime_ready !== true) {
+    missing.push(sttStatus?.availability_error || "本地 SenseVoice 运行时未就绪");
+  }
   if (ttsProviderNeedsApiKey(ttsProvider) && (ttsKeySet !== true || ((ttsProvider === "openai_compatible" || ttsProvider === "xiaomi_mimo") && ttsServiceUrlSet !== true))) {
     missing.push(ttsProvider === "openai_compatible"
       ? "当前 TTS API 缺少 OPENTALKING_TTS_OPENAI_API_KEY 或 OPENTALKING_TTS_OPENAI_BASE_URL"
@@ -592,7 +595,7 @@ type HealthResponse = {
   stt_device?: string;
   stt_default_provider?: string;
   stt_enabled_providers?: string[];
-  stt_providers?: Record<string, { key_set?: boolean; model?: string; model_dir?: string; device?: string; service_url_set?: boolean }>;
+  stt_providers?: Record<string, { key_set?: boolean; model?: string; model_dir?: string; device?: string; service_url_set?: boolean; runtime_ready?: boolean; availability_error?: string }>;
 };
 
 function sanitizeFasterLivePortraitConfig(
@@ -2111,6 +2114,10 @@ export default function App() {
       if (ev === "speech.started") {
         const staleId = streamingAssistantMsgIdRef.current;
         const pendingId = pendingAssistantMsgIdRef.current;
+        // The pending marker only protects the short window between a new
+        // request and its own speech.started event. Once this event arrives,
+        // speech.ended belongs to the active turn and must be handled.
+        pendingAssistantMsgIdRef.current = null;
         clearSubtitleState(false);
         setIsSpeaking(true);
         setVideoState("think");

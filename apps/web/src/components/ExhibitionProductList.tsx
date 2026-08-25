@@ -10,6 +10,7 @@ type ExhibitionProductListProps = {
   products: ExhibitionEntityCardData[];
   immersive?: boolean;
   english?: boolean;
+  onSelect?: (product: ExhibitionEntityCardData) => void;
   onImageClick?: (src: string, alt: string) => void;
 };
 
@@ -17,6 +18,7 @@ export function ExhibitionProductList({
   products,
   immersive = false,
   english = false,
+  onSelect,
   onImageClick,
 }: ExhibitionProductListProps) {
   return (
@@ -37,12 +39,25 @@ export function ExhibitionProductList({
           const imageUrl = product.image_urls.map(displayImageUrl).find(Boolean);
           const imageAlt = english ? `${product.name} product image` : `${product.name}展品图片`;
           return (
-            <article className="exhibition-product-list-item" key={`${product.kind}-${product.id}`} role="listitem">
+            <button
+              type="button"
+              className="exhibition-product-list-item"
+              key={`${product.kind}-${product.id}`}
+              role="listitem"
+              onClick={() => onSelect?.(product)}
+              disabled={!onSelect}
+              aria-label={english ? `Learn about ${product.name}` : `了解${product.name}`}
+            >
               {imageUrl ? (
                 <button
                   type="button"
                   className="digital-display-zoom-trigger exhibition-product-list-image"
-                  onClick={() => onImageClick?.(imageUrl, imageAlt)}
+                  onClick={(event) => {
+                    // 图片详情只能由这次明确的图片点击打开，不能继续冒泡
+                    // 到展品卡片，避免同时触发展品详情播报。
+                    event.stopPropagation();
+                    onImageClick?.(imageUrl, imageAlt);
+                  }}
                   aria-label={english ? `Enlarge ${product.name} product image` : `放大查看${product.name}展品图片`}
                   disabled={!onImageClick}
                 >
@@ -57,7 +72,7 @@ export function ExhibitionProductList({
                 <div className="exhibition-product-list-item-placeholder" aria-hidden="true">{english ? "Product" : "展品"}</div>
               )}
               <strong>{product.name}</strong>
-            </article>
+            </button>
           );
         })}
       </div>

@@ -1,5 +1,6 @@
 import { ROLE_BUTTON_PERMISSIONS, ROLE_PERMISSIONS } from "./policy";
 import { AdminRequestError, toSafeRequestError } from "./errors";
+import { beginAdminProgress, finishAdminProgress, notifyAdmin, updateAdminProgress } from "./feedback";
 import { EDGE_ZH_VOICES } from "../constants/edgeZhVoices";
 import type {
   AdminUser,
@@ -717,19 +718,54 @@ export class FetchAdminApiClient implements AdminApiClient {
     return window.localStorage.getItem(`${STORAGE_PREFIX}token`) || readStoredSessionToken();
   }
 
+  private requestLabel(path: string, method: string): string {
+    if (path.includes("/gifs/upload")) return "GIF 文件上传";
+    if (path.includes("/event/images/upload")) return "展会图片上传";
+    if (path.includes("/import/preview")) return "Excel/ZIP 导入校验";
+    const resource = path.split("/").filter(Boolean).slice(-1)[0] || "请求";
+    return method === "GET" ? `读取${resource}` : `${resource}操作`;
+  }
+
+  private async formRequest(url: string, init: RequestInit, token: string, progressId: string, label: string): Promise<Response> {
+    return new Promise<Response>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open(String(init.method || "POST"), url, true);
+      const headers = new Headers(init.headers);
+      if (token) headers.set("Authorization", `Bearer ${token}`);
+      headers.forEach((value, key) => xhr.setRequestHeader(key, value));
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable) updateAdminProgress({ id: progressId, label, progress: Math.min(100, event.loaded / event.total * 100), phase: "progress" });
+      };
+      xhr.onload = () => resolve(new Response(xhr.responseText, { status: xhr.status, statusText: xhr.statusText }));
+      xhr.onerror = () => reject(new AdminRequestError("Network request failed", { code: "NETWORK_ERROR" }));
+      xhr.onabort = () => reject(new AdminRequestError("Upload canceled", { code: "NETWORK_ERROR" }));
+      xhr.send(init.body as FormData);
+    });
+  }
+
   private async request<T>(path: string, init: RequestInit = {}, tokenOverride?: string): Promise<T> {
     const token = tokenOverride ?? this.token();
+    const method = String(init.method || "GET").toUpperCase();
+    const label = this.requestLabel(path, method);
+    const isMutation = method !== "GET" && method !== "HEAD";
+    const isUpload = init.body instanceof FormData && typeof XMLHttpRequest !== "undefined";
+    const progressId = isUpload ? beginAdminProgress(label) : "";
     let response: Response;
     try {
-      response = await fetch(buildAdminFetchUrl(`/v1${path}`), {
+      const requestInit = {
         ...init,
         headers: {
           ...(init.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
           ...init.headers,
         },
-      });
+      } satisfies RequestInit;
+      response = isUpload
+        ? await this.formRequest(buildAdminFetchUrl(`/v1${path}`), requestInit, token, progressId, label)
+        : await fetch(buildAdminFetchUrl(`/v1${path}`), requestInit);
     } catch (error) {
+      if (progressId) finishAdminProgress(progressId, label, false);
+      notifyAdmin(`${label}失败：无法连接服务，请稍后重试`, "error");
       throw new AdminRequestError(error instanceof Error ? error.message : "Network request failed", { code: "NETWORK_ERROR" });
     }
     if (response.status === 401 && path !== "/auth/login") {
@@ -742,24 +778,33 @@ export class FetchAdminApiClient implements AdminApiClient {
       try {
         payload = await response.json();
       } catch { /* keep status fallback */ }
-      throw toSafeRequestError(response.status, payload, response.headers.get("X-Trace-Id") || response.headers.get("X-Request-Id") || undefined);
+      if (progressId) finishAdminProgress(progressId, label, false);
+      const requestError = toSafeRequestError(response.status, payload, response.headers.get("X-Trace-Id") || response.headers.get("X-Request-Id") || undefined);
+      notifyAdmin(`${label}失败：${requestError.message}`, "error");
+      throw requestError;
     }
+    if (progressId) finishAdminProgress(progressId, label, true);
+    if (isMutation) notifyAdmin(`${label}成功`, "success");
     if (response.status === 204) return undefined as T;
     return response.json() as Promise<T>;
   }
 
   private async download(path: string): Promise<string> {
     let response: Response;
-    try { response = await fetch(buildAdminFetchUrl(`/v1${path}`), { headers: this.token() ? { Authorization: `Bearer ${this.token()}` } : {} }); } catch (error) { throw new AdminRequestError(error instanceof Error ? error.message : "Network request failed", { code: "NETWORK_ERROR" }); }
-    if (!response.ok) { let payload: unknown = null; try { payload = await response.json(); } catch { /* safe fallback */ } throw toSafeRequestError(response.status, payload, response.headers.get("X-Trace-Id") || undefined); }
-    return response.text();
+    try { response = await fetch(buildAdminFetchUrl(`/v1${path}`), { headers: this.token() ? { Authorization: `Bearer ${this.token()}` } : {} }); } catch (error) { notifyAdmin("文件下载失败：无法连接服务，请稍后重试", "error"); throw new AdminRequestError(error instanceof Error ? error.message : "Network request failed", { code: "NETWORK_ERROR" }); }
+    if (!response.ok) { let payload: unknown = null; try { payload = await response.json(); } catch { /* safe fallback */ } const requestError = toSafeRequestError(response.status, payload, response.headers.get("X-Trace-Id") || undefined); notifyAdmin(`文件下载失败：${requestError.message}`, "error"); throw requestError; }
+    const result = await response.text();
+    notifyAdmin("文件下载成功", "success");
+    return result;
   }
 
   private async downloadBlob(path: string): Promise<Blob> {
     let response: Response;
-    try { response = await fetch(buildAdminFetchUrl(`/v1${path}`), { headers: this.token() ? { Authorization: `Bearer ${this.token()}` } : {} }); } catch (error) { throw new AdminRequestError(error instanceof Error ? error.message : "Network request failed", { code: "NETWORK_ERROR" }); }
-    if (!response.ok) { let payload: unknown = null; try { payload = await response.json(); } catch { /* safe fallback */ } throw toSafeRequestError(response.status, payload, response.headers.get("X-Trace-Id") || undefined); }
-    return response.blob();
+    try { response = await fetch(buildAdminFetchUrl(`/v1${path}`), { headers: this.token() ? { Authorization: `Bearer ${this.token()}` } : {} }); } catch (error) { notifyAdmin("文件下载失败：无法连接服务，请稍后重试", "error"); throw new AdminRequestError(error instanceof Error ? error.message : "Network request failed", { code: "NETWORK_ERROR" }); }
+    if (!response.ok) { let payload: unknown = null; try { payload = await response.json(); } catch { /* safe fallback */ } const requestError = toSafeRequestError(response.status, payload, response.headers.get("X-Trace-Id") || undefined); notifyAdmin(`文件下载失败：${requestError.message}`, "error"); throw requestError; }
+    const result = await response.blob();
+    notifyAdmin("文件下载成功", "success");
+    return result;
   }
 
   private async list<T>(path: string, params: Record<string, string | number | undefined> = {}): Promise<T[]> {
@@ -782,7 +827,32 @@ export class FetchAdminApiClient implements AdminApiClient {
   }
 
   private exhibition(item: JsonRecord): Exhibition {
-    return { mainVenueId: null, hostUnit: "", organizerUnit: "", coOrganizerUnits: "", boundAvatarId: null, boundModel: "mock", boundVoiceId: null, boundVoiceProvider: null, boundVoiceModel: null, boundSttProvider: null, boundSttModel: null, boundScene: null, knowledgeBaseIds: [], lifecycleHistory: [], status: "preparing", description: "", ...item, id: String(item.id), name: String(item.name || item.code || item.id), code: String(item.code || item.id), startDate: String(item.startDate || ""), endDate: String(item.endDate || ""), createdAt: String(item.createdAt || item.created_at || ""), updatedAt: String(item.updatedAt || item.updated_at || "") } as Exhibition;
+    return {
+      status: "preparing",
+      description: "",
+      ...item,
+      id: String(item.id),
+      name: String(item.name || item.code || item.id),
+      code: String(item.code || item.id),
+      startDate: String(item.startDate || item.start_date || ""),
+      endDate: String(item.endDate || item.end_date || ""),
+      mainVenueId: item.mainVenueId ?? item.main_venue_id ?? null,
+      hostUnit: String(item.hostUnit ?? item.host_unit ?? ""),
+      organizerUnit: String(item.organizerUnit ?? item.organizer_unit ?? ""),
+      coOrganizerUnits: String(item.coOrganizerUnits ?? item.co_organizer_units ?? ""),
+      boundAvatarId: item.boundAvatarId ?? item.bound_avatar_id ?? null,
+      boundModel: String(item.boundModel ?? item.bound_model ?? "mock"),
+      boundVoiceId: item.boundVoiceId ?? item.bound_voice_id ?? null,
+      boundVoiceProvider: item.boundVoiceProvider ?? item.bound_voice_provider ?? null,
+      boundVoiceModel: item.boundVoiceModel ?? item.bound_voice_model ?? null,
+      boundSttProvider: item.boundSttProvider ?? item.bound_stt_provider ?? null,
+      boundSttModel: item.boundSttModel ?? item.bound_stt_model ?? null,
+      boundScene: item.boundScene ?? item.bound_scene ?? null,
+      knowledgeBaseIds: stringArray(item.knowledgeBaseIds ?? item.knowledge_base_ids),
+      lifecycleHistory: Array.isArray(item.lifecycleHistory) ? item.lifecycleHistory : Array.isArray(item.lifecycle_history) ? item.lifecycle_history : [],
+      createdAt: String(item.createdAt || item.created_at || ""),
+      updatedAt: String(item.updatedAt || item.updated_at || ""),
+    } as Exhibition;
   }
 
   private venue(item: JsonRecord): EventVenue {
@@ -1158,7 +1228,29 @@ export function createAdminApiClient(mode: "mock" | "real"): AdminApiClient {
 }
 
 const configuredApiMode = import.meta.env?.VITE_ADMIN_API_MODE;
-export const adminApi: AdminApiClient = createAdminApiClient(configuredApiMode === "mock" ? "mock" : "real");
+const rawAdminApi = createAdminApiClient(configuredApiMode === "mock" ? "mock" : "real");
+const MOCK_MUTATIONS = /^(?:create|save|upload|delete|update|transition|resolve|commit|activate|test)/;
+const mockFeedbackApi = new Proxy(rawAdminApi, {
+  get(target, property, receiver) {
+    const value = Reflect.get(target, property, receiver);
+    if (typeof property !== "string" || typeof value !== "function" || !MOCK_MUTATIONS.test(property)) return value;
+    return (...args: unknown[]) => {
+      const label = property.startsWith("upload") ? "文件上传" : "数据保存";
+      const progressId = property.startsWith("upload") ? beginAdminProgress(label) : "";
+      if (progressId) updateAdminProgress({ id: progressId, label, progress: 35, phase: "progress" });
+      return Promise.resolve(value.apply(target, args)).then((result) => {
+        if (progressId) finishAdminProgress(progressId, label, true);
+        notifyAdmin(`${label}成功`, "success");
+        return result;
+      }).catch((error) => {
+        if (progressId) finishAdminProgress(progressId, label, false);
+        notifyAdmin(`${label}失败：${error instanceof Error ? error.message : "请稍后重试"}`, "error");
+        throw error;
+      });
+    };
+  },
+});
+export const adminApi: AdminApiClient = configuredApiMode === "mock" ? mockFeedbackApi : rawAdminApi;
 
 export const DEFAULT_VOICES: VoiceAsset[] = EDGE_ZH_VOICES.map((voice) => ({
   id: `voice-edge-${voice.id}`,

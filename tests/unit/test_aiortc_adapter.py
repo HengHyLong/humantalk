@@ -75,8 +75,8 @@ def test_nvenc_encoder_builds_low_latency_codec(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setenv("OPENTALKING_WEBRTC_NVENC_DEVICE", "1")
     monkeypatch.setenv("OPENTALKING_WEBRTC_NVENC_PRESET", "p2")
     monkeypatch.setattr(
-        aiortc_adapter.av.CodecContext,
-        "create",
+        aiortc_adapter,
+        "_create_codec_context",
         lambda name, mode: fake_codec if (name, mode) == ("h264_nvenc", "w") else None,
     )
 

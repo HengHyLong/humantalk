@@ -180,6 +180,16 @@ def _require_audio_provider_config(
                 status_code=400,
                 detail="小米 MiMo TTS 缺少 OPENTALKING_TTS_XIAOMI_BASE_URL，请在后端 .env 配置后重启服务。",
             )
+    if stt_provider in {"funasr", "sensevoice", "sherpa_onnx"}:
+        stt_status = stt_provider_config(stt_provider)
+        if stt_status.get("runtime_ready") is not True:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    str(stt_status.get("availability_error"))
+                    or "本地语音识别运行时未就绪，请先安装并重启服务。"
+                ),
+            )
 
 
 async def _await_result(value: Awaitable[Any] | Any) -> Any:

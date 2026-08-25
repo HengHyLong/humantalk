@@ -5,7 +5,10 @@ import json
 from pathlib import Path
 from typing import Any
 
-import cv2
+try:
+    import cv2
+except ImportError:  # OpenCV is only needed when preparing Wav2Lip video assets.
+    cv2 = None  # type: ignore[assignment]
 
 from opentalking.avatar import mouth_metadata
 
@@ -43,6 +46,11 @@ def prepare_wav2lip_video_frames(
     jpeg_quality: int = 95,
 ) -> Wav2LipVideoFrames:
     """Extract a bounded, motion-preserving Wav2Lip reference-frame sequence."""
+
+    if cv2 is None:
+        raise RuntimeError(
+            "OpenCV is required to prepare Wav2Lip video assets; install the project's video extras first."
+        )
 
     capture = cv2.VideoCapture(str(source_video))
     if not capture.isOpened():

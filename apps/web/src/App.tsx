@@ -148,6 +148,7 @@ const DATABASE_SUGGESTIONS: Record<ConversationLanguage, Record<string, Database
 type RecognizedTextOptions = {
   databaseShortcut?: DatabaseShortcut;
   displayText?: string;
+  selectedEntityId?: string;
 };
 
 type PendingShoppingRegistration = {
@@ -652,6 +653,9 @@ function validateAudioProviderConfigBeforeStart({
         ? "小米 MiMo 语音识别缺少对应的 API Key 或服务地址"
         : "API 语音识别缺少对应的 API Key");
   }
+  if (normalizeAsrProvider(sttProvider, "dashscope") === "sensevoice" && sttStatus?.runtime_ready !== true) {
+    missing.push(sttStatus?.availability_error || "本地 SenseVoice 运行时未就绪");
+  }
   if (ttsProviderNeedsApiKey(ttsProvider) && (ttsKeySet !== true || ((ttsProvider === "openai_compatible" || ttsProvider === "xiaomi_mimo") && ttsServiceUrlSet !== true))) {
     missing.push(ttsProvider === "openai_compatible"
       ? "当前 TTS API 缺少对应的 API Key 或服务地址"
@@ -687,7 +691,7 @@ type HealthResponse = {
   stt_device?: string;
   stt_default_provider?: string;
   stt_enabled_providers?: string[];
-  stt_providers?: Record<string, { key_set?: boolean; model?: string; model_dir?: string; device?: string; service_url_set?: boolean }>;
+  stt_providers?: Record<string, { key_set?: boolean; model?: string; model_dir?: string; device?: string; service_url_set?: boolean; runtime_ready?: boolean; availability_error?: string }>;
 };
 
 function sanitizeFasterLivePortraitConfig(
@@ -1445,7 +1449,7 @@ export default function App() {
       setExhibitionVoiceConfig(normalized);
       wakeAwakeUntilRef.current = 0;
       setExhibitionConfigNotice(
-        normalized.keywords.navigation.length ? null : "当前展会暂未配置导航关键词，将按普通展品问答处理。",
+        normalized.keywords.navigation.length ? null : "本次展览暂未发布导航关键词，将按普通展品问答处理。",
       );
     } catch (error) {
       console.warn("load exhibition voice config failed", error);
@@ -2142,7 +2146,22 @@ export default function App() {
       setExhibitionsError(null);
       try {
         const response = await listExhibitions();
-        setExhibitions(response.items ?? []);
+        const items = response.items ?? [];
+        setExhibitions(items);
+        // URL 配置优先，其次复用上次确认的展会，避免先落到本地默认
+        // TTS/形象，再在会话启动后才被后台绑定值覆盖。
+        const requestedId = getConfiguredExhibitionId();
+        let storedId = "";
+        try {
+          storedId = window.localStorage.getItem(SELECTED_EXHIBITION_STORAGE_KEY)?.trim() || "";
+        } catch {
+          /* ignore unavailable storage */
+        }
+        setSelectedExhibitionId((current) => {
+          if (current && items.some((item) => item.id === current)) return current;
+          const preferred = requestedId || storedId;
+          return preferred && items.some((item) => item.id === preferred) ? preferred : "";
+        });
       } catch (error) {
         console.warn("load exhibitions failed", error);
         setExhibitions([]);
@@ -2213,6 +2232,11 @@ export default function App() {
           normalizeTtsProvider(health.tts_provider, "edge"),
         );
         setTtsProvider(boundTtsProvider);
+        setVoiceApplyNotice(
+          selectedExhibition?.bound_voice_provider || selectedExhibition?.bound_voice_model || selectedExhibition?.bound_voice_id
+            ? `已应用本展会绑定语音：${selectedExhibition.bound_voice_provider || ""}${selectedExhibition.bound_voice_model ? ` / ${selectedExhibition.bound_voice_model}` : ""}${selectedExhibition.bound_voice_id ? ` / ${selectedExhibition.bound_voice_id}` : ""}`
+            : null,
+        );
         if (selectedExhibition?.bound_voice_model?.trim()) {
           if (boundTtsProvider === "edge") setEdgeVoice(selectedExhibition.bound_voice_id?.trim() || edgeVoice);
           else setQwenModel(selectedExhibition.bound_voice_model.trim());
@@ -2341,6 +2365,10 @@ export default function App() {
           : "";
         const staleId = streamingAssistantMsgIdRef.current;
         const pendingId = pendingAssistantMsgIdRef.current;
+        // The pending marker only protects the short window between a new
+        // request and its own speech.started event. Once this event arrives,
+        // speech.ended belongs to the active turn and must be handled.
+        pendingAssistantMsgIdRef.current = null;
         clearSubtitleState(false);
         setIsSpeaking(true);
         setVideoState("think");
@@ -2883,8 +2911,13 @@ export default function App() {
     if (!text || !sessionId) return;
     const databaseShortcut = options.databaseShortcut;
     const displayText = options.displayText?.trim() || text;
-    const relatedEntities = matchExhibitionEntities(text, exhibitionEntities);
-    const explicitContentRequest = classifyExplicitContentRequest(text);
+    const selectedEntity = options.selectedEntityId
+      ? exhibitionEntities.find((entity) => entity.id === options.selectedEntityId)
+      : undefined;
+    const relatedEntities = selectedEntity
+      ? [selectedEntity, ...matchExhibitionEntities(text, exhibitionEntities).filter((entity) => entity.id !== selectedEntity.id)]
+      : matchExhibitionEntities(text, exhibitionEntities);
+    const explicitContentRequest = selectedEntity ? "entity" : classifyExplicitContentRequest(text);
 
     const introduceExhibitAndOfferRegistration = async (
       exhibit: ExhibitionEntityCard,
@@ -2958,8 +2991,8 @@ export default function App() {
       }).join("；");
       enqueueSpeech(
         venueSummary
-          ? `本届展会已配置以下展馆：${venueSummary}。请选择具体展馆或目的地，我可以继续为您查询路线。`
-          : "当前展会数据库暂未配置展馆和导航信息，请先在后台补充场地、点位与路线。",
+          ? `本次展览有以下场馆和导航信息：${venueSummary}。请选择具体场馆或目的地，我可以继续为您查询路线。`
+          : "本次展览暂未发布场馆和导航信息，请咨询现场工作人员。",
         displayText,
         venues.slice(0, 4),
         true,
@@ -2976,8 +3009,8 @@ export default function App() {
       }).join("；");
       enqueueSpeech(
         scheduleSummary
-          ? `本届展会数据库已配置以下会议安排：${scheduleSummary}。具体安排以现场最新通知为准。`
-          : "当前展会数据库暂未配置会议日程和服务信息，请先在后台补充活动排期。",
+          ? `本次会展有以下会议安排：${scheduleSummary}。具体安排以现场最新通知为准。`
+          : "本次会展暂未发布会议日程和服务信息，请以现场最新通知为准。",
         displayText,
         schedules.slice(0, 4),
         true,
@@ -2992,7 +3025,7 @@ export default function App() {
         .join("；");
       const overview = [exhibition?.name, exhibition?.description, detailText].filter(Boolean).join("。 ");
       enqueueSpeech(
-        overview || "当前展会数据库暂未配置展会介绍，请先在后台完善展会基础信息。",
+        overview || "本次展览暂未发布展会介绍，请咨询现场工作人员。",
         displayText,
         exhibition ? [exhibition] : [],
         true,
@@ -3018,7 +3051,7 @@ export default function App() {
             pendingExhibitionFollowupRef.current = null;
             setExhibitionFollowupStage(null);
             enqueueSpeech(
-              englishConversation ? "The exhibitor has not configured a product list yet. You can continue exploring other exhibitors." : "该展商暂未配置可展示的展品资料，您还可以继续了解其他展商。",
+              englishConversation ? "The exhibitor has not published a product list yet. You can continue exploring other exhibitors." : "该展商暂未发布可展示的展品资料，您还可以继续了解其他展商。",
               text,
               [pendingExhibition.exhibitor],
               true,
@@ -3372,8 +3405,8 @@ export default function App() {
       const exhibitors = exhibitionEntities.filter((entity) => entity.kind === "exhibitor");
       enqueueSpeech(
         exhibitors.length
-          ? `本届展会数据库已配置${exhibitors.length}家展商。请选择希望预约洽谈的展商或展品，我会继续为您查询已配置的预约登记流程。`
-          : "当前展会数据库暂未配置展商和预约洽谈策略，请先在后台补充展商及虚拟导购配置。",
+          ? `本次展览有${exhibitors.length}家展商可供预约洽谈。请选择具体展商，我将为您展示该展商的相关展品。`
+          : "本次展览暂未发布展商和预约洽谈信息，请咨询现场工作人员。",
         displayText,
         exhibitors.slice(0, 4),
         true,
@@ -3473,6 +3506,44 @@ export default function App() {
   }, [bailianVoices, configuredExhibitionId, conversationLanguage, edgeVoice, englishConversation, enqueueSpeech, exhibitionEntities, exhibitionVoiceConfig, notify, qwenModel, qwenVoice, sessionId, ttsProvider]);
   const handleSend = useCallback((text: string) => {
     void routeRecognizedText(text);
+  }, [routeRecognizedText]);
+
+  const handleExhibitionEntitySelect = useCallback((entity: ExhibitionEntityCard) => {
+    // 手动点击“查看展品”时直接展示该展商的完整展品列表；语音/文字
+    // 询问展商仍沿用原有的“先介绍展商、再确认是否查看展品”流程。
+    if (entity.kind === "exhibitor") {
+      const products = exhibitionEntities.filter((candidate) => (
+        candidate.kind === "exhibit"
+        && (candidate.parent_id === entity.id
+          || candidate.details.some((detail) => detail.label === "展商" && detail.value === entity.name))
+      ));
+      if (products.length) {
+        setNavigationResult(null);
+        setShoppingRegistration(null);
+        pendingExhibitionFollowupRef.current = { stage: "product_selection", exhibitor: entity, products };
+        setExhibitionFollowupStage("product_selection");
+        enqueueSpeech(
+          englishConversation
+            ? `Here are the products from ${entity.name}. Which one would you like to learn about?`
+            : `好的，下面是${entity.name}的相关展品。您想了解哪一个？`,
+          entity.name,
+          products,
+          true,
+        );
+        return;
+      }
+    }
+    // 展品列表与语音/文字输入共用同一业务路由，保证点击后同时更新详情并播报。
+    void routeRecognizedText(entity.name, { displayText: entity.name, selectedEntityId: entity.id });
+  }, [englishConversation, exhibitionEntities, enqueueSpeech, routeRecognizedText]);
+
+  const handleExhibitionEntityRegister = useCallback((entity: ExhibitionEntityCard) => {
+    const pending = pendingShoppingRegistrationRef.current;
+    if (pending && (!pending.exhibitId || pending.exhibitId === entity.id)) {
+      void routeRecognizedText("需要登记", { displayText: `${entity.name}二维码登记` });
+      return;
+    }
+    void routeRecognizedText(`我想登记${entity.name}`, { displayText: `${entity.name}二维码登记` });
   }, [routeRecognizedText]);
 
   const handleSuggestionSend = useCallback((label: string) => {
@@ -3667,6 +3738,18 @@ export default function App() {
       return;
     }
     writeStoredExhibitionId(selectedExhibition.id);
+    const boundTtsProvider = normalizeTtsProvider(selectedExhibition.bound_voice_provider, "edge");
+    setTtsProvider(boundTtsProvider);
+    if (selectedExhibition.bound_voice_id?.trim()) {
+      if (boundTtsProvider === "edge") setEdgeVoice(selectedExhibition.bound_voice_id.trim());
+      else setQwenVoice(selectedExhibition.bound_voice_id.trim());
+    }
+    if (selectedExhibition.bound_voice_model?.trim() && boundTtsProvider !== "edge") {
+      setQwenModel(selectedExhibition.bound_voice_model.trim());
+    }
+    const boundSttProvider = normalizeAsrProvider(selectedExhibition.bound_stt_provider, "dashscope");
+    setAsrProvider(boundSttProvider);
+    setAsrModel(selectedExhibition.bound_stt_model?.trim() || sttModelForProvider(boundSttProvider));
     avatarKnowledgeBasesLoadSeqRef.current += 1;
     setAgentConfig({
       ...agentConfig,
@@ -4098,6 +4181,8 @@ export default function App() {
                 }
               : message
           )))}
+          onSelectEntity={handleExhibitionEntitySelect}
+          onRegisterEntity={handleExhibitionEntityRegister}
           onAutoClosePresentation={handleAutoClosePresentation}
           exhibitionProductList={exhibitionFollowupStage === "product_selection"}
           exhibitionConfigNotice={exhibitionConfigNotice}

@@ -673,7 +673,9 @@ export function ChatInput({
     uploadLockRef.current = false;
     await discardActiveSegment();
     onInterrupt();
-  }, [discardActiveSegment, onInterrupt]);
+    // 停止按钮结束整个连续监听，键盘输入随 voiceMode=false 恢复显示。
+    await teardownVoicePipeline();
+  }, [discardActiveSegment, onInterrupt, teardownVoicePipeline]);
 
   const handleKey = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {

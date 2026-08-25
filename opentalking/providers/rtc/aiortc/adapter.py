@@ -66,6 +66,11 @@ _ORIGINAL_AIORTC_GET_ENCODER = (
 _AIORTC_ENCODER_FACTORY_MODE = "default"
 
 
+def _create_codec_context(name: str, mode: str) -> Any:
+    """Create an FFmpeg codec context behind a patchable module boundary."""
+    return av.CodecContext.create(name, mode)
+
+
 def _rtc_max_catchup_seconds() -> float:
     raw = os.environ.get("OPENTALKING_RTC_MAX_CATCHUP_MS", "120").strip()
     try:
@@ -104,7 +109,7 @@ class _NvencH264Encoder(H264Encoder):
         self._active_codec_name: str | None = None
 
     def _create_nvenc_codec(self, frame: "av.VideoFrame") -> Any:
-        codec = av.CodecContext.create("h264_nvenc", "w")
+        codec = _create_codec_context("h264_nvenc", "w")
         codec.width = frame.width
         codec.height = frame.height
         codec.bit_rate = self.target_bitrate

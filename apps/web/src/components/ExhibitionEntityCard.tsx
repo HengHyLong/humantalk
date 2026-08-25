@@ -20,6 +20,10 @@ type ExhibitionEntityCardProps = {
   entity: ExhibitionEntityCardData;
   immersive?: boolean;
   onClose?: () => void;
+  onSelect?: () => void;
+  selectLabel?: string;
+  onRegister?: () => void;
+  registerLabel?: string;
   closeLabel?: string;
   onImageClick?: (src: string, alt: string) => void;
 };
@@ -28,6 +32,10 @@ export function ExhibitionEntityCard({
   entity,
   immersive = false,
   onClose,
+  onSelect,
+  selectLabel = "查看详情",
+  onRegister,
+  registerLabel = "二维码登记",
   closeLabel = "关闭介绍卡片",
   onImageClick,
 }: ExhibitionEntityCardProps) {
@@ -61,6 +69,16 @@ export function ExhibitionEntityCard({
               </div>
             ))}
           </dl>
+        ) : null}
+        {onSelect ? (
+          <button type="button" className="exhibition-entity-card-select" onClick={onSelect}>
+            {selectLabel}
+          </button>
+        ) : null}
+        {entity.kind === "exhibit" && onRegister ? (
+          <button type="button" className="exhibition-entity-card-register" onClick={onRegister}>
+            {registerLabel}
+          </button>
         ) : null}
       </div>
       {imageUrl ? (

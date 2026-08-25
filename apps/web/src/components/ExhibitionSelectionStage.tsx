@@ -124,7 +124,18 @@ export function ExhibitionSelectionStage({
             <span className="text-rose-300">{error}</span>
           ) : selected ? (
             selected.bound_avatar_id ? (
-              <span className="text-emerald-300">已绑定数字人，确认后进入加载流程。</span>
+              <div className="space-y-1 text-emerald-300">
+                <p>已绑定数字人，确认后进入加载流程。</p>
+                <p className="text-xs text-cyan-200">
+                  语音驱动：{[selected.bound_voice_provider, selected.bound_voice_model, selected.bound_voice_id].filter(Boolean).join(" / ") || "未单独绑定，使用运行时默认"}
+                </p>
+                {selected.bound_stt_provider ? (
+                  <p className={`text-xs ${selected.bound_stt_runtime_ready === false ? "text-amber-300" : "text-cyan-200"}`}>
+                    语音监听：{[selected.bound_stt_provider, selected.bound_stt_model].filter(Boolean).join(" / ")}
+                    {selected.bound_stt_runtime_ready === false ? `（未就绪：${selected.bound_stt_availability_error || "请先配置语音识别运行时"}）` : ""}
+                  </p>
+                ) : null}
+              </div>
             ) : (
               <span className="text-amber-300">该会展尚未绑定数字人，请先在 Admin 会展配置中完成绑定。</span>
             )

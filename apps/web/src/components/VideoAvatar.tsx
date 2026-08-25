@@ -55,6 +55,17 @@ export function VideoAvatar({
       currentVideo.loop = nextLoop;
       if (currentLoopRef.current !== nextLoop) currentVideo.currentTime = 0;
       currentLoopRef.current = nextLoop;
+      if (fallback && fallback !== nextSource) {
+        const onError = () => {
+          currentVideo.removeEventListener("error", onError);
+          if (cleanupTransitionRef.current === cleanup) cleanupTransitionRef.current = () => undefined;
+          startTransition(fallback, nextLoop);
+        };
+        const cleanup = () => currentVideo.removeEventListener("error", onError);
+        cleanupTransitionRef.current();
+        cleanupTransitionRef.current = cleanup;
+        currentVideo.addEventListener("error", onError, { once: true });
+      }
       void currentVideo.play().catch(() => undefined);
       return;
     }

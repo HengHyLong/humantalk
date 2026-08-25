@@ -393,6 +393,8 @@ export type ExhibitionSummary = {
   bound_voice_model?: string | null;
   bound_stt_provider?: string | null;
   bound_stt_model?: string | null;
+  bound_stt_runtime_ready?: boolean | null;
+  bound_stt_availability_error?: string | null;
   bound_scene?: string | null;
   knowledge_base_ids?: string[];
 };

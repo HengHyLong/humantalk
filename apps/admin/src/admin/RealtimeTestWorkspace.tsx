@@ -14,6 +14,7 @@ import type { VoiceCloneApplication } from "../lib/voiceCloneApply";
 import type { MemoryLibrary, Message } from "../types";
 import type { ModelStatus } from "../lib/modelStatus";
 import { modelLabel } from "../lib/modelLabels";
+import { beginAdminProgress, finishAdminProgress, notifyAdmin, updateAdminProgress } from "./feedback";
 
 type ConnectionState = "idle" | "connecting" | "queued" | "live" | "error";
 type ChatMessage = Message;
@@ -59,6 +60,9 @@ function audioProviderConfigError({
   if (apiStt && (sttConfigured !== true || (["xiaomi_mimo", "openai_compatible"].includes(asrProvider) && sttStatus?.service_url_set !== true))) {
     missing.push(asrProvider === "dashscope" ? "API 语音识别" : asrProvider === "xiaomi_mimo" ? "小米 MiMo 语音识别" : "OpenAI API 语音识别");
   }
+  if (asrProvider === "sensevoice" && sttStatus?.runtime_ready !== true) {
+    missing.push(sttStatus?.availability_error || "本地 SenseVoice 运行时未就绪");
+  }
   if (apiTts && (ttsConfigured !== true || (["xiaomi_mimo", "openai_compatible"].includes(ttsProvider) && ttsStatus?.service_url_set !== true))) {
     missing.push(ttsProvider === "dashscope" ? "Qwen TTS" : ttsProvider === "cosyvoice" ? "CosyVoice TTS" : ttsProvider === "sambert" ? "Sambert TTS" : ttsProvider === "xiaomi_mimo" ? "小米 MiMo TTS" : "OpenAI API TTS");
   }
@@ -66,8 +70,8 @@ function audioProviderConfigError({
 }
 
 function isSttProviderReady(provider: string, health: RuntimeHealth | null): boolean {
-  if (provider === "sensevoice") return true;
   const status = health?.stt_providers?.[provider];
+  if (provider === "sensevoice") return status?.runtime_ready === true;
   return status?.key_set === true
     && (!["xiaomi_mimo", "openai_compatible"].includes(provider) || status.service_url_set === true);
 }
@@ -336,11 +340,17 @@ export function RealtimeTestWorkspace({ initialAvatarId = "" }: { initialAvatarI
     form.set("tts_provider", ttsProvider);
     form.set("stt_provider", asrProvider);
     if (ttsModel) form.set("tts_model", ttsModel);
+    const label = "语音文件上传";
+    const progressId = beginAdminProgress(label);
     try {
-      const result = await apiPostForm<{ text?: string }>(`/sessions/${encodeURIComponent(sid)}/speak_audio`, form);
+      const result = await apiPostForm<{ text?: string }>(`/sessions/${encodeURIComponent(sid)}/speak_audio`, form, undefined, (progress) => updateAdminProgress({ id: progressId, label, progress, phase: "progress" }));
+      finishAdminProgress(progressId, label, true);
+      notifyAdmin(`${label}成功`, "success");
       const recognizedText = result.text;
       if (typeof recognizedText === "string" && recognizedText) setMessages((current) => keepRecentConversation([...current, { id: `${Date.now()}-audio`, role: "user", text: recognizedText, timestamp: Date.now() }]));
-    } catch {
+    } catch (error) {
+      finishAdminProgress(progressId, label, false);
+      notifyAdmin(`${label}失败：${error instanceof Error ? error.message : "请稍后重试"}`, "error");
       setError("语音识别失败，请检查当前会话和语音服务状态。");
     }
   }, [asrProvider, connection, ttsModel, ttsProvider, ttsVoice]);

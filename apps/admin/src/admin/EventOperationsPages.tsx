@@ -145,8 +145,8 @@ function voiceCategoryOf(voice: VoiceAsset): string {
 }
 
 const EVENT_STT_PROVIDERS = [
-  { id: "sensevoice", label: "SenseVoiceSmall", model: "iic/SenseVoiceSmall" },
   { id: "dashscope", label: "API 语音识别", model: "paraformer-realtime-v2" },
+  { id: "sensevoice", label: "SenseVoiceSmall", model: "iic/SenseVoiceSmall" },
   { id: "xiaomi_mimo", label: "小米 MiMo 识别", model: "mimo-v2.5-asr" },
   { id: "openai_compatible", label: "OpenAI API 识别", model: "OpenAI-compatible ASR" },
 ];
@@ -273,8 +273,8 @@ export function ExhibitionDetailPage({ exhibitionId, canWrite = true, canImport 
   const [avatarId, setAvatarId] = useState("");
   const [model, setModel] = useState("");
   const [voiceId, setVoiceId] = useState("");
-  const [sttProvider, setSttProvider] = useState("sensevoice");
-  const [sttModel, setSttModel] = useState("iic/SenseVoiceSmall");
+  const [sttProvider, setSttProvider] = useState("dashscope");
+  const [sttModel, setSttModel] = useState("paraformer-realtime-v2");
   const [scene, setScene] = useState("");
   const [knowledgeBaseIds, setKnowledgeBaseIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
@@ -287,8 +287,8 @@ export function ExhibitionDetailPage({ exhibitionId, canWrite = true, canImport 
   }, [loading]);
   useEffect(() => {
     if (!exhibition) return;
-    const configuredProvider = exhibition.boundSttProvider || "sensevoice";
-    const provider = EVENT_STT_PROVIDERS.find((item) => item.id === configuredProvider) ?? EVENT_STT_PROVIDERS[0];
+    const configuredProvider = exhibition.boundSttProvider || "dashscope";
+    const provider = EVENT_STT_PROVIDERS.find((item) => item.id === configuredProvider) ?? EVENT_STT_PROVIDERS.find((item) => item.id === "dashscope")!;
     setSttProvider(provider.id);
     setSttModel(exhibition.boundSttModel || provider.model);
   }, [exhibition]);

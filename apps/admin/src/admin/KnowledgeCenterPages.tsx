@@ -16,6 +16,7 @@ import {
 import { MemoryPanel } from "../components/MemoryPanel";
 import { openTalkingClient } from "./openTalkingClient";
 import type { MemoryLibrary } from "../types";
+import { beginAdminProgress, finishAdminProgress, notifyAdmin, updateAdminProgress } from "./feedback";
 
 const PAGE_SIZE = 9;
 const DOCUMENT_ACCEPT = ".doc,.docx,.pdf,.md,.markdown,.txt,.pptx";
@@ -42,6 +43,20 @@ function errorText(error: unknown, fallback: string): string {
   if (error instanceof ApiError && error.detail) return error.detail;
   if (error instanceof Error && error.message) return error.message;
   return fallback;
+}
+
+async function uploadAdminForm<T>(label: string, path: string, form: FormData): Promise<T> {
+  const progressId = beginAdminProgress(label);
+  try {
+    const response = await apiPostForm<T>(path, form, undefined, (progress) => updateAdminProgress({ id: progressId, label, progress, phase: "progress" }));
+    finishAdminProgress(progressId, label, true);
+    notifyAdmin(`${label}成功`, "success");
+    return response;
+  } catch (error) {
+    finishAdminProgress(progressId, label, false);
+    notifyAdmin(`${label}失败：${errorText(error, "请稍后重试")}`, "error");
+    throw error;
+  }
 }
 
 function Card({ children, className = "" }: { children: ReactNode; className?: string }) {
@@ -116,7 +131,7 @@ export function DocumentCenterPage() {
         if (file.size > 20 * 1024 * 1024) throw new Error(`${file.name} 超过 20MB 限制`);
         const form = new FormData();
         form.set("file", file);
-        uploaded.push(await apiPostForm<KnowledgeDocument>("/agent/knowledge-documents", form));
+        uploaded.push(await uploadAdminForm<KnowledgeDocument>(`文档“${file.name}”上传`, "/agent/knowledge-documents", form));
       }
       setDocuments((current) => [...uploaded, ...current.filter((item) => !uploaded.some((next) => next.id === item.id))]);
       setError("");
@@ -192,7 +207,7 @@ export function KnowledgeBasePage() {
       form.set("name", name.trim());
       selectedPoolIds.forEach((id) => form.append("document_ids", id));
       files.forEach((file) => form.append("files", file));
-      const created = await apiPostForm<KnowledgeBaseSummary>("/agent/knowledge-bases", form);
+      const created = await uploadAdminForm<KnowledgeBaseSummary>("知识库创建", "/agent/knowledge-bases", form);
       setName(""); setFiles([]); setSelectedPoolIds([]); setCreateOpen(false); setSelectedId(created.id); setError(""); await loadBases(); await loadDocuments(created.id);
     } catch (caught) { setError(errorText(caught, "知识库创建失败。")); }
   };
@@ -213,7 +228,7 @@ export function KnowledgeBasePage() {
     if (!selectedId || (!selectedPoolIds.length && !files.length)) { setError("请选择文件池中的文档或上传新文件。"); return; }
     try {
       if (selectedPoolIds.length) await apiPost(`/agent/knowledge-bases/${encodeURIComponent(selectedId)}/documents/import`, { document_ids: selectedPoolIds });
-      for (const file of files) { const form = new FormData(); form.set("file", file); await apiPostForm(`/agent/knowledge-bases/${encodeURIComponent(selectedId)}/documents`, form); }
+      for (const file of files) { const form = new FormData(); form.set("file", file); await uploadAdminForm(`文档“${file.name}”加入知识库`, `/agent/knowledge-bases/${encodeURIComponent(selectedId)}/documents`, form); }
       setSelectedPoolIds([]); setFiles([]); setAddOpen(false); setError(""); await loadBases(); await loadDocuments(selectedId);
     } catch (caught) { setError(errorText(caught, "文档加入知识库失败，可能存在重复文件或格式不支持。")); }
   };

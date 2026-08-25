@@ -11,7 +11,7 @@ import { buildApiUrl } from "../lib/api";
 import { isEnglishConversation, type ConversationLanguage } from "../lib/conversationLanguage";
 import { selectCurrentEntityPresentation } from "../lib/entityPresentation";
 import type { TtsProviderExtended } from "../constants/ttsBailian";
-import type { ConnectionStatus, Message } from "../types";
+import type { ConnectionStatus, ExhibitionEntityCard as ExhibitionEntityCardData, Message } from "../types";
 import { ChatInput } from "./ChatInput";
 import { ExhibitionEntityCard } from "./ExhibitionEntityCard";
 import { ExhibitionProductList } from "./ExhibitionProductList";
@@ -64,6 +64,8 @@ type DigitalHumanDisplayProps = {
   shoppingRegistration?: { title: string; url: string; qrDataUrl: string } | null;
   onCloseShoppingRegistration?: () => void;
   onCloseEntity?: (entityId: string) => void;
+  onSelectEntity?: (entity: ExhibitionEntityCardData) => void;
+  onRegisterEntity?: (entity: ExhibitionEntityCardData) => void;
   onAutoClosePresentation?: () => void;
   exhibitionProductList?: boolean;
   voiceIntent?: VoiceIntent | null;
@@ -76,50 +78,52 @@ type DigitalHumanDisplayProps = {
 const languages: Array<{ value: ConversationLanguage; label: string }> = [{ value: "zh-CN", label: "中文" }, { value: "en-US", label: "English" }];
 
 export function DigitalHumanDisplay({
-  videoRef,
-  videoStream = null,
-  scene = null,
-  backgrounds,
-  subtitle,
-  avatarMaskUrl = null,
-  clientRenderer = null,
-  videoDriver = false,
-  videoState = "listen",
-  videoDriverAssets = null,
-  connection,
-  isSpeaking,
-  avatar,
-  modelLabel,
-  messages,
-  queueInfo,
-  onStart,
-  onSend,
-  onSuggestionSend,
-  onInterrupt,
-  onSpeakAudio,
-  onSpeakAudioStreamResult,
-  onSpeakAudioStreamError,
-  streamingAsrSessionId = null,
-  deferSpeak = false,
-  onNotify,
-  ttsProvider = "edge",
-  sttProvider = "",
-  edgeVoice = "",
-  qwenModel = "",
-  qwenVoice = "",
-  navigationResult = null,
-  onCloseNavigation,
-  shoppingRegistration = null,
-  onCloseShoppingRegistration,
-  onCloseEntity,
-  onAutoClosePresentation,
-  exhibitionProductList = false,
-  voiceIntent = null,
-  exhibitionConfigNotice = null,
-  suggestions: suggestionItems,
-  language,
-  onLanguageChange,
-}: DigitalHumanDisplayProps) {
+                                      videoRef,
+                                      videoStream = null,
+                                      scene = null,
+                                      backgrounds,
+                                      subtitle,
+                                      avatarMaskUrl = null,
+                                      clientRenderer = null,
+                                      videoDriver = false,
+                                      videoState = "listen",
+                                      videoDriverAssets = null,
+                                      connection,
+                                      isSpeaking,
+                                      avatar,
+                                      modelLabel,
+                                      messages,
+                                      queueInfo,
+                                      onStart,
+                                      onSend,
+                                      onSuggestionSend,
+                                      onInterrupt,
+                                      onSpeakAudio,
+                                      onSpeakAudioStreamResult,
+                                      onSpeakAudioStreamError,
+                                      streamingAsrSessionId = null,
+                                      deferSpeak = false,
+                                      onNotify,
+                                      ttsProvider = "edge",
+                                      sttProvider = "",
+                                      edgeVoice = "",
+                                      qwenModel = "",
+                                      qwenVoice = "",
+                                      navigationResult = null,
+                                      onCloseNavigation,
+                                      shoppingRegistration = null,
+                                      onCloseShoppingRegistration,
+                                      onCloseEntity,
+                                      onSelectEntity,
+                                      onRegisterEntity,
+                                      onAutoClosePresentation,
+                                      exhibitionProductList = false,
+                                      voiceIntent = null,
+                                      exhibitionConfigNotice = null,
+                                      suggestions: suggestionItems,
+                                      language,
+                                      onLanguageChange,
+                                    }: DigitalHumanDisplayProps) {
   const [draft, setDraft] = useState("");
   const [inputMode, setInputMode] = useState<"voice" | "keyboard">("voice");
   const [conversationActivity, setConversationActivity] = useState(0);
@@ -139,23 +143,23 @@ export function DigitalHumanDisplay({
   const latestVisibleMessage = messages[messages.length - 1];
   const presentationMessages = selectCurrentEntityPresentation(messages);
   const visibleEntityPresentationKey = presentationMessages
-    .flatMap((message) => message.relatedEntities ?? [])
-    .map((entity) => `${entity.kind}:${entity.id}`)
-    .sort()
-    .join("|");
+      .flatMap((message) => message.relatedEntities ?? [])
+      .map((entity) => `${entity.kind}:${entity.id}`)
+      .sort()
+      .join("|");
   const presentationKey = shoppingRegistration
-    ? `registration:${shoppingRegistration.url}`
-    : navigationResult
-      ? `navigation:${navigationResult.route_id || navigationResult.title || navigationResult.spoken_text}`
-      : visibleEntityPresentationKey
-        ? `entities:${visibleEntityPresentationKey}`
-        : "";
+      ? `registration:${shoppingRegistration.url}`
+      : navigationResult
+          ? `navigation:${navigationResult.route_id || navigationResult.title || navigationResult.spoken_text}`
+          : visibleEntityPresentationKey
+              ? `entities:${visibleEntityPresentationKey}`
+              : "";
   const presentationActive = Boolean(presentationKey);
   const presentationDialogVisible = true;
   const chatPanelHidden = presentationActive || !conversationVisible;
   const subtitleActive = presentationActive && Boolean(subtitle?.trim());
   const showLiveSubtitle = Boolean(
-    subtitle?.trim()
+      subtitle?.trim()
       && !(latestVisibleMessage?.role === "assistant" && latestVisibleMessage.text.trim() === subtitle.trim()),
   );
   const latestConversationMessage = messages[messages.length - 1];
@@ -171,8 +175,8 @@ export function DigitalHumanDisplay({
     subtitle?.trim() ?? "",
   ].join(":");
   const chatFeedStyle = latestRoundHeight == null
-    ? undefined
-    : ({ "--digital-display-latest-round-height": `${latestRoundHeight}px` } as CSSProperties);
+      ? undefined
+      : ({ "--digital-display-latest-round-height": `${latestRoundHeight}px` } as CSSProperties);
 
   const updateScrollToBottomVisibility = useCallback(() => {
     const feed = chatFeedRef.current;
@@ -267,8 +271,8 @@ export function DigitalHumanDisplay({
   useEffect(() => {
     if (!presentationKey || !onAutoClosePresentation) return;
     const timer = window.setTimeout(
-      () => closePresentation(onAutoClosePresentation),
-      PRESENTATION_AUTO_CLOSE_MS,
+        () => closePresentation(onAutoClosePresentation),
+        PRESENTATION_AUTO_CLOSE_MS,
     );
     return () => window.clearTimeout(timer);
   }, [closePresentation, onAutoClosePresentation, presentationKey]);
@@ -281,387 +285,400 @@ export function DigitalHumanDisplay({
   };
 
   return (
-    <main className="digital-display-root">
-      <div className="digital-display-shell">
-        <SceneStage
-          videoRef={videoRef}
-          videoStream={videoStream}
-          scene={scene}
-          backgrounds={backgrounds}
-          subtitle={null}
-          avatarMaskUrl={avatarMaskUrl}
-          clientRenderer={clientRenderer}
-          videoDriver={videoDriver}
-          videoState={videoState}
-          videoDriverAssets={videoDriverAssets}
-          fullBleed
-          videoFit="cover"
-          backgroundColorOverride="#062b66"
-          className="digital-display-stage"
-        >
-          <div className="digital-display-grid" aria-hidden />
-          {/*<div className="digital-display-orbit digital-display-orbit-one" aria-hidden />*/}
-          {/*<div className="digital-display-orbit digital-display-orbit-two" aria-hidden />*/}
-
-          <aside className="digital-display-languages" aria-label={english ? "Language selection" : "语言选择"}>
-            {languages.map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                onClick={() => onLanguageChange(option.value)}
-                className={language === option.value ? "is-active" : ""}
-                aria-pressed={language === option.value}
-              >
-                {option.label}
-              </button>
-            ))}
-          </aside>
-
-          <section
-            className={`digital-display-chat-panel ${chatPanelHidden ? "is-conversation-hidden" : ""} ${presentationActive ? "is-presentation-hidden" : ""} ${subtitleActive ? "is-subtitle-active" : ""}`}
-            data-prompt={english ? "Ask another question" : "继续提问"}
-            aria-label={english ? "Live conversation" : "实时对话"}
+      <main className="digital-display-root">
+        <div className="digital-display-shell">
+          <SceneStage
+              videoRef={videoRef}
+              videoStream={videoStream}
+              scene={scene}
+              backgrounds={backgrounds}
+              subtitle={null}
+              avatarMaskUrl={avatarMaskUrl}
+              clientRenderer={clientRenderer}
+              videoDriver={videoDriver}
+              videoState={videoState}
+              videoDriverAssets={videoDriverAssets}
+              fullBleed
+              videoFit="cover"
+              backgroundColorOverride="#062b66"
+              className="digital-display-stage"
           >
-            {!conversationVisible && !presentationActive ? (
-              <button type="button" className="digital-display-chat-reveal" onClick={revealConversation}>
-                {english ? "Show conversation" : "查看历史对话"}
-              </button>
-            ) : null}
-            <div className="digital-display-chat-heading">
-              <span>{english ? "LIVE CONVERSATION" : "实时对话"}</span>
-              <span className="digital-display-chat-state">
-                {voiceIntent === "navigation" ? (english ? "Navigation" : "导航") : voiceIntent === "shopping" ? (english ? "Shopping assistant" : "虚拟导购") : voiceIntent === "exhibition_content" ? (english ? "Exhibition Q&A" : "展品问答") : ""}
-                {isSpeaking ? (english ? " · Speaking" : " · 正在播报") : ""}
-              </span>
-            </div>
-            <div ref={chatFeedRef} className="digital-display-chat-feed" style={chatFeedStyle} aria-live="polite" onScroll={updateScrollToBottomVisibility}>
-              <div ref={chatFeedContentRef} className="digital-display-chat-feed-content">
-              {exhibitionConfigNotice ? (
-                <div className="digital-display-chat-notice" role="status">{exhibitionConfigNotice}</div>
-              ) : null}
-              {navigationResult ? (
-                <article className="digital-display-navigation-card">
+            <div className="digital-display-grid" aria-hidden />
+            {/*<div className="digital-display-orbit digital-display-orbit-one" aria-hidden />*/}
+            {/*<div className="digital-display-orbit digital-display-orbit-two" aria-hidden />*/}
+
+            <aside className="digital-display-languages" aria-label={english ? "Language selection" : "语言选择"}>
+              {languages.map((option) => (
                   <button
-                    type="button"
-                    className="digital-display-card-close"
-                    onClick={() => closePresentation(onCloseNavigation)}
-                    aria-label={english ? "Close navigation directions" : "关闭路线指引"}
-                    title={english ? "Close navigation directions" : "关闭路线指引"}
-                  >
-                    ×
-                  </button>
-                  {navigationResult.image_url ? (
-                    <button
+                      key={option.value}
                       type="button"
-                      className="digital-display-zoom-trigger digital-display-navigation-image"
-                      onClick={() => openImageLightbox(
-                        navigationImageUrl(navigationResult.image_url ?? ""),
-                        navigationResult.title || (english ? "Navigation map" : "导航示意图"),
-                      )}
-                      aria-label={english ? "Enlarge navigation map" : "放大查看导航示意图"}
-                    >
-                      <img
-                        src={navigationImageUrl(navigationResult.image_url)}
-                        alt={navigationResult.title || (english ? "Navigation map" : "导航示意图")}
-                        loading="lazy"
-                        onError={(event) => { event.currentTarget.parentElement?.style.setProperty("display", "none"); }}
-                      />
-                    </button>
-                  ) : null}
-                  <div className="digital-display-navigation-copy">
-                    <strong>{navigationResult.title || (english ? "Navigation directions" : "导航指引")}</strong>
-                    <p className="digital-display-navigation-summary">
-                      {navigationResult.subtitle_text || navigationResult.spoken_text}
-                    </p>
-                    {navigationResult.route?.from || navigationResult.route?.to ? (
-                      <p className="digital-display-navigation-route">
-                        {navigationResult.route.from || (english ? "Current location" : "当前位置")}
-                        {navigationResult.route.to ? ` → ${navigationResult.route.to}` : ""}
-                        {navigationResult.route.estimated_minutes != null
-                          ? english
-                            ? ` · About ${navigationResult.route.estimated_minutes} min`
-                            : ` · 约 ${navigationResult.route.estimated_minutes} 分钟`
-                          : ""}
-                      </p>
-                    ) : null}
-                    {navigationResult.route?.directions?.length ? (
-                      <ol>
-                        {navigationResult.route.directions.map((direction, index) => (
-                          <li key={`${index}-${direction}`}>{direction}</li>
-                        ))}
-                      </ol>
-                    ) : null}
-                  </div>
-                </article>
-              ) : null}
-              {messages.length === 0 && displaySubtitle ? (
-                <div className="digital-display-chat-empty">{displaySubtitle}</div>
-              ) : null}
-              {conversationRounds.map((round, roundIndex) => {
-                const isLatestRound = roundIndex === conversationRounds.length - 1;
-                return (
-                  <div
-                    key={round[0]?.id ?? roundIndex}
-                    ref={isLatestRound ? latestRoundRef : undefined}
-                    className={`digital-display-chat-round ${isLatestRound ? "is-latest" : ""}`}
+                      onClick={() => onLanguageChange(option.value)}
+                      className={language === option.value ? "is-active" : ""}
+                      aria-pressed={language === option.value}
                   >
-                    {round.map((message) => (
-                      <div key={message.id} className={`digital-display-chat-line ${message.role === "user" ? "is-user" : "is-assistant"} ${message.relatedEntities?.length ? "has-entities" : ""}`}>
-                        <div className="digital-display-chat-line-copy">
-                          <span className="digital-display-chat-role">{message.role === "user" ? (english ? "Me" : "我") : (english ? "Digital Human" : "数字人")}</span>
-                          <p>{message.text || (english ? "Preparing an answer…" : "正在准备回答…")}</p>
+                    {option.label}
+                  </button>
+              ))}
+            </aside>
+
+            <section
+                className={`digital-display-chat-panel ${chatPanelHidden ? "is-conversation-hidden" : ""} ${presentationActive ? "is-presentation-hidden" : ""} ${subtitleActive ? "is-subtitle-active" : ""}`}
+                data-prompt={english ? "Ask another question" : "继续提问"}
+                aria-label={english ? "Live conversation" : "实时对话"}
+            >
+              {!conversationVisible && !presentationActive ? (
+                  <button type="button" className="digital-display-chat-reveal" onClick={revealConversation}>
+                    {english ? "Show conversation" : "查看历史对话"}
+                  </button>
+              ) : null}
+              <div className="digital-display-chat-heading">
+                <span>{english ? "LIVE CONVERSATION" : "实时对话"}</span>
+                <span className="digital-display-chat-state">
+                {voiceIntent === "navigation" ? (english ? "Navigation" : "导航") : voiceIntent === "shopping" ? (english ? "Shopping assistant" : "虚拟导购") : voiceIntent === "exhibition_content" ? (english ? "Exhibition Q&A" : "展品问答") : ""}
+                  {isSpeaking ? (english ? " · Speaking" : " · 正在播报") : ""}
+              </span>
+              </div>
+              <div ref={chatFeedRef} className="digital-display-chat-feed" style={chatFeedStyle} aria-live="polite" onScroll={updateScrollToBottomVisibility}>
+                <div ref={chatFeedContentRef} className="digital-display-chat-feed-content">
+                  {exhibitionConfigNotice ? (
+                      <div className="digital-display-chat-notice" role="status">{exhibitionConfigNotice}</div>
+                  ) : null}
+                  {navigationResult ? (
+                      <article className="digital-display-navigation-card">
+                        <button
+                            type="button"
+                            className="digital-display-card-close"
+                            onClick={() => closePresentation(onCloseNavigation)}
+                            aria-label={english ? "Close navigation directions" : "关闭路线指引"}
+                            title={english ? "Close navigation directions" : "关闭路线指引"}
+                        >
+                          ×
+                        </button>
+                        {navigationResult.image_url ? (
+                            <button
+                                type="button"
+                                className="digital-display-zoom-trigger digital-display-navigation-image"
+                                onClick={() => openImageLightbox(
+                                    navigationImageUrl(navigationResult.image_url ?? ""),
+                                    navigationResult.title || (english ? "Navigation map" : "导航示意图"),
+                                )}
+                                aria-label={english ? "Enlarge navigation map" : "放大查看导航示意图"}
+                            >
+                              <img
+                                  src={navigationImageUrl(navigationResult.image_url)}
+                                  alt={navigationResult.title || (english ? "Navigation map" : "导航示意图")}
+                                  loading="lazy"
+                                  onError={(event) => { event.currentTarget.parentElement?.style.setProperty("display", "none"); }}
+                              />
+                            </button>
+                        ) : null}
+                        <div className="digital-display-navigation-copy">
+                          <strong>{navigationResult.title || (english ? "Navigation directions" : "导航指引")}</strong>
+                          <p className="digital-display-navigation-summary">
+                            {navigationResult.subtitle_text || navigationResult.spoken_text}
+                          </p>
+                          {navigationResult.route?.from || navigationResult.route?.to ? (
+                              <p className="digital-display-navigation-route">
+                                {navigationResult.route.from || (english ? "Current location" : "当前位置")}
+                                {navigationResult.route.to ? ` → ${navigationResult.route.to}` : ""}
+                                {navigationResult.route.estimated_minutes != null
+                                    ? english
+                                        ? ` · About ${navigationResult.route.estimated_minutes} min`
+                                        : ` · 约 ${navigationResult.route.estimated_minutes} 分钟`
+                                    : ""}
+                              </p>
+                          ) : null}
+                          {navigationResult.route?.directions?.length ? (
+                              <ol>
+                                {navigationResult.route.directions.map((direction, index) => (
+                                    <li key={`${index}-${direction}`}>{direction}</li>
+                                ))}
+                              </ol>
+                          ) : null}
+                        </div>
+                      </article>
+                  ) : null}
+                  {messages.length === 0 && displaySubtitle ? (
+                      <div className="digital-display-chat-empty">{displaySubtitle}</div>
+                  ) : null}
+                  {conversationRounds.map((round, roundIndex) => {
+                    const isLatestRound = roundIndex === conversationRounds.length - 1;
+                    return (
+                        <div
+                            key={round[0]?.id ?? roundIndex}
+                            ref={isLatestRound ? latestRoundRef : undefined}
+                            className={`digital-display-chat-round ${isLatestRound ? "is-latest" : ""}`}
+                        >
+                          {round.map((message) => (
+                              <div key={message.id} className={`digital-display-chat-line ${message.role === "user" ? "is-user" : "is-assistant"} ${message.relatedEntities?.length ? "has-entities" : ""}`}>
+                                <div className="digital-display-chat-line-copy">
+                                  <span className="digital-display-chat-role">{message.role === "user" ? (english ? "Me" : "我") : (english ? "Digital Human" : "数字人")}</span>
+                                  <p>{message.text || (english ? "Preparing an answer…" : "正在准备回答…")}</p>
+                                </div>
+                              </div>
+                          ))}
+                          {isLatestRound && showLiveSubtitle ? (
+                              <div className="digital-display-chat-line is-assistant is-live-line">
+                                <span className="digital-display-chat-role">{english ? "Digital Human" : "数字人"}</span>
+                                <p>{subtitle}</p>
+                              </div>
+                          ) : null}
+                        </div>
+                    );
+                  })}
+                  {conversationRounds.length === 0 && showLiveSubtitle ? (
+                      <div ref={latestRoundRef} className="digital-display-chat-round is-latest">
+                        <div className="digital-display-chat-line is-assistant is-live-line">
+                          <span className="digital-display-chat-role">{english ? "Digital Human" : "数字人"}</span>
+                          <p>{subtitle}</p>
                         </div>
                       </div>
-                    ))}
-                    {isLatestRound && showLiveSubtitle ? (
-                      <div className="digital-display-chat-line is-assistant is-live-line">
-                        <span className="digital-display-chat-role">{english ? "Digital Human" : "数字人"}</span>
-                        <p>{subtitle}</p>
-                      </div>
+                  ) : null}
+                </div>
+                {showScrollToBottom ? (
+                    <button type="button" className="digital-display-scroll-bottom" onClick={() => scrollChatToBottom("smooth")}>
+                      <span aria-hidden>↓</span>
+                      {english ? "Back to latest" : "回到底部"}
+                    </button>
+                ) : null}
+              </div>
+
+              <div className="digital-display-chat-suggestions" aria-label={english ? "Suggested questions" : "常见问题"}>
+                {suggestions.map((suggestion) => (
+                    <button
+                        key={suggestion}
+                        type="button"
+                        onClick={() => live && (onSuggestionSend ?? onSend)(suggestion)}
+                        disabled={!live}
+                    >
+                      {suggestion}
+                    </button>
+                ))}
+              </div>
+
+              {!subtitleActive ? (
+                  <div className="digital-display-chat-input" data-prompt={english ? "Ask another question" : "继续提问"}>
+                    {inputMode === "voice" ? (
+                        <ChatInput
+                            compact
+                            onSend={onSend}
+                            onSpeakAudio={onSpeakAudio}
+                            onSpeakAudioStreamResult={onSpeakAudioStreamResult}
+                            onSpeakAudioStreamError={onSpeakAudioStreamError}
+                            streamingAsrSessionId={streamingAsrSessionId}
+                            deferSpeak={deferSpeak}
+                            autoStartVoice={inputMode === "voice"}
+                            onVoiceModeChange={(active) => {
+                              if (!active) setInputMode("keyboard");
+                            }}
+                            onInterrupt={onInterrupt}
+                            isSpeaking={isSpeaking}
+                            disabled={!live}
+                            onNotify={onNotify}
+                            ttsProvider={ttsProvider}
+                            sttProvider={sttProvider}
+                            edgeVoice={edgeVoice}
+                            qwenModel={qwenModel}
+                            qwenVoice={qwenVoice}
+                            language={language}
+                        />
+                    ) : (
+                        <>
+                          <input
+                              value={draft}
+                              onChange={(event) => setDraft(event.target.value)}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter" && !event.nativeEvent.isComposing) submit();
+                              }}
+                              placeholder={live ? (english ? "Type what you would like to know" : "请输入您想了解的内容") : (english ? "Connect to start asking questions" : "连接后即可开始提问")}
+                              disabled={!live}
+                              aria-label={english ? "Ask the digital human" : "向数字人提问"}
+                          />
+                          {live && isSpeaking ? (
+                              <button type="button" className="digital-display-stop" onClick={onInterrupt}>{english ? "Interrupt" : "打断"}</button>
+                          ) : (
+                              <button type="button" className="digital-display-send" onClick={submit} disabled={!draft.trim() || !live}>{english ? "Send" : "发送"}</button>
+                          )}
+                        </>
+                    )}
+                    {inputMode === "keyboard" ? (
+                        <button
+                            type="button"
+                            className="digital-display-mode-toggle"
+                            onClick={() => setInputMode("voice")}
+                            aria-label={english ? "Switch to voice input" : "切换为语音输入"}
+                        >
+                          {english ? "Voice" : "语音输入"}
+                        </button>
                     ) : null}
                   </div>
-                );
-              })}
-              {conversationRounds.length === 0 && showLiveSubtitle ? (
-                <div ref={latestRoundRef} className="digital-display-chat-round is-latest">
-                  <div className="digital-display-chat-line is-assistant is-live-line">
-                    <span className="digital-display-chat-role">{english ? "Digital Human" : "数字人"}</span>
-                    <p>{subtitle}</p>
-                  </div>
+              ) : null}
+            </section>
+
+            {presentationActive ? (
+                <div className={`digital-display-presentation-stack ${shoppingRegistration ? "is-registration" : ""}`}>
+                  <LiveSubtitle text={subtitle ?? ""} english={english} />
+                  {shoppingRegistration || navigationResult || presentationMessages.some((message) => message.relatedEntities?.length) ? (
+                      <section
+                          className={`digital-display-waist-panel ${shoppingRegistration ? "is-registration" : ""} ${exhibitionProductList && !shoppingRegistration && !navigationResult ? "is-product-list" : ""} ${presentationDialogVisible ? "" : "is-dialog-hidden"}`}
+                          aria-hidden={!presentationDialogVisible}
+                          aria-label={shoppingRegistration ? (english ? "Registration QR code" : "登记二维码") : (english ? "Exhibition content" : "展会内容展示")}
+                      >
+                        {shoppingRegistration ? (
+                            <article className="digital-display-registration-card" role="dialog" aria-modal="true" aria-label={english ? "Registration QR code" : "登记二维码"}>
+                              <button type="button" onClick={() => closePresentation(onCloseShoppingRegistration)} aria-label={english ? "Close registration QR code" : "关闭登记二维码"}>×</button>
+                              <img src={shoppingRegistration.qrDataUrl} alt={english ? `${shoppingRegistration.title} registration QR code` : `${shoppingRegistration.title}登记二维码`} />
+                              <div>
+                                <strong>{shoppingRegistration.title}</strong>
+                                <p>{english ? "Scan with your phone to register. Your submission will be added to lead management." : "请使用手机扫码登记，提交后信息将同步至线索运营。"}</p>
+                                <a href={shoppingRegistration.url} target="_blank" rel="noreferrer">{english ? "Open the registration page" : "无法扫码时打开登记页"}</a>
+                              </div>
+                            </article>
+                        ) : null}
+                        {!shoppingRegistration && navigationResult ? (
+                            <article className="digital-display-navigation-card">
+                              <button
+                                  type="button"
+                                  className="digital-display-card-close"
+                                  onClick={() => closePresentation(onCloseNavigation)}
+                                  aria-label={english ? "Close navigation directions" : "关闭路线指引"}
+                                  title={english ? "Close navigation directions" : "关闭路线指引"}
+                              >
+                                ×
+                              </button>
+                              {navigationResult.image_url ? (
+                                  <button
+                                      type="button"
+                                      className="digital-display-zoom-trigger digital-display-navigation-image"
+                                      onClick={() => openImageLightbox(
+                                          navigationImageUrl(navigationResult.image_url ?? ""),
+                                          navigationResult.title || (english ? "Navigation map" : "导航示意图"),
+                                      )}
+                                      aria-label={english ? "Enlarge navigation map" : "放大查看导航示意图"}
+                                  >
+                                    <img
+                                        src={navigationImageUrl(navigationResult.image_url)}
+                                        alt={navigationResult.title || (english ? "Navigation map" : "导航示意图")}
+                                        loading="lazy"
+                                        onError={(event) => { event.currentTarget.parentElement?.style.setProperty("display", "none"); }}
+                                    />
+                                  </button>
+                              ) : null}
+                              <div className="digital-display-navigation-copy">
+                                <strong>{navigationResult.title || (english ? "Navigation directions" : "导航指引")}</strong>
+                                <p className="digital-display-navigation-summary">
+                                  {navigationResult.subtitle_text || navigationResult.spoken_text}
+                                </p>
+                                {navigationResult.route?.from || navigationResult.route?.to ? (
+                                    <p className="digital-display-navigation-route">
+                                      {navigationResult.route.from || (english ? "Current location" : "当前位置")}
+                                      {navigationResult.route.to ? ` → ${navigationResult.route.to}` : ""}
+                                      {navigationResult.route.estimated_minutes != null
+                                          ? english
+                                              ? ` · About ${navigationResult.route.estimated_minutes} min`
+                                              : ` · 约 ${navigationResult.route.estimated_minutes} 分钟`
+                                          : ""}
+                                    </p>
+                                ) : null}
+                                {navigationResult.route?.directions?.length ? (
+                                    <ol>
+                                      {navigationResult.route.directions.map((direction, index) => (
+                                          <li key={`${index}-${direction}`}>{direction}</li>
+                                      ))}
+                                    </ol>
+                                ) : null}
+                              </div>
+                            </article>
+                        ) : null}
+                        {!shoppingRegistration && !navigationResult ? presentationMessages.flatMap((message) => {
+                          const entities = message.relatedEntities ?? [];
+                          if (exhibitionProductList && entities.length) {
+                            return [
+                              <ExhibitionProductList
+                                  key={`${message.id}-product-list`}
+                                  products={entities}
+                                  immersive
+                                  english={english}
+                                  onSelect={onSelectEntity}
+                                  onImageClick={openImageLightbox}
+                              />,
+                            ];
+                          }
+                          return entities.map((entity) => (
+                              <ExhibitionEntityCard
+                                  key={`${message.id}-${entity.kind}-${entity.id}`}
+                                  entity={entity}
+                                  immersive
+                                  onClose={onCloseEntity ? () => closePresentation(() => onCloseEntity(entity.id)) : undefined}
+                                  onSelect={entity.kind === "exhibitor" && onSelectEntity ? () => onSelectEntity(entity) : undefined}
+                                  selectLabel={english ? "View products" : "查看展品"}
+                                  onRegister={entity.kind === "exhibit" && onRegisterEntity ? () => onRegisterEntity(entity) : undefined}
+                                  registerLabel={english ? "Register by QR" : "二维码登记"}
+                                  closeLabel={english ? `Close ${entity.name}` : `关闭${entity.name}介绍`}
+                                  onImageClick={openImageLightbox}
+                              />
+                          ));
+                        }) : null}
+                      </section>
+                  ) : null}
                 </div>
-              ) : null}
-              </div>
-              {showScrollToBottom ? (
-                <button type="button" className="digital-display-scroll-bottom" onClick={() => scrollChatToBottom("smooth")}>
-                  <span aria-hidden>↓</span>
-                  {english ? "Back to latest" : "回到底部"}
-                </button>
-              ) : null}
-            </div>
+            ) : null}
 
-            <div className="digital-display-chat-suggestions" aria-label={english ? "Suggested questions" : "常见问题"}>
-              {suggestions.map((suggestion) => (
-                <button
-                  key={suggestion}
-                  type="button"
-                  onClick={() => live && (onSuggestionSend ?? onSend)(suggestion)}
-                  disabled={!live}
-                >
-                  {suggestion}
-                </button>
-              ))}
-            </div>
-
-            <div className="digital-display-chat-input" data-prompt={english ? "Ask another question" : "继续提问"}>
-              {inputMode === "voice" ? (
-                <ChatInput
-                  compact
-                  onSend={onSend}
-                  onSpeakAudio={onSpeakAudio}
-                  onSpeakAudioStreamResult={onSpeakAudioStreamResult}
-                  onSpeakAudioStreamError={onSpeakAudioStreamError}
-                  streamingAsrSessionId={streamingAsrSessionId}
-                  deferSpeak={deferSpeak}
-                  onInterrupt={onInterrupt}
-                  isSpeaking={isSpeaking}
-                  disabled={!live}
-                  onNotify={onNotify}
-                  ttsProvider={ttsProvider}
-                  sttProvider={sttProvider}
-                  edgeVoice={edgeVoice}
-                  qwenModel={qwenModel}
-                  qwenVoice={qwenVoice}
-                  language={language}
-                />
-              ) : (
-                <>
-                  <input
-                    value={draft}
-                    onChange={(event) => setDraft(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" && !event.nativeEvent.isComposing) submit();
+            {lightboxImage ? (
+                <div
+                    className="digital-display-image-lightbox"
+                    role="dialog"
+                    aria-modal="true"
+                    aria-label={english ? "Image preview" : "图片放大预览"}
+                    onMouseDown={(event) => {
+                      if (event.target === event.currentTarget) setLightboxImage(null);
                     }}
-                    placeholder={live ? (english ? "Type what you would like to know" : "请输入您想了解的内容") : (english ? "Connect to start asking questions" : "连接后即可开始提问")}
-                    disabled={!live}
-                    aria-label={english ? "Ask the digital human" : "向数字人提问"}
-                  />
-                  {live && isSpeaking ? (
-                    <button type="button" className="digital-display-stop" onClick={onInterrupt}>{english ? "Interrupt" : "打断"}</button>
-                  ) : (
-                    <button type="button" className="digital-display-send" onClick={submit} disabled={!draft.trim() || !live}>{english ? "Send" : "发送"}</button>
-                  )}
-                </>
-              )}
-              <button
-                type="button"
-                className="digital-display-mode-toggle"
-                onClick={() => setInputMode((mode) => mode === "voice" ? "keyboard" : "voice")}
-                aria-label={inputMode === "voice" ? (english ? "Switch to keyboard input" : "切换为键盘输入") : (english ? "Switch to voice input" : "切换为语音输入")}
-              >
-                {inputMode === "voice" ? (english ? "Keyboard" : "键盘输入") : (english ? "Voice" : "语音输入")}
-              </button>
-            </div>
-          </section>
-
-          {presentationActive ? (
-            <div className={`digital-display-presentation-stack ${shoppingRegistration ? "is-registration" : ""}`}>
-              <LiveSubtitle text={subtitle ?? ""} english={english} />
-              {shoppingRegistration || navigationResult || presentationMessages.some((message) => message.relatedEntities?.length) ? (
-                <section
-                  className={`digital-display-waist-panel ${shoppingRegistration ? "is-registration" : ""} ${exhibitionProductList && !shoppingRegistration && !navigationResult ? "is-product-list" : ""} ${presentationDialogVisible ? "" : "is-dialog-hidden"}`}
-                  aria-hidden={!presentationDialogVisible}
-                  aria-label={shoppingRegistration ? (english ? "Registration QR code" : "登记二维码") : (english ? "Exhibition content" : "展会内容展示")}
                 >
-              {shoppingRegistration ? (
-                <article className="digital-display-registration-card" role="dialog" aria-modal="true" aria-label={english ? "Registration QR code" : "登记二维码"}>
-                  <button type="button" onClick={() => closePresentation(onCloseShoppingRegistration)} aria-label={english ? "Close registration QR code" : "关闭登记二维码"}>×</button>
-                  <img src={shoppingRegistration.qrDataUrl} alt={english ? `${shoppingRegistration.title} registration QR code` : `${shoppingRegistration.title}登记二维码`} />
-                  <div>
-                    <strong>{shoppingRegistration.title}</strong>
-                    <p>{english ? "Scan with your phone to register. Your submission will be added to lead management." : "请使用手机扫码登记，提交后信息将同步至线索运营。"}</p>
-                    <a href={shoppingRegistration.url} target="_blank" rel="noreferrer">{english ? "Open the registration page" : "无法扫码时打开登记页"}</a>
-                  </div>
-                </article>
-              ) : null}
-              {!shoppingRegistration && navigationResult ? (
-                <article className="digital-display-navigation-card">
                   <button
-                    type="button"
-                    className="digital-display-card-close"
-                    onClick={() => closePresentation(onCloseNavigation)}
-                    aria-label={english ? "Close navigation directions" : "关闭路线指引"}
-                    title={english ? "Close navigation directions" : "关闭路线指引"}
+                      type="button"
+                      className="digital-display-image-lightbox-close"
+                      onClick={() => setLightboxImage(null)}
+                      aria-label={english ? "Close image preview" : "关闭图片预览"}
+                      autoFocus
                   >
                     ×
                   </button>
-                  {navigationResult.image_url ? (
-                    <button
-                      type="button"
-                      className="digital-display-zoom-trigger digital-display-navigation-image"
-                      onClick={() => openImageLightbox(
-                        navigationImageUrl(navigationResult.image_url ?? ""),
-                        navigationResult.title || (english ? "Navigation map" : "导航示意图"),
-                      )}
-                      aria-label={english ? "Enlarge navigation map" : "放大查看导航示意图"}
-                    >
-                      <img
-                        src={navigationImageUrl(navigationResult.image_url)}
-                        alt={navigationResult.title || (english ? "Navigation map" : "导航示意图")}
-                        loading="lazy"
-                        onError={(event) => { event.currentTarget.parentElement?.style.setProperty("display", "none"); }}
-                      />
-                    </button>
-                  ) : null}
-                  <div className="digital-display-navigation-copy">
-                    <strong>{navigationResult.title || (english ? "Navigation directions" : "导航指引")}</strong>
-                    <p className="digital-display-navigation-summary">
-                      {navigationResult.subtitle_text || navigationResult.spoken_text}
-                    </p>
-                    {navigationResult.route?.from || navigationResult.route?.to ? (
-                      <p className="digital-display-navigation-route">
-                        {navigationResult.route.from || (english ? "Current location" : "当前位置")}
-                        {navigationResult.route.to ? ` → ${navigationResult.route.to}` : ""}
-                        {navigationResult.route.estimated_minutes != null
-                          ? english
-                            ? ` · About ${navigationResult.route.estimated_minutes} min`
-                            : ` · 约 ${navigationResult.route.estimated_minutes} 分钟`
-                          : ""}
-                      </p>
-                    ) : null}
-                    {navigationResult.route?.directions?.length ? (
-                      <ol>
-                        {navigationResult.route.directions.map((direction, index) => (
-                          <li key={`${index}-${direction}`}>{direction}</li>
-                        ))}
-                      </ol>
-                    ) : null}
+                  <img src={lightboxImage.src} alt={lightboxImage.alt} />
+                </div>
+            ) : null}
+
+            {!live && !busy ? (
+                <div className="digital-display-start-card">
+                  <p className="digital-display-eyebrow">{english ? "Sichuan Expo Group Digital Human · Live" : "四川博览集团数字人 · 实时推流"}</p>
+                  <h1>{busy ? (english ? "Preparing the digital human" : "数字人正在准备中") : connection === "error" ? (english ? "Live connection unavailable" : "推流暂时未连接") : (english ? "Welcome to the smart exhibition hall" : "欢迎来到智能展厅")}</h1>
+                  <p>
+                    {busy
+                        ? queueInfo?.position
+                            ? english ? `You are number ${queueInfo.position} in the queue. Please wait.` : `当前排队第 ${queueInfo.position} 位，请稍候。`
+                            : english ? "Establishing a low-latency WebRTC video channel." : "正在建立 WebRTC 低延迟视频通道。"
+                        : english ? "Connect to start real-time Q&A and exhibition navigation." : "连接四川博览集团数字人视频推流，开始实时问答与展览导览。"}
+                  </p>
+                  <button type="button" className="digital-display-start-button" onClick={onStart} disabled={busy}>
+                    {busy ? (english ? "Connecting..." : "连接中...") : connection === "error" ? (english ? "Reconnect" : "重新连接") : (english ? "Start" : "开始体验")}
+                  </button>
+                  <div className="digital-display-start-meta">
+                    <span>{avatar?.name ?? (english ? "Default digital human" : "默认数字人")}</span>
+                    <span>{modelLabel}</span>
                   </div>
-                </article>
-              ) : null}
-              {!shoppingRegistration && !navigationResult ? presentationMessages.flatMap((message) => {
-                const entities = message.relatedEntities ?? [];
-                if (exhibitionProductList && entities.length) {
-                  return [
-                    <ExhibitionProductList
-                      key={`${message.id}-product-list`}
-                      products={entities}
-                      immersive
-                      english={english}
-                      onImageClick={openImageLightbox}
-                    />,
-                  ];
-                }
-                return entities.map((entity) => (
-                  <ExhibitionEntityCard
-                    key={`${message.id}-${entity.kind}-${entity.id}`}
-                    entity={entity}
-                    immersive
-                    onClose={onCloseEntity ? () => closePresentation(() => onCloseEntity(entity.id)) : undefined}
-                    closeLabel={english ? `Close ${entity.name}` : `关闭${entity.name}介绍`}
-                    onImageClick={openImageLightbox}
-                  />
-                ));
-              }) : null}
-                </section>
-              ) : null}
-            </div>
-          ) : null}
+                </div>
+            ) : null}
 
-          {lightboxImage ? (
-            <div
-              className="digital-display-image-lightbox"
-              role="dialog"
-              aria-modal="true"
-              aria-label={english ? "Image preview" : "图片放大预览"}
-              onMouseDown={(event) => {
-                if (event.target === event.currentTarget) setLightboxImage(null);
-              }}
-            >
-              <button
-                type="button"
-                className="digital-display-image-lightbox-close"
-                onClick={() => setLightboxImage(null)}
-                aria-label={english ? "Close image preview" : "关闭图片预览"}
-                autoFocus
-              >
-                ×
-              </button>
-              <img src={lightboxImage.src} alt={lightboxImage.alt} />
-            </div>
-          ) : null}
+            {busy ? (
+                <div className="digital-display-loading" role="status" aria-live="polite">
+                  <span className="digital-display-loader" aria-hidden />
+                  <strong>{english ? "Loading digital human" : "正在加载数字人"}</strong>
+                  <span>{queueInfo?.position ? (english ? `Queue position: ${queueInfo.position}` : `当前排队第 ${queueInfo.position} 位，请稍候`) : (english ? "Establishing WebRTC video channel" : "正在建立 WebRTC 视频通道")}</span>
+                  <div className="digital-display-loading-track" aria-hidden><i /></div>
+                </div>
+            ) : null}
 
-          {!live && !busy ? (
-            <div className="digital-display-start-card">
-              <p className="digital-display-eyebrow">{english ? "Sichuan Expo Group Digital Human · Live" : "四川博览集团数字人 · 实时推流"}</p>
-              <h1>{busy ? (english ? "Preparing the digital human" : "数字人正在准备中") : connection === "error" ? (english ? "Live connection unavailable" : "推流暂时未连接") : (english ? "Welcome to the smart exhibition hall" : "欢迎来到智能展厅")}</h1>
-              <p>
-                {busy
-                  ? queueInfo?.position
-                    ? english ? `You are number ${queueInfo.position} in the queue. Please wait.` : `当前排队第 ${queueInfo.position} 位，请稍候。`
-                    : english ? "Establishing a low-latency WebRTC video channel." : "正在建立 WebRTC 低延迟视频通道。"
-                  : english ? "Connect to start real-time Q&A and exhibition navigation." : "连接四川博览集团数字人视频推流，开始实时问答与展览导览。"}
-              </p>
-              <button type="button" className="digital-display-start-button" onClick={onStart} disabled={busy}>
-                {busy ? (english ? "Connecting..." : "连接中...") : connection === "error" ? (english ? "Reconnect" : "重新连接") : (english ? "Start" : "开始体验")}
-              </button>
-              <div className="digital-display-start-meta">
-                <span>{avatar?.name ?? (english ? "Default digital human" : "默认数字人")}</span>
-                <span>{modelLabel}</span>
-              </div>
-            </div>
-          ) : null}
-
-          {busy ? (
-            <div className="digital-display-loading" role="status" aria-live="polite">
-              <span className="digital-display-loader" aria-hidden />
-              <strong>{english ? "Loading digital human" : "正在加载数字人"}</strong>
-              <span>{queueInfo?.position ? (english ? `Queue position: ${queueInfo.position}` : `当前排队第 ${queueInfo.position} 位，请稍候`) : (english ? "Establishing WebRTC video channel" : "正在建立 WebRTC 视频通道")}</span>
-              <div className="digital-display-loading-track" aria-hidden><i /></div>
-            </div>
-          ) : null}
-
-        </SceneStage>
-      </div>
-    </main>
+          </SceneStage>
+        </div>
+      </main>
   );
 }

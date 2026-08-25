@@ -12,6 +12,7 @@ import {
 } from "../lib/api";
 import { buildTTSPreviewPayload, requestTTSPreview } from "../lib/ttsPreview";
 import type { TtsProviderExtended } from "../constants/ttsBailian";
+import { beginAdminProgress, finishAdminProgress, notifyAdmin, updateAdminProgress } from "./feedback";
 
 export type OpenTalkingClient = {
   listAvatars(): Promise<AvatarSummary[]>;
@@ -42,6 +43,20 @@ export type OpenTalkingClient = {
   updateSceneComposition(id: string, input: Partial<CreateSceneCompositionInput>): Promise<SceneComposition>;
   deleteSceneComposition(id: string): Promise<void>;
 };
+
+async function uploadWithFeedback<T>(label: string, path: string, form: FormData): Promise<T> {
+  const progressId = beginAdminProgress(label);
+  try {
+    const result = await apiPostForm<T>(path, form, undefined, (progress) => updateAdminProgress({ id: progressId, label, progress, phase: "progress" }));
+    finishAdminProgress(progressId, label, true);
+    notifyAdmin(`${label}成功`, "success");
+    return result;
+  } catch (error) {
+    finishAdminProgress(progressId, label, false);
+    notifyAdmin(`${label}失败：${error instanceof Error ? error.message : "请稍后重试"}`, "error");
+    throw error;
+  }
+}
 
 export const openTalkingClient: OpenTalkingClient = {
   listAvatars: () => apiGet<AvatarSummary[] | { items?: AvatarSummary[]; avatars?: AvatarSummary[] }>("/avatars").then((response) => {
@@ -78,7 +93,7 @@ export const openTalkingClient: OpenTalkingClient = {
       form.set("image", file);
       form.set("remove_background", removeBackground ? "true" : "false");
     }
-    return apiPostForm<AvatarSummary>("/avatars/custom", form);
+    return uploadWithFeedback<AvatarSummary>("数字人形象上传", "/avatars/custom", form);
   },
   deleteAvatar: (avatarId) => apiDelete<{ avatar_id: string; status: string }>(`/avatars/${encodeURIComponent(avatarId)}`).then(() => undefined),
   previewTts: ({ text, voice, provider = "edge", model }) =>
@@ -90,7 +105,7 @@ export const openTalkingClient: OpenTalkingClient = {
     const form = new FormData();
     form.set("file", file);
     if (name.trim()) form.set("name", name.trim());
-    return apiPostForm<SceneBackgroundAsset>("/scene-assets/backgrounds", form);
+    return uploadWithFeedback<SceneBackgroundAsset>("场景背景上传", "/scene-assets/backgrounds", form);
   },
   deleteSceneBackground: (backgroundId) => apiDelete<{ id: string; deleted: boolean }>(`/scene-assets/backgrounds/${encodeURIComponent(backgroundId)}`).then(() => undefined),
   listSceneCompositions: () => apiGet<{ items: SceneComposition[] }>("/scene-assets/compositions").then((response) => response.items ?? []),

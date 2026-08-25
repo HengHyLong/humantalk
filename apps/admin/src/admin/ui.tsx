@@ -1,4 +1,5 @@
 import { Component, createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import type { AdminProgressEvent, AdminToastTone } from "./feedback";
 
 export function LoadingSkeleton({ rows = 4 }: { rows?: number }) {
   return <div className="space-y-3" role="status" aria-label="正在加载"><span className="sr-only">正在加载</span>{Array.from({ length: rows }, (_, index) => <div key={index} className="h-12 animate-pulse rounded-xl bg-slate-100" />)}</div>;
@@ -12,12 +13,13 @@ export function EmptyState({ title = "暂无数据", description = "当前还没
   return <div className="flex min-h-[220px] flex-col items-center justify-center p-6 text-center"><div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-100 text-slate-400">∅</div><h3 className="mt-3 text-sm font-semibold text-slate-800">{title}</h3><p className="mt-1 max-w-sm text-xs leading-5 text-slate-500">{description}</p>{action ? <div className="mt-4">{action}</div> : null}</div>;
 }
 
-type Toast = { id: number; tone: "success" | "error" | "info"; message: string };
+type Toast = { id: number; tone: AdminToastTone; message: string };
 type ToastContextValue = { pushToast: (message: string, tone?: Toast["tone"]) => void };
 const ToastContext = createContext<ToastContextValue | null>(null);
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [progresses, setProgresses] = useState<Record<string, AdminProgressEvent>>({});
   const pushToast = useCallback((message: string, tone: Toast["tone"] = "info") => {
     const id = Date.now() + Math.random();
     setToasts((current) => [...current.slice(-2), { id, message, tone }]);
@@ -25,10 +27,21 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   }, []);
   useEffect(() => {
     const onToast = (event: Event) => { const detail = (event as CustomEvent<{ message?: string; tone?: Toast["tone"] }>).detail; if (detail?.message) pushToast(detail.message, detail.tone); };
+    const onProgress = (event: Event) => {
+      const detail = (event as CustomEvent<AdminProgressEvent>).detail;
+      if (!detail?.id) return;
+      if (detail.phase === "start" || detail.phase === "progress") {
+        setProgresses((current) => ({ ...current, [detail.id]: detail }));
+        return;
+      }
+      setProgresses((current) => { const next = { ...current }; delete next[detail.id]; return next; });
+    };
     window.addEventListener("opentalking-admin-toast", onToast);
-    return () => window.removeEventListener("opentalking-admin-toast", onToast);
+    window.addEventListener("opentalking-admin-progress", onProgress);
+    return () => { window.removeEventListener("opentalking-admin-toast", onToast); window.removeEventListener("opentalking-admin-progress", onProgress); };
   }, [pushToast]);
-  return <ToastContext.Provider value={{ pushToast }}>{children}<div className="fixed right-4 top-4 z-[80] flex w-[min(360px,calc(100vw-2rem))] flex-col gap-2" aria-live="polite">{toasts.map((toast) => <div key={toast.id} className={`rounded-xl border px-4 py-3 text-xs font-medium shadow-lg ${toast.tone === "success" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : toast.tone === "error" ? "border-rose-200 bg-rose-50 text-rose-700" : "border-cyan-200 bg-white text-slate-700"}`}>{toast.message}</div>)}</div></ToastContext.Provider>;
+  const activeProgresses = Object.values(progresses);
+  return <ToastContext.Provider value={{ pushToast }}>{children}<div className="fixed right-4 top-4 z-[80] flex w-[min(360px,calc(100vw-2rem))] flex-col gap-2" aria-live="polite">{toasts.map((toast) => <div key={toast.id} className={`rounded-xl border px-4 py-3 text-xs font-medium shadow-lg ${toast.tone === "success" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : toast.tone === "error" ? "border-rose-200 bg-rose-50 text-rose-700" : "border-cyan-200 bg-white text-slate-700"}`}>{toast.message}</div>)}</div><div className="fixed bottom-4 left-4 z-[80] flex w-[min(380px,calc(100vw-2rem))] flex-col gap-2" aria-live="polite">{activeProgresses.map((item) => <div key={item.id} className="rounded-xl border border-cyan-100 bg-white px-4 py-3 text-xs shadow-lg"><div className="flex items-center justify-between gap-3"><span className="truncate font-semibold text-slate-700">{item.label}</span><span className="shrink-0 text-cyan-700">{item.progress == null ? "处理中" : `${Math.round(item.progress)}%`}</span></div><div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={item.progress ?? undefined} aria-label={item.label}><div className={`h-full rounded-full bg-cyan-500 transition-[width] duration-200 ${item.progress == null ? "w-1/2 animate-pulse" : ""}`} style={item.progress == null ? undefined : { width: `${Math.max(2, item.progress)}%` }} /></div></div>)}</div></ToastContext.Provider>;
 }
 
 export function useToast() { const context = useContext(ToastContext); if (!context) throw new Error("useToast must be used inside ToastProvider"); return context; }

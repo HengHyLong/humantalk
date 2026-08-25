@@ -63,6 +63,25 @@ export class ApiError extends Error {
   }
 }
 
+function notifyAdminRequest(path: string, method: string, ok: boolean, error?: unknown): void {
+  if (typeof window === "undefined") return;
+  void method;
+  const label = path.includes("/sessions/") ? "会话操作" : path.includes("knowledge") ? "知识库操作" : path.includes("avatars") ? "数字人操作" : "请求操作";
+  const message = ok ? `${label}成功` : `${label}失败：${error instanceof Error ? error.message : "请稍后重试"}`;
+  window.dispatchEvent(new CustomEvent("opentalking-admin-toast", { detail: { message, tone: ok ? "success" : "error" } }));
+}
+
+async function runAdminMutation<T>(path: string, method: string, operation: () => Promise<T>): Promise<T> {
+  try {
+    const result = await operation();
+    notifyAdminRequest(path, method, true);
+    return result;
+  } catch (error) {
+    notifyAdminRequest(path, method, false, error);
+    throw error;
+  }
+}
+
 async function throwIfNotOk(r: Response): Promise<void> {
   if (r.ok) return;
   const body = await r.text();
@@ -92,33 +111,27 @@ export async function apiGet<T>(path: string): Promise<T> {
 }
 
 export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
-  const r = await fetch(buildApiUrl(path), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body),
+  return runAdminMutation(path, "POST", async () => {
+    const r = await fetch(buildApiUrl(path), { method: "POST", headers: { "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
+    await throwIfNotOk(r);
+    return r.json() as Promise<T>;
   });
-  await throwIfNotOk(r);
-  return r.json() as Promise<T>;
 }
 
 export async function apiPut<T, B = unknown>(path: string, body?: B): Promise<T> {
-  const r = await fetch(buildApiUrl(path), {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body),
+  return runAdminMutation(path, "PUT", async () => {
+    const r = await fetch(buildApiUrl(path), { method: "PUT", headers: { "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
+    await throwIfNotOk(r);
+    return r.json() as Promise<T>;
   });
-  await throwIfNotOk(r);
-  return r.json() as Promise<T>;
 }
 
 export async function apiPatch<T, B = unknown>(path: string, body?: B): Promise<T> {
-  const r = await fetch(buildApiUrl(path), {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body),
+  return runAdminMutation(path, "PATCH", async () => {
+    const r = await fetch(buildApiUrl(path), { method: "PATCH", headers: { "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
+    await throwIfNotOk(r);
+    return r.json() as Promise<T>;
   });
-  await throwIfNotOk(r);
-  return r.json() as Promise<T>;
 }
 
 export async function apiPostBlob(path: string, body?: unknown): Promise<Blob> {
@@ -137,8 +150,29 @@ export async function apiPostFormBlob(path: string, form: FormData, init?: Reque
   return r.blob();
 }
 
+export type UploadProgressCallback = (progress: number) => void;
+
+async function postFormWithProgress<T>(path: string, form: FormData, init: RequestInit | undefined, onProgress: UploadProgressCallback): Promise<T> {
+  const response = await new Promise<Response>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", buildApiUrl(path), true);
+    const headers = new Headers(init?.headers);
+    headers.forEach((value, key) => xhr.setRequestHeader(key, value));
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable) onProgress(Math.min(100, (event.loaded / event.total) * 100));
+    };
+    xhr.onload = () => resolve(new Response(xhr.responseText, { status: xhr.status, statusText: xhr.statusText }));
+    xhr.onerror = () => reject(new Error("网络连接失败"));
+    xhr.onabort = () => reject(new Error("上传已取消"));
+    xhr.send(form);
+  });
+  await throwIfNotOk(response);
+  return response.json() as Promise<T>;
+}
+
 /** multipart/form-data（语音识别 speak_audio / transcribe） */
-export async function apiPostForm<T>(path: string, form: FormData, init?: RequestInit): Promise<T> {
+export async function apiPostForm<T>(path: string, form: FormData, init?: RequestInit, onProgress?: UploadProgressCallback): Promise<T> {
+  if (onProgress && typeof XMLHttpRequest !== "undefined") return postFormWithProgress<T>(path, form, init, onProgress);
   const r = await fetch(buildApiUrl(path), { method: "POST", body: form, ...init });
   await throwIfNotOk(r);
   return r.json() as Promise<T>;
@@ -460,9 +494,11 @@ export async function createVideoCreationJob(input: CreateVideoCreationJobInput)
 }
 
 export async function apiDelete<T>(path: string, init?: RequestInit): Promise<T> {
-  const r = await fetch(buildApiUrl(path), { ...init, method: "DELETE" });
-  await throwIfNotOk(r);
-  return r.json() as Promise<T>;
+  return runAdminMutation(path, "DELETE", async () => {
+    const r = await fetch(buildApiUrl(path), { ...init, method: "DELETE" });
+    await throwIfNotOk(r);
+    return r.json() as Promise<T>;
+  });
 }
 
 export type KnowledgeDocument = {

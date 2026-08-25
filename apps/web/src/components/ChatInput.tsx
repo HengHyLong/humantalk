@@ -137,6 +137,10 @@ interface ChatInputProps {
   /** 流式 STT 后端是否支持识别完成后由前端决定是否 speak。 */
   deferSpeak?: boolean;
   language?: ConversationLanguage;
+  /** 外层切换到语音输入后自动开启麦克风监听。 */
+  autoStartVoice?: boolean;
+  /** 用户主动结束监听时通知外层恢复键盘输入。系统错误不应切回键盘面板。 */
+  onVoiceModeChange?: (active: boolean) => void;
 }
 
 export type ListeningState = "off" | "listening" | "recording" | "transcribing" | "processing" | "error";
@@ -200,6 +204,8 @@ export function ChatInput({
   compact = false,
   deferSpeak = false,
   language = "zh-CN",
+  autoStartVoice = false,
+  onVoiceModeChange,
 }: ChatInputProps) {
   const voiceCaptureEnabled = !!(
     onSpeakAudio ||
@@ -212,6 +218,9 @@ export function ChatInput({
   const [voiceBusy, setVoiceBusy] = useState(false);
   const [ftAudioBusy, setFtAudioBusy] = useState(false);
   const ftAudioInputRef = useRef<HTMLInputElement>(null);
+  const onVoiceModeChangeRef = useRef(onVoiceModeChange);
+  onVoiceModeChangeRef.current = onVoiceModeChange;
+  const autoStartAttemptedRef = useRef(false);
 
   const vadCfg = useRef(getVoiceVadConfig());
   useEffect(() => {
@@ -613,6 +622,9 @@ export function ChatInput({
 
   const enterVoiceMode = useCallback(async () => {
     if (!voiceCaptureEnabled || disabled) return;
+    // 申请麦克风权限期间也保持语音面板，避免键盘输入短暂闪回。
+    setVoiceMode(true);
+    onVoiceModeChangeRef.current?.(true);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -678,10 +690,12 @@ export function ChatInput({
       segmentActiveRef.current = false;
 
       setVoiceMode(true);
+      onVoiceModeChangeRef.current?.(true);
       setListeningState("listening");
       rafRef.current = requestAnimationFrame(vadTick);
     } catch (e) {
       console.warn("Voice mode failed", e);
+      setVoiceMode(false);
       setListeningState("error");
       onNotify?.(
         "无法使用麦克风。请用 localhost 或 HTTPS 打开页面，并允许麦克风权限（纯 IP 的 HTTP 多半会被浏览器拦截）。",
@@ -697,10 +711,21 @@ export function ChatInput({
     voiceCaptureEnabled,
   ]);
 
+  useEffect(() => {
+    if (!autoStartVoice) {
+      autoStartAttemptedRef.current = false;
+      return;
+    }
+    if (voiceMode || disabled || !voiceCaptureEnabled || autoStartAttemptedRef.current) return;
+    autoStartAttemptedRef.current = true;
+    void enterVoiceMode();
+  }, [autoStartVoice, disabled, enterVoiceMode, voiceCaptureEnabled, voiceMode]);
+
   const toggleVoiceMode = useCallback(async () => {
     if (!voiceCaptureEnabled || disabled) return;
     if (voiceMode) {
       await teardownVoicePipeline();
+      onVoiceModeChangeRef.current?.(false);
       return;
     }
     if (voiceBusy) return;
@@ -736,7 +761,10 @@ export function ChatInput({
     uploadLockRef.current = false;
     await discardActiveSegment();
     onInterrupt();
-  }, [discardActiveSegment, onInterrupt]);
+    // 停止按钮结束整个连续监听，外层随后切回键盘输入。
+    await teardownVoicePipeline();
+    onVoiceModeChangeRef.current?.(false);
+  }, [discardActiveSegment, onInterrupt, teardownVoicePipeline]);
 
   const handleKey = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {

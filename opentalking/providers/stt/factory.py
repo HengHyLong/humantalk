@@ -9,6 +9,7 @@ import tempfile
 import threading
 import time
 import wave
+import importlib.util
 from pathlib import Path
 from typing import Any
 
@@ -581,6 +582,18 @@ def stt_provider_config(provider: str) -> dict[str, str | bool]:
         "key_set": bool(key),
         "service_url_set": bool(service_url),
     }
+    if selected in LOCAL_STT_PROVIDERS:
+        # Do not wait until the first microphone upload to discover that the
+        # local runtime is absent.  The admin and web clients use this flag to
+        # validate an exhibition binding before creating a session.
+        runtime_ready = bool(importlib.util.find_spec("funasr")) if selected in {"funasr", "sensevoice"} else bool(importlib.util.find_spec("sherpa_onnx"))
+        config["runtime_ready"] = runtime_ready
+        if not runtime_ready:
+            config["availability_error"] = (
+                "本地 FunASR 运行时未安装，请执行 uv sync --extra dev --extra models --extra local-audio"
+                if selected in {"funasr", "sensevoice"}
+                else "本地 sherpa-onnx 运行时未安装，请执行 uv sync --extra dev --extra models --extra local-audio"
+            )
     if selected == "xiaomi_mimo":
         config["profile"] = "xiaomi_mimo"
     return config
