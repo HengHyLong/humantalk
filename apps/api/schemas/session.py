@@ -14,6 +14,7 @@ class CreateSessionRequest(BaseModel):
     tts_voice: str | None = None
     tts_model: str | None = None
     llm_system_prompt: str | None = None
+    exhibition_role_prompt: str | None = Field(default=None, max_length=12000)
     language: Literal["zh-CN", "en-US"] = "zh-CN"
     wav2lip_postprocess_mode: str | None = None
     fasterliveportrait_config: dict[str, Any] | None = None

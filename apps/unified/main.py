@@ -15,6 +15,7 @@ from pathlib import Path
 
 # legacy registry import removed
 import uvicorn
+import redis.asyncio as redis
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from apps.api.core.config import get_settings
@@ -138,8 +139,30 @@ async def unified_lifespan(app: FastAPI):
         "Unified: single HTTP worker required (in-memory session + task queue + runners). "
         "Do not use gunicorn/uvicorn --workers>1; do not load-balance multiple unified instances without sticky routing."
     )
-    mem = InMemoryRedis()
-    app.state.redis = mem
+    redis_url = str(getattr(settings, "redis_url", "") or "").strip()
+    redis_password = os.environ.get("OPENTALKING_REDIS_PASSWORD", "").strip()
+    use_external_redis = _env_bool("OPENTALKING_UNIFIED_USE_REDIS", default=False) or redis_url not in {"", "redis://localhost:6379/0"}
+    broker: object
+    external_redis: redis.Redis | None = None
+    if use_external_redis:
+        external_redis = redis.from_url(
+            redis_url or "redis://localhost:6379/0",
+            password=redis_password or None,
+            decode_responses=True,
+        )
+        try:
+            await external_redis.ping()
+        except Exception as exc:  # noqa: BLE001
+            await external_redis.aclose()
+            raise RuntimeError(
+                "Unified Redis 连接失败，请检查 OPENTALKING_REDIS_URL 和 OPENTALKING_REDIS_PASSWORD。"
+            ) from exc
+        broker = external_redis
+        log.info("OpenTalking unified mode: external Redis broker=%s", redis_url.split("@")[-1])
+    else:
+        broker = InMemoryRedis()
+        log.info("OpenTalking unified mode: in-memory broker")
+    app.state.redis = broker
     runners: dict[str, SessionRunner] = {}
     app.state.session_runners = runners
     avatars_root = Path(
@@ -147,10 +170,10 @@ async def unified_lifespan(app: FastAPI):
     ).resolve()
     device = os.environ.get("OPENTALKING_TORCH_DEVICE", "cpu")
     consumer = asyncio.create_task(
-        consume_task_queue(mem, avatars_root, device, runners)
+        consume_task_queue(broker, avatars_root, device, runners)
     )
     log.info(
-        "OpenTalking unified mode: in-memory broker, avatars=%s device=%s",
+        "OpenTalking unified mode: avatars=%s device=%s",
         avatars_root,
         device,
     )
@@ -209,7 +232,10 @@ async def unified_lifespan(app: FastAPI):
     for s in list(runners.values()):
         await s.close()
     runners.clear()
-    await mem.aclose()
+    if external_redis is not None:
+        await external_redis.aclose()
+    else:
+        await broker.aclose()  # type: ignore[attr-defined]
 
 
 def create_app() -> FastAPI:

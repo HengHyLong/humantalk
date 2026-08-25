@@ -246,6 +246,7 @@ export type Exhibition = {
   boundSttProvider?: string | null;
   boundSttModel?: string | null;
   boundScene: string | null;
+  boundRolePrompt: string;
   knowledgeBaseIds: string[];
   lifecycleHistory: Array<{ from: ExhibitionStatus | null; to: ExhibitionStatus; operator: string; time: string }>;
   createdAt: string;

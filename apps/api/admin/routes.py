@@ -2450,6 +2450,7 @@ def public_config(exhibition_id: str, request: Request) -> dict[str, Any]:
         "bound_voice_model": exhibition.get("boundVoiceModel") or exhibition.get("bound_voice_model"),
         "bound_stt_provider": exhibition.get("boundSttProvider") or exhibition.get("bound_stt_provider"),
         "bound_stt_model": exhibition.get("boundSttModel") or exhibition.get("bound_stt_model"),
+        "bound_role_prompt": exhibition.get("boundRolePrompt") or exhibition.get("bound_role_prompt") or "",
     }
 
 
@@ -2479,6 +2480,7 @@ def public_exhibitions(request: Request) -> dict[str, Any]:
             "bound_voice_model": item.get("boundVoiceModel") or item.get("bound_voice_model"),
             "bound_stt_provider": bound_stt_provider,
             "bound_stt_model": item.get("boundSttModel") or item.get("bound_stt_model"),
+            "bound_role_prompt": item.get("boundRolePrompt") or item.get("bound_role_prompt") or "",
             "bound_stt_runtime_ready": bound_stt_status.get("runtime_ready") if bound_stt_status else None,
             "bound_stt_availability_error": bound_stt_status.get("availability_error") if bound_stt_status else None,
             "bound_scene": item.get("boundScene") or item.get("bound_scene"),

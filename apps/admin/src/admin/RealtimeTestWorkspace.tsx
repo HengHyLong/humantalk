@@ -92,6 +92,7 @@ export function RealtimeTestWorkspace({ initialAvatarId = "" }: { initialAvatarI
   const closeEventsRef = useRef<(() => void) | null>(null);
   const sessionRef = useRef<string | null>(null);
   const exhibitionSttModelRef = useRef<string | null>(null);
+  const exhibitionRolePromptRef = useRef<string | null>(null);
   const [avatars, setAvatars] = useState<AvatarSummary[]>([]);
   const [models, setModels] = useState<ModelStatus[]>([]);
   const [avatarId, setAvatarId] = useState("");
@@ -157,6 +158,7 @@ export function RealtimeTestWorkspace({ initialAvatarId = "" }: { initialAvatarI
 
   useEffect(() => {
     if (!requestedExhibitionId) return;
+    exhibitionRolePromptRef.current = null;
     let cancelled = false;
     void adminApi.listExhibitions().then((exhibitions) => {
       if (cancelled) return;
@@ -172,6 +174,7 @@ export function RealtimeTestWorkspace({ initialAvatarId = "" }: { initialAvatarI
         exhibitionSttModelRef.current = exhibition.boundSttModel;
         setAsrModel(exhibition.boundSttModel);
       }
+      exhibitionRolePromptRef.current = exhibition.boundRolePrompt?.trim() || null;
       if (exhibition.knowledgeBaseIds.length) setAgentConfig((current) => ({ ...current, knowledgeEnabled: true, knowledgeBaseIds: exhibition.knowledgeBaseIds }));
     }).catch(() => undefined);
     return () => { cancelled = true; };
@@ -280,6 +283,7 @@ export function RealtimeTestWorkspace({ initialAvatarId = "" }: { initialAvatarI
       const created = await apiPost<{ session_id: string; status: string }>("/sessions", {
         avatar_id: avatarId,
         model: sessionModel,
+        exhibition_role_prompt: exhibitionRolePromptRef.current || undefined,
         tts_provider: ttsProvider,
         stt_provider: mockCanSkipStt ? undefined : asrProvider,
         tts_voice: ttsVoice || undefined,

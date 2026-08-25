@@ -561,6 +561,7 @@ export type CreateSessionRequest = {
   persona_id?: string;
   avatar_id?: string;
   model?: string;
+  exhibition_role_prompt?: string;
   llm_system_prompt?: string;
   tts_provider: string;
   stt_provider: string;

@@ -2539,6 +2539,7 @@ export default function App() {
         // Video mode is rendered locally in the browser; the mock session
         // only supplies the normal SSE/TTS lifecycle and audio transport.
         model: model === VIDEO_MODEL ? VIDEO_SESSION_MODEL : model,
+        exhibition_role_prompt: selectedExhibition.bound_role_prompt?.trim() || undefined,
         llm_system_prompt: llmSystemPrompt.trim() || undefined,
         language: conversationLanguage,
         tts_provider: ttsProvider,
@@ -2622,7 +2623,9 @@ export default function App() {
       const detail = error instanceof ApiError ? error.detail : null;
       const msg = detail
         ? `启动会话失败：${detail}`
-        : "启动会话失败，请稍后重试或查看后端日志。";
+        : error instanceof Error && error.message
+          ? `启动会话失败：${error.message}`
+          : "启动会话失败，请稍后重试或查看后端日志。";
       notify(msg, "error");
     }
   }, [

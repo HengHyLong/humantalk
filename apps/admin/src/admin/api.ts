@@ -148,8 +148,8 @@ const DEFAULT_MISS: MissPoolItem[] = [
 ];
 
 const DEFAULT_EXHIBITIONS: Exhibition[] = [
-  { id: "exhibition-1", name: "2026 西部博览会", code: "XBH-2026", mainVenueId: "venue-1", hostUnit: "四川博览集团", organizerUnit: "四川博览集团展览有限公司", coOrganizerUnits: "成都市人民政府、四川省商务厅", startDate: "2026-10-15", endDate: "2026-10-19", status: "operating", description: "四川博览集团年度综合展会。", boundAvatarId: null, boundModel: "QuickTalk", boundVoiceId: null, boundVoiceProvider: null, boundVoiceModel: null, boundSttProvider: "sensevoice", boundSttModel: "iic/SenseVoiceSmall", boundScene: "welcome", knowledgeBaseIds: [], lifecycleHistory: [{ from: "setup", to: "operating", operator: "系统管理员", time: "2026-08-03 10:00" }], createdAt: "2026-07-20 09:00", updatedAt: "2026-08-03 10:00" },
-  { id: "exhibition-2", name: "2027 智能制造专题展", code: "IM-2027", mainVenueId: null, hostUnit: "四川博览集团", organizerUnit: "四川博览集团会展事业部", coOrganizerUnits: "四川省经济和信息化厅", startDate: "2027-04-08", endDate: "2027-04-11", status: "preparing", description: "面向智能制造和工业互联网的专题展会。", boundAvatarId: null, boundModel: "", boundVoiceId: null, boundVoiceProvider: null, boundVoiceModel: null, boundSttProvider: null, boundSttModel: null, boundScene: null, knowledgeBaseIds: [], lifecycleHistory: [], createdAt: "2026-08-01 14:20", updatedAt: "2026-08-01 14:20" },
+  { id: "exhibition-1", name: "2026 西部博览会", code: "XBH-2026", mainVenueId: "venue-1", hostUnit: "四川博览集团", organizerUnit: "四川博览集团展览有限公司", coOrganizerUnits: "成都市人民政府、四川省商务厅", startDate: "2026-10-15", endDate: "2026-10-19", status: "operating", description: "四川博览集团年度综合展会。", boundAvatarId: null, boundModel: "QuickTalk", boundVoiceId: null, boundVoiceProvider: null, boundVoiceModel: null, boundSttProvider: "sensevoice", boundSttModel: "iic/SenseVoiceSmall", boundScene: "welcome", boundRolePrompt: "", knowledgeBaseIds: [], lifecycleHistory: [{ from: "setup", to: "operating", operator: "系统管理员", time: "2026-08-03 10:00" }], createdAt: "2026-07-20 09:00", updatedAt: "2026-08-03 10:00" },
+  { id: "exhibition-2", name: "2027 智能制造专题展", code: "IM-2027", mainVenueId: null, hostUnit: "四川博览集团", organizerUnit: "四川博览集团会展事业部", coOrganizerUnits: "四川省经济和信息化厅", startDate: "2027-04-08", endDate: "2027-04-11", status: "preparing", description: "面向智能制造和工业互联网的专题展会。", boundAvatarId: null, boundModel: "", boundVoiceId: null, boundVoiceProvider: null, boundVoiceModel: null, boundSttProvider: null, boundSttModel: null, boundScene: null, boundRolePrompt: "", knowledgeBaseIds: [], lifecycleHistory: [], createdAt: "2026-08-01 14:20", updatedAt: "2026-08-01 14:20" },
 ];
 
 const DEFAULT_VENUES: EventVenue[] = [
@@ -478,7 +478,7 @@ export class MockAdminApiClient implements AdminApiClient {
   async resolveMiss(id: string, status: MissPoolItem["status"]) { const list = await this.listMissPool(); const next = list.map((item) => item.id === id ? { ...item, status } : item); writeStore("miss-pool", next); return next.find((item) => item.id === id) ?? list[0]; }
   async listExhibitions() {
     const legacyStatus: Record<string, Exhibition["status"]> = { draft: "preparing", active: "operating", ended: "teardown", archived: "teardown" };
-    return (await readStore<Exhibition[]>("exhibitions", DEFAULT_EXHIBITIONS)).map((item) => ({ ...item, mainVenueId: item.mainVenueId ?? null, status: legacyStatus[item.status] ?? item.status, boundModel: item.boundModel ?? "", boundVoiceId: item.boundVoiceId ?? null, boundVoiceProvider: item.boundVoiceProvider ?? null, boundVoiceModel: item.boundVoiceModel ?? null, boundSttProvider: item.boundSttProvider ?? null, boundSttModel: item.boundSttModel ?? null, boundScene: item.boundScene ?? null, lifecycleHistory: item.lifecycleHistory ?? [] }));
+    return (await readStore<Exhibition[]>("exhibitions", DEFAULT_EXHIBITIONS)).map((item) => ({ ...item, mainVenueId: item.mainVenueId ?? null, status: legacyStatus[item.status] ?? item.status, boundModel: item.boundModel ?? "", boundVoiceId: item.boundVoiceId ?? null, boundVoiceProvider: item.boundVoiceProvider ?? null, boundVoiceModel: item.boundVoiceModel ?? null, boundSttProvider: item.boundSttProvider ?? null, boundSttModel: item.boundSttModel ?? null, boundScene: item.boundScene ?? null, boundRolePrompt: item.boundRolePrompt ?? "", lifecycleHistory: item.lifecycleHistory ?? [] }));
   }
   async saveExhibition(item: Exhibition) {
     const list = await this.listExhibitions();
@@ -848,6 +848,7 @@ export class FetchAdminApiClient implements AdminApiClient {
       boundSttProvider: item.boundSttProvider ?? item.bound_stt_provider ?? null,
       boundSttModel: item.boundSttModel ?? item.bound_stt_model ?? null,
       boundScene: item.boundScene ?? item.bound_scene ?? null,
+      boundRolePrompt: String(item.boundRolePrompt ?? item.bound_role_prompt ?? ""),
       knowledgeBaseIds: stringArray(item.knowledgeBaseIds ?? item.knowledge_base_ids),
       lifecycleHistory: Array.isArray(item.lifecycleHistory) ? item.lifecycleHistory : Array.isArray(item.lifecycle_history) ? item.lifecycle_history : [],
       createdAt: String(item.createdAt || item.created_at || ""),

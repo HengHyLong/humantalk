@@ -368,6 +368,7 @@ export type ExhibitionVoiceConfigResponse = Partial<ExhibitionVoiceConfig> & {
   bound_voice_model?: string | null;
   bound_stt_provider?: string | null;
   bound_stt_model?: string | null;
+  bound_role_prompt?: string | null;
   wakeWord?: {
     enabled?: boolean;
     words?: string[];
@@ -393,6 +394,7 @@ export type ExhibitionSummary = {
   bound_voice_model?: string | null;
   bound_stt_provider?: string | null;
   bound_stt_model?: string | null;
+  bound_role_prompt?: string | null;
   bound_stt_runtime_ready?: boolean | null;
   bound_stt_availability_error?: string | null;
   bound_scene?: string | null;
@@ -744,6 +746,7 @@ export type CreateSessionRequest = {
   persona_id?: string;
   avatar_id?: string;
   model?: string;
+  exhibition_role_prompt?: string;
   llm_system_prompt?: string;
   language: ConversationLanguage;
   tts_provider: string;
