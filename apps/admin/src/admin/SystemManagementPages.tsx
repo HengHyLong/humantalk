@@ -37,7 +37,7 @@ const LLM_PROVIDER_OPTIONS: Array<{ value: string; label: string; baseUrl: strin
 ];
 function emptyLlmConfig(): LlmConfig {
   const preset = LLM_PROVIDER_OPTIONS[0];
-  return { id: `new-${Date.now()}`, name: "", provider: preset.value, baseUrl: preset.baseUrl, model: preset.model, apiKey: "", apiKeyConfigured: false, systemPrompt: "你是四川博览集团的数字人助手，请准确、简洁地回答展会相关问题。", isActive: false, usage: "conversation", source: "managed", readOnly: false, createdAt: "", updatedAt: "" };
+  return { id: `new-${Date.now()}`, name: "", provider: preset.value, baseUrl: preset.baseUrl, model: preset.model, apiKey: "", apiKeyConfigured: false, systemPrompt: "您好！我是四川国际博览集团的数字人小美。\n我诞生于博览集团的数字化服务升级之中，依托人工智能和大数据技术，致力于为您提供专业、高效的会展资讯服务。\n作为四川唯一 一家以会展业为主业的省属国企，博览集团承担着中国西部国际博览会组委会秘书处的职能。而我，就是您了解西博会、农博会、计算机大会等重大展会，以及集团会展运营、传媒、置业、商服、数字、金融等业务板块的智能向导。\n无论您想查询展会信息、了解参展流程，还是咨询合作事宜，都可以随时向我提问。我会用最快的速度、最准确的信息，为您提供\"一站式\"智能服务。\n很高兴为您服务，请问有什么可以帮您的吗？", isActive: false, usage: "conversation", source: "managed", readOnly: false, createdAt: "", updatedAt: "" };
 }
 
 export function LlmConfigManagementPage({ canWrite }: SystemProps) {

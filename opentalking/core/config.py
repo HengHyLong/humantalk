@@ -11,6 +11,7 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from opentalking.core.model_paths import local_audio_model_root, model_root
+from opentalking.core.prompts import DEFAULT_LLM_SYSTEM_PROMPT
 
 
 def _flatten_config(raw: dict[str, Any] | None) -> dict[str, Any]:
@@ -454,7 +455,7 @@ class Settings(BaseSettings):
     llm_base_url: str = ""
     llm_api_key: str = ""
     llm_model: str = "qwen-turbo"
-    llm_system_prompt: str = "You are a friendly digital human assistant."
+    llm_system_prompt: str = DEFAULT_LLM_SYSTEM_PROMPT
 
     #: edge | openai_compatible | xiaomi_mimo | dashscope | bailian | qwen | qwen_tts | cosyvoice | sambert | local_*（OPENTALKING_TTS_DEFAULT_PROVIDER）
     tts_default_provider: str = Field(default="")

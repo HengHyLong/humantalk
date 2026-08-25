@@ -37,6 +37,7 @@ from opentalking.agent.context_builder import AgentSessionConfig, build_agent_co
 from opentalking.agent.prompt import inject_agent_context
 from opentalking.core.session_store import set_session_state
 from opentalking.core.config import Settings, get_settings
+from opentalking.core.prompts import DEFAULT_LLM_SYSTEM_PROMPT
 from opentalking.avatar.wav2lip_config import optional_wav2lip_postprocess_mode
 from opentalking.core.types.frames import AudioChunk, VideoFrameData
 from opentalking.models.registry import get_adapter
@@ -1744,7 +1745,7 @@ class SessionRunner:
         if self._conversation is None:
             base_prompt = (
                 self._llm_system_prompt
-                or "你是一个友好的数字人助手，请用自然、完整的中文回答问题。"
+                or DEFAULT_LLM_SYSTEM_PROMPT
             )
             format_guard = os.environ.get(
                 "OPENTALKING_LLM_FORMAT_GUARD",

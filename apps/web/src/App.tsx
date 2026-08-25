@@ -282,7 +282,6 @@ function mergeVoiceCatalogIntoOptions(
 }
 
 const MESSAGE_STORAGE_KEY = "opentalking-chat-history";
-const LLM_SYSTEM_PROMPT_STORAGE_KEY = "opentalking-llm-system-prompt";
 const SESSION_PANEL_COLLAPSED_KEY = "opentalking-session-panel-collapsed";
 const CUSTOM_REFERENCE_NAME_KEY = "opentalking-custom-reference-name";
 const SELECTED_AVATAR_STORAGE_KEY = "opentalking-selected-avatar-id";
@@ -1828,14 +1827,6 @@ export default function App() {
     }
   }, [sessionPanelCollapsed]);
 
-  const [llmSystemPrompt] = useState<string>(() => {
-    try {
-      return window.localStorage.getItem(LLM_SYSTEM_PROMPT_STORAGE_KEY) ?? "";
-    } catch {
-      return "";
-    }
-  });
-
   const loadVoices = useCallback(async (): Promise<VoiceCatalogItem[]> => {
     try {
       const res = await apiGet<{ items: VoiceCatalogItem[] }>("/voices");
@@ -1992,14 +1983,6 @@ export default function App() {
       /* ignore */
     }
   }, [asrProvider]);
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(LLM_SYSTEM_PROMPT_STORAGE_KEY, llmSystemPrompt);
-    } catch {
-      /* ignore */
-    }
-  }, [llmSystemPrompt]);
 
   useEffect(() => {
     try {
@@ -2540,7 +2523,6 @@ export default function App() {
         // only supplies the normal SSE/TTS lifecycle and audio transport.
         model: model === VIDEO_MODEL ? VIDEO_SESSION_MODEL : model,
         exhibition_role_prompt: selectedExhibition.bound_role_prompt?.trim() || undefined,
-        llm_system_prompt: llmSystemPrompt.trim() || undefined,
         language: conversationLanguage,
         tts_provider: ttsProvider,
         stt_provider: lockedAsrProvider,
@@ -2640,7 +2622,6 @@ export default function App() {
     edgeVoice,
     exhibitionBindingsReady,
     exhibitions,
-    llmSystemPrompt,
     memoryEnabled,
     memoryLibraryId,
     model,

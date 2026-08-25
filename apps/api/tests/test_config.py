@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import apps.api.main as api_main
 import apps.unified.main as unified_main
 from opentalking.core.config import Settings
+from opentalking.core.prompts import DEFAULT_LLM_SYSTEM_PROMPT
 
 
 @pytest.mark.parametrize(
@@ -53,6 +54,14 @@ def test_wav2lip_preload_defaults_on() -> None:
     settings = Settings()
 
     assert settings.wav2lip_preload is True
+
+
+def test_default_llm_system_prompt_uses_xiaomei_introduction() -> None:
+    settings = Settings(_env_file=None)
+
+    assert settings.llm_system_prompt == DEFAULT_LLM_SYSTEM_PROMPT
+    assert settings.llm_system_prompt.startswith("您好！我是四川国际博览集团的数字人小美。")
+    assert settings.llm_system_prompt.endswith("很高兴为您服务，请问有什么可以帮您的吗？")
 
 
 def test_unprefixed_omnirt_endpoint_is_read_from_dotenv(

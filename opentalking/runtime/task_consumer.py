@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from opentalking.core.config import get_settings
+from opentalking.core.prompts import DEFAULT_LLM_SYSTEM_PROMPT
 from opentalking.core.queue_status import set_flashtalk_queue_status
 from opentalking.core.redis_keys import TASK_QUEUE
 from opentalking.core.session_store import get_session_record, set_session_state
@@ -303,7 +304,7 @@ def _create_runner(
             llm_api_key=settings.llm_api_key,
             llm_model=settings.llm_model,
             system_prompt=str(task.get("llm_system_prompt", "") or settings.llm_system_prompt)
-            or "你是一个友好的数字人助手，请用简洁的语言回答问题。不要使用表情符号或emoji。",
+            or DEFAULT_LLM_SYSTEM_PROMPT,
             model_type=effective_model,
             wav2lip_postprocess_mode=str(task.get("wav2lip_postprocess_mode", "") or ""),
             fasterliveportrait_config=task.get("fasterliveportrait_config")
@@ -325,7 +326,7 @@ def _create_runner(
         llm_api_key=settings.llm_api_key,
         llm_model=settings.llm_model,
         llm_system_prompt=str(task.get("llm_system_prompt", "") or settings.llm_system_prompt)
-        or "你是一个友好的数字人助手，请用简洁的语言回答问题。不要使用表情符号或emoji。",
+        or DEFAULT_LLM_SYSTEM_PROMPT,
         language=str(task.get("language", "zh-CN") or "zh-CN"),
         wav2lip_postprocess_mode=str(task.get("wav2lip_postprocess_mode", "") or ""),
         memory_scope=memory_scope,

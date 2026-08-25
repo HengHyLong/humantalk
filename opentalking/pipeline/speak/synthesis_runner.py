@@ -29,6 +29,7 @@ from opentalking.avatar.fasterliveportrait_config import (
 from opentalking.agent.context_builder import AgentSessionConfig, build_agent_context, default_memory_store
 from opentalking.agent.prompt import inject_agent_context
 from opentalking.core.config import get_settings
+from opentalking.core.prompts import DEFAULT_LLM_SYSTEM_PROMPT
 from opentalking.core.session_store import (
     FLASHTALK_DISK_RECORDING_FIELD,
     session_key,
@@ -312,7 +313,7 @@ class FlashTalkRunner:
         llm_base_url: str = "",
         llm_api_key: str = "",
         llm_model: str = "qwen-turbo",
-        system_prompt: str = "你是一个友好的数字人助手，请用简洁的语言回答问题。",
+        system_prompt: str = DEFAULT_LLM_SYSTEM_PROMPT,
         model_type: str = "flashtalk",
         wav2lip_postprocess_mode: str | None = None,
         fasterliveportrait_config: dict[str, object] | None = None,
