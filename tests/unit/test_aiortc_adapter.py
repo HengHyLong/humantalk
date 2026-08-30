@@ -37,9 +37,11 @@ def test_configure_aiortc_video_bitrate_from_environment(monkeypatch: pytest.Mon
 
 
 def test_configure_nvenc_encoder_factory_and_restore(monkeypatch: pytest.MonkeyPatch) -> None:
+    from aiortc import codecs
     from aiortc import rtcrtpsender
 
     original = aiortc_adapter._ORIGINAL_AIORTC_GET_ENCODER
+    original_codecs = aiortc_adapter._ORIGINAL_AIORTC_CODECS_GET_ENCODER
     codec = SimpleNamespace(mimeType="video/H264")
     try:
         monkeypatch.setenv("OPENTALKING_WEBRTC_VIDEO_ENCODER", "nvenc")
@@ -47,11 +49,13 @@ def test_configure_nvenc_encoder_factory_and_restore(monkeypatch: pytest.MonkeyP
 
         encoder = rtcrtpsender.get_encoder(codec)
         assert isinstance(encoder, aiortc_adapter._NvencH264Encoder)
+        assert isinstance(codecs.get_encoder(codec), aiortc_adapter._NvencH264Encoder)
         assert aiortc_adapter._preferred_video_codec() == "h264"
 
         monkeypatch.setenv("OPENTALKING_WEBRTC_VIDEO_ENCODER", "auto")
         aiortc_adapter._configure_aiortc_video_encoder()
         assert rtcrtpsender.get_encoder is original
+        assert codecs.get_encoder is original_codecs
     finally:
         monkeypatch.setenv("OPENTALKING_WEBRTC_VIDEO_ENCODER", "auto")
         aiortc_adapter._configure_aiortc_video_encoder()
@@ -114,6 +118,40 @@ def test_nvenc_encoder_falls_back_to_libx264(monkeypatch: pytest.MonkeyPatch) ->
     assert encoded == [b"software-frame"]
     assert encoder._nvenc_failed is True
     assert encoder._active_codec_name == "libx264"
+
+
+def test_nvenc_bitrate_recreation_uses_threshold_and_cooldown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    encoder = aiortc_adapter._NvencH264Encoder()
+    encoder.codec = SimpleNamespace(width=1080, height=1920, bit_rate=500_000)
+    encoder.target_bitrate = 8_000_000
+    encoder._codec_created_at = 100.0
+    frame = SimpleNamespace(width=1080, height=1920)
+    monkeypatch.setenv("OPENTALKING_WEBRTC_NVENC_BITRATE_RECREATE_RATIO", "0.35")
+    monkeypatch.setenv("OPENTALKING_WEBRTC_NVENC_RECREATE_COOLDOWN_SECONDS", "5")
+
+    monkeypatch.setattr(aiortc_adapter.time, "monotonic", lambda: 103.0)
+    assert encoder._should_recreate_codec(frame) is False
+
+    monkeypatch.setattr(aiortc_adapter.time, "monotonic", lambda: 106.0)
+    assert encoder._should_recreate_codec(frame) is True
+
+
+def test_first_video_codec_from_sdp_uses_first_media_payload() -> None:
+    sdp = "\r\n".join(
+        [
+            "v=0",
+            "m=video 9 UDP/TLS/RTP/SAVPF 102 98 99",
+            "a=rtpmap:98 VP8/90000",
+            "a=rtpmap:99 rtx/90000",
+            "a=rtpmap:102 H264/90000",
+            "m=audio 9 UDP/TLS/RTP/SAVPF 111",
+            "a=rtpmap:111 opus/48000/2",
+        ]
+    )
+
+    assert aiortc_adapter._first_video_codec_from_sdp(sdp) == "h264"
 
 
 def test_configure_video_codec_preferences_selects_h264(

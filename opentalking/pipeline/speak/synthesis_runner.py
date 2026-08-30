@@ -966,6 +966,7 @@ class FlashTalkRunner:
         self.webrtc = WebRTCSession(
             fps=float(self.flashtalk.fps),
             sample_rate=16000,
+            session_id=self.session_id,
         )
 
         # Auto-close session when WebRTC peer disconnects (releases the slot lock)

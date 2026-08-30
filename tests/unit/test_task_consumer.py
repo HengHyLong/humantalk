@@ -740,10 +740,18 @@ def test_session_runner_prepare_passes_avatar_state_to_adapter_warmup(
             raise AssertionError("idle cache is disabled in this test")
 
     class FakeWebRTCSession:
-        def __init__(self, *, fps: float, sample_rate: int, mode: str) -> None:
+        def __init__(
+            self,
+            *,
+            fps: float,
+            sample_rate: int,
+            mode: str,
+            session_id: str = "-",
+        ) -> None:
             self.fps = fps
             self.sample_rate = sample_rate
             self.mode = mode
+            self.session_id = session_id
 
     adapter = FakeAdapter()
     monkeypatch.setattr("opentalking.pipeline.session.runner.get_adapter", lambda _model: adapter)

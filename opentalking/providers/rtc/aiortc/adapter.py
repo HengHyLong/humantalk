@@ -19,6 +19,7 @@ try:
         RTCRtpSender,
         RTCSessionDescription,
     )
+    from aiortc import codecs as aiortc_codecs
     from aiortc import rtcrtpsender as aiortc_rtcrtpsender
     from aiortc.codecs import h264 as aiortc_h264
     from aiortc.codecs.h264 import H264Encoder
@@ -63,6 +64,9 @@ log = logging.getLogger(__name__)
 _ORIGINAL_AIORTC_GET_ENCODER = (
     aiortc_rtcrtpsender.get_encoder if WEBRTC_AVAILABLE else None
 )
+_ORIGINAL_AIORTC_CODECS_GET_ENCODER = (
+    aiortc_codecs.get_encoder if WEBRTC_AVAILABLE else None
+)
 _AIORTC_ENCODER_FACTORY_MODE = "default"
 
 
@@ -88,6 +92,16 @@ def _rtc_stats_interval_seconds() -> float:
     except ValueError:
         log.warning("Ignoring invalid OPENTALKING_RTC_STATS_INTERVAL_SECONDS=%r", raw)
         value = 10.0
+    return max(0.0, value)
+
+
+def _nonnegative_env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name, str(default)).strip()
+    try:
+        value = float(raw)
+    except ValueError:
+        log.warning("Ignoring invalid %s=%r", name, raw)
+        value = default
     return max(0.0, value)
 
 
@@ -117,6 +131,7 @@ class _NvencH264Encoder(H264Encoder):
         super().__init__()
         self._nvenc_failed = False
         self._active_codec_name: str | None = None
+        self._codec_created_at = 0.0
 
     def _create_nvenc_codec(self, frame: "av.VideoFrame") -> Any:
         codec = _create_codec_context("h264_nvenc", "w")
@@ -134,6 +149,7 @@ class _NvencH264Encoder(H264Encoder):
             "gpu": os.environ.get("OPENTALKING_WEBRTC_NVENC_DEVICE", "0").strip() or "0",
         }
         codec.open()
+        self._codec_created_at = time.monotonic()
         self._active_codec_name = "h264_nvenc"
         log.info(
             "WebRTC H.264 encoder active: codec=h264_nvenc device=%s preset=%s "
@@ -149,13 +165,26 @@ class _NvencH264Encoder(H264Encoder):
     def _should_recreate_codec(self, frame: "av.VideoFrame") -> bool:
         if self.codec is None:
             return True
+        if frame.width != self.codec.width or frame.height != self.codec.height:
+            return True
         current_bitrate = int(self.codec.bit_rate or 0)
-        return (
-            frame.width != self.codec.width
-            or frame.height != self.codec.height
-            or current_bitrate <= 0
-            or abs(self.target_bitrate - current_bitrate) / current_bitrate > 0.1
+        if current_bitrate <= 0:
+            return True
+        threshold = max(
+            0.1,
+            _nonnegative_env_float(
+                "OPENTALKING_WEBRTC_NVENC_BITRATE_RECREATE_RATIO",
+                0.35,
+            ),
         )
+        change_ratio = abs(self.target_bitrate - current_bitrate) / current_bitrate
+        if change_ratio <= threshold:
+            return False
+        cooldown = _nonnegative_env_float(
+            "OPENTALKING_WEBRTC_NVENC_RECREATE_COOLDOWN_SECONDS",
+            5.0,
+        )
+        return time.monotonic() - self._codec_created_at >= cooldown
 
     def _encode_frame(
         self,
@@ -201,7 +230,11 @@ class _NvencH264Encoder(H264Encoder):
 def _configure_aiortc_video_encoder() -> None:
     """Install the requested H.264 encoder factory before RTP sending starts."""
     global _AIORTC_ENCODER_FACTORY_MODE
-    if not WEBRTC_AVAILABLE or _ORIGINAL_AIORTC_GET_ENCODER is None:
+    if (
+        not WEBRTC_AVAILABLE
+        or _ORIGINAL_AIORTC_GET_ENCODER is None
+        or _ORIGINAL_AIORTC_CODECS_GET_ENCODER is None
+    ):
         return
 
     encoder = _normalized_video_encoder()
@@ -210,17 +243,32 @@ def _configure_aiortc_video_encoder() -> None:
             return
 
         def get_encoder(codec: Any) -> Any:
-            if str(codec.mimeType).lower() == "video/h264":
+            mime_type = str(getattr(codec, "mimeType", "")).lower()
+            if mime_type == "video/h264":
+                log.info(
+                    "WebRTC encoder factory selected: mime=%s implementation=h264_nvenc",
+                    mime_type,
+                )
                 return _NvencH264Encoder()
+            if mime_type.startswith("video/"):
+                log.warning(
+                    "WebRTC encoder factory bypassed NVENC: negotiated_mime=%s",
+                    mime_type,
+                )
             return _ORIGINAL_AIORTC_GET_ENCODER(codec)
 
+        # aiortc releases have used both a module-local imported factory and a
+        # dynamic codecs.get_encoder lookup. Patch both entry points so NVENC
+        # remains active across supported aiortc versions.
         aiortc_rtcrtpsender.get_encoder = get_encoder
+        aiortc_codecs.get_encoder = get_encoder
         _AIORTC_ENCODER_FACTORY_MODE = "nvenc"
         log.info("Configured WebRTC video encoder: requested=nvenc codec=h264")
         return
 
     if _AIORTC_ENCODER_FACTORY_MODE != "default":
         aiortc_rtcrtpsender.get_encoder = _ORIGINAL_AIORTC_GET_ENCODER
+        aiortc_codecs.get_encoder = _ORIGINAL_AIORTC_CODECS_GET_ENCODER
     _AIORTC_ENCODER_FACTORY_MODE = "default"
 
 
@@ -254,6 +302,25 @@ def _configure_video_codec_preferences(pc: Any) -> None:
             transceiver.setCodecPreferences(codecs)
             configured += 1
     log.info("Configured WebRTC video codec preference: codec=%s tracks=%d", preferred, configured)
+
+
+def _first_video_codec_from_sdp(sdp: str) -> str:
+    payloads: list[str] = []
+    codec_by_payload: dict[str, str] = {}
+    for raw_line in sdp.splitlines():
+        line = raw_line.strip()
+        if line.startswith("m=video "):
+            parts = line.split()
+            payloads = parts[3:]
+        elif line.startswith("a=rtpmap:"):
+            mapping = line[len("a=rtpmap:"):].split(None, 1)
+            if len(mapping) == 2:
+                codec_by_payload[mapping[0]] = mapping[1].split("/", 1)[0].lower()
+    for payload in payloads:
+        codec = codec_by_payload.get(payload)
+        if codec and codec not in {"rtx", "red", "ulpfec"}:
+            return codec
+    return "unknown"
 
 
 def _positive_env_int(name: str) -> int | None:
@@ -484,7 +551,13 @@ class _LegacyNumpyVideoTrack(MediaStreamTrack):
 class _BufferedNumpyVideoTrack(MediaStreamTrack):
     kind = "video"
 
-    def __init__(self, fps: float = 25.0, *, shared_clock: _SharedWallClock | None = None) -> None:
+    def __init__(
+        self,
+        fps: float = 25.0,
+        *,
+        shared_clock: _SharedWallClock | None = None,
+        session_id: str = "-",
+    ) -> None:
         super().__init__()
         self._fps = fps
         self._queue: asyncio.Queue[VideoFrameData | None] = asyncio.Queue(maxsize=256)
@@ -493,6 +566,7 @@ class _BufferedNumpyVideoTrack(MediaStreamTrack):
         self._prev_source_ts_ms: float | None = None
         self._next_pts_ms = 0
         self._shared_clock = shared_clock
+        self._session_id = session_id
         self._debug_frames = os.environ.get("OPENTALKING_RTC_DEBUG_FRAMES", "").strip().lower() in {"1", "true", "yes", "on"}
         self._debug_recv_count = 0
         self._debug_prev_mean: float | None = None
@@ -540,7 +614,9 @@ class _BufferedNumpyVideoTrack(MediaStreamTrack):
                 self._shared_clock.start_time = self._timeline_start
             target = now
             log.warning(
-                "RTC video underrun recovered without burst catch-up: late_ms=%.1f queue=%d",
+                "RTC video underrun recovered without burst catch-up: "
+                "session=%s late_ms=%.1f queue=%d",
+                self._session_id,
                 lateness_s * 1000.0,
                 self._queue.qsize(),
             )
@@ -632,7 +708,13 @@ class _LegacyPCM16AudioTrack(MediaStreamTrack):
 class _BufferedPCM16AudioTrack(MediaStreamTrack):
     kind = "audio"
 
-    def __init__(self, sample_rate: int = 16000, *, shared_clock: _SharedWallClock | None = None) -> None:
+    def __init__(
+        self,
+        sample_rate: int = 16000,
+        *,
+        shared_clock: _SharedWallClock | None = None,
+        session_id: str = "-",
+    ) -> None:
         super().__init__()
         self.sample_rate = sample_rate
         self._queue: asyncio.Queue[np.ndarray | None] = asyncio.Queue(maxsize=512)
@@ -646,6 +728,7 @@ class _BufferedPCM16AudioTrack(MediaStreamTrack):
         self._seen_audio = False
         self._eof = False
         self._shared_clock = shared_clock
+        self._session_id = session_id
 
     async def put_pcm(self, samples: np.ndarray | None) -> None:
         await self._queue.put(samples)
@@ -709,7 +792,9 @@ class _BufferedPCM16AudioTrack(MediaStreamTrack):
                 self._shared_clock.start_time = self._start_time
             target = now
             log.warning(
-                "RTC audio underrun recovered without burst catch-up: late_ms=%.1f queue=%d",
+                "RTC audio underrun recovered without burst catch-up: "
+                "session=%s late_ms=%.1f queue=%d",
+                self._session_id,
                 lateness_s * 1000.0,
                 self._queue.qsize(),
             )
@@ -734,6 +819,7 @@ class WebRTCSession:
         fps: float = 25.0,
         sample_rate: int = 16000,
         mode: str = "buffered",
+        session_id: str = "-",
     ) -> None:
         try:
             asyncio.get_event_loop()
@@ -741,6 +827,7 @@ class WebRTCSession:
             asyncio.set_event_loop(asyncio.new_event_loop())
         _configure_aiortc_video_bitrate()
         _configure_aiortc_video_encoder()
+        self.session_id = session_id
         self.pc = RTCPeerConnection(RTCConfiguration(iceServers=get_webrtc_server_ice_servers()))
         normalized_mode = mode.strip().lower()
         self._shared_clock = _SharedWallClock()
@@ -748,8 +835,16 @@ class WebRTCSession:
             self.video = _LegacyNumpyVideoTrack(fps=fps)
             self.audio = _LegacyPCM16AudioTrack(sample_rate=sample_rate)
         else:
-            self.video = _BufferedNumpyVideoTrack(fps=fps, shared_clock=self._shared_clock)
-            self.audio = _BufferedPCM16AudioTrack(sample_rate=sample_rate, shared_clock=self._shared_clock)
+            self.video = _BufferedNumpyVideoTrack(
+                fps=fps,
+                shared_clock=self._shared_clock,
+                session_id=session_id,
+            )
+            self.audio = _BufferedPCM16AudioTrack(
+                sample_rate=sample_rate,
+                shared_clock=self._shared_clock,
+                session_id=session_id,
+            )
         self.mode = normalized_mode
         self.pc.addTrack(self.video)
         self.pc.addTrack(self.audio)
@@ -828,6 +923,20 @@ class WebRTCSession:
         _configure_video_codec_preferences(self.pc)
         answer = await self.pc.createAnswer()
         await self.pc.setLocalDescription(answer)
+        negotiated_codec = _first_video_codec_from_sdp(self.pc.localDescription.sdp)
+        log.info(
+            "Negotiated WebRTC video codec: session=%s codec=%s requested_encoder=%s",
+            self.session_id,
+            negotiated_codec,
+            _normalized_video_encoder(),
+        )
+        if _normalized_video_encoder() == "nvenc" and negotiated_codec != "h264":
+            log.warning(
+                "NVENC requested but WebRTC negotiated a different codec: "
+                "session=%s codec=%s",
+                self.session_id,
+                negotiated_codec,
+            )
         if _rtc_stats_interval_seconds() > 0.0 and self._stats_task is None:
             self._stats_task = asyncio.create_task(self._log_quality_stats())
         return self.pc.localDescription  # type: ignore[return-value]
@@ -884,8 +993,9 @@ class WebRTCSession:
                 degraded = loss_pct >= 2.0 or rtt_ms >= 250.0 or jitter_ms >= 80.0
                 log_method = log.warning if degraded else log.info
                 log_method(
-                    "WebRTC quality: video_kbps=%.0f loss_pct=%.2f rtt_ms=%.1f "
+                    "WebRTC quality: session=%s video_kbps=%.0f loss_pct=%.2f rtt_ms=%.1f "
                     "jitter_ms=%.1f packets_sent=%d packets_lost=%d vq=%d audio_buffer_ms=%.1f",
+                    self.session_id,
                     bitrate_kbps,
                     loss_pct,
                     rtt_ms,

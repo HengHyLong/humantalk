@@ -581,6 +581,7 @@ class SessionRunner:
             fps=fps,
             sample_rate=self._rtc_sample_rate,
             mode="buffered",
+            session_id=self.session_id,
         )
         self._build_idle_frame_cache()
         if self._render_in_executor and self._render_executor is None:
