@@ -815,6 +815,15 @@ export type ClientRendererDescriptor = {
   recommended_for: string[];
 };
 
+export type MotionState = "idle" | "welcome" | "listen" | "think" | "talk" | "emphasis";
+
+export type MotionClip = {
+  id: string;
+  state: MotionState;
+  filename: string;
+  url: string;
+};
+
 export type AvatarSummary = {
   id: string;
   name: string | null;
@@ -831,6 +840,11 @@ export type AvatarSummary = {
     listen_url: string;
     think_url?: string | null;
     talk_url: string;
+    states?: Partial<Record<MotionState, string[]>>;
+  } | null;
+  motion_driver: {
+    states: Partial<Record<MotionState, MotionClip[]>>;
+    total_clips: number;
   } | null;
 };
 

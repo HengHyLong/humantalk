@@ -5,7 +5,7 @@ import { startPlayback, type PlaybackHandle } from "../lib/webrtc";
 import { ChatInput } from "../components/ChatInput";
 import { ChatMessages } from "../components/ChatMessages";
 import { BailianVoiceClone } from "../components/BailianVoiceClone";
-import { VideoAvatar } from "../components/VideoAvatar";
+import { VideoAvatar, type VideoDriverState } from "../components/VideoAvatar";
 import { RealtimeConfigPanel, realtimeTtsModels, realtimeTtsVoices, type RuntimeHealth } from "./RealtimeConfigPanel";
 import { adminApi } from "./api";
 import type { AgentConfig } from "../components/AvatarSelectionStage";
@@ -116,12 +116,22 @@ export function RealtimeTestWorkspace({ initialAvatarId = "" }: { initialAvatarI
   const [events, setEvents] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [isSpeaking, setIsSpeaking] = useState(false);
-  const [videoState, setVideoState] = useState<"listen" | "think" | "talk">("listen");
+  const [videoState, setVideoState] = useState<VideoDriverState>("welcome");
+  const welcomedVideoSessionRef = useRef<string | null>(null);
   const pendingSpeechRef = useRef(false);
   const [panelTab, setPanelTab] = useState<"chat" | "status" | "export">("chat");
   const requestedAvatarId = initialAvatarId || new URLSearchParams(window.location.search).get("avatarId") || "";
   const requestedExhibitionId = new URLSearchParams(window.location.search).get("exhibitionId") || "";
   const isAvatarDebug = Boolean(requestedAvatarId);
+
+  useEffect(() => {
+    if (!sessionId) {
+      welcomedVideoSessionRef.current = null;
+    } else if (welcomedVideoSessionRef.current !== sessionId) {
+      welcomedVideoSessionRef.current = sessionId;
+      setVideoState("welcome");
+    }
+  }, [sessionId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -368,6 +378,23 @@ export function RealtimeTestWorkspace({ initialAvatarId = "" }: { initialAvatarI
   }, []);
 
   const selectedAvatar = useMemo(() => avatars.find((avatar) => avatar.id === avatarId), [avatarId, avatars]);
+  const selectedMotionDriver = useMemo(() => ({
+    states: Object.fromEntries(Object.entries(selectedAvatar?.motion_driver?.states ?? {}).map(([state, clips]) => [
+      state,
+      (clips ?? []).map((clip) => clip.url),
+    ])),
+  }), [selectedAvatar]);
+  const selectedMotionSources = videoState === "welcome"
+    ? [...(selectedMotionDriver.states.welcome ?? []), ...(selectedMotionDriver.states.listen ?? [])]
+    : videoState === "listen" || videoState === "idle"
+      ? [...(selectedMotionDriver.states[videoState] ?? []), ...(selectedMotionDriver.states.idle ?? []), ...(selectedMotionDriver.states.listen ?? [])]
+      : videoState === "think"
+        ? (selectedMotionDriver.states.think ?? [])
+        : [];
+  const showMotionOverlay = model !== VIDEO_DRIVER
+    && videoState !== "talk"
+    && videoState !== "emphasis"
+    && selectedMotionSources.length > 0;
   const applyClonedVoice = useCallback(async (application: VoiceCloneApplication) => {
     setVoiceCatalog((current) => current.some((item) => item.provider === application.provider && item.voice_id === application.voice) ? current : [...current, { id: Date.now(), user_id: 1, provider: application.provider, voice_id: application.voice, display_label: application.displayLabel, target_model: application.model, source: "clone" }]);
     setTtsProvider(application.provider);
@@ -429,7 +456,8 @@ export function RealtimeTestWorkspace({ initialAvatarId = "" }: { initialAvatarI
             </div>
             {selectedAvatar && !sessionId && model !== VIDEO_DRIVER ? <img src={buildApiUrl(`/avatars/${encodeURIComponent(selectedAvatar.id)}/preview`)} alt={selectedAvatar.name || selectedAvatar.id} className="max-h-[720px] max-w-full object-contain" /> : null}
             {model === VIDEO_DRIVER ? <VideoAvatar state={videoState} videoDriver={selectedAvatar?.video_driver} className="max-h-[720px] max-w-full object-contain" /> : null}
-            <video ref={videoRef} autoPlay playsInline className={model === VIDEO_DRIVER ? "pointer-events-none absolute h-px w-px opacity-0" : `max-h-[720px] max-w-full object-contain ${sessionId ? "opacity-100" : "pointer-events-none absolute opacity-0"}`} />
+            {showMotionOverlay ? <VideoAvatar state={videoState} videoDriver={selectedMotionDriver} fallbackToDefault={false} className="max-h-[720px] max-w-full object-contain" /> : null}
+            <video ref={videoRef} autoPlay playsInline className={model === VIDEO_DRIVER ? "pointer-events-none absolute h-px w-px opacity-0" : `max-h-[720px] max-w-full object-contain ${sessionId && !showMotionOverlay ? "opacity-100" : "pointer-events-none absolute opacity-0"}`} />
             {startupLoading ? <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-white/85 backdrop-blur-[2px]" role="status" aria-live="polite"><div className="flex h-14 w-14 items-center justify-center rounded-full border border-cyan-100 bg-cyan-50 shadow-sm"><span className="h-7 w-7 animate-spin rounded-full border-[3px] border-cyan-200 border-t-cyan-600" /></div><p className="mt-4 text-sm font-semibold text-slate-800">{startupLabel}</p><p className="mt-1 text-xs text-slate-500">数字人舞台正在准备，请稍候…</p></div> : null}
             {!selectedAvatar && !sessionId ? <div className="text-center text-slate-400"><p className="text-lg font-semibold text-slate-700">请选择数字人形象</p><p className="mt-2 text-sm">选择后即可启动实时测试。</p></div> : null}
             {sessionId ? <button type="button" onClick={() => void stopSession()} className="absolute bottom-5 right-5 z-20 rounded-xl border border-rose-200 bg-white px-4 py-2.5 text-sm font-semibold text-rose-600 shadow-sm hover:bg-rose-50">停止会话</button> : null}

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
-import { buildApiUrl, type AvatarSummary } from "../lib/api";
+import { buildApiUrl, type AvatarSummary, type MotionState } from "../lib/api";
 import { DEFAULT_VOICES, adminApi } from "./api";
 import { canAccess, canUseButton, roleLabel } from "./policy";
 import { openTalkingClient } from "./openTalkingClient";
@@ -280,12 +280,80 @@ function DashboardPage({ navigate }: { navigate: (path: string) => void }) {
     </div>;
 }
 
+const MOTION_STATE_OPTIONS: Array<{ value: MotionState; label: string }> = [
+  { value: "welcome", label: "欢迎 / 迎宾" },
+  { value: "idle", label: "自然待机" },
+  { value: "listen", label: "倾听" },
+  { value: "think", label: "思考" },
+  { value: "talk", label: "普通讲解" },
+  { value: "emphasis", label: "重点讲解" },
+];
+
 export function AvatarPage() {
   const [avatars, setAvatars] = useState<AvatarSummary[]>([]);
   const [selected, setSelected] = useState("");
   const [loading, setLoading] = useState(true);
-  useEffect(() => { void openTalkingClient.listAvatars().then((items) => { setAvatars(items); setSelected(items[0]?.id ?? ""); }).catch(() => setAvatars([])).finally(() => setLoading(false)); }, []);
-  return <div className="p-6 xl:p-8"><PageHeader eyebrow="Digital Human Center" title="数字人形象" description="管理可用于展会服务的数字人形象，并绑定 OpenTalking avatar_id。" actions={<Button variant="secondary"><Icon name="upload" />导入形象</Button>} />{loading ? <Card className="p-8"><EmptyState title="正在读取形象" description="正在从 OpenTalking 获取可用形象。" /></Card> : avatars.length === 0 ? <Card className="p-8"><EmptyState title="暂无可用形象" description="请先确认 OpenTalking 服务已启动，或从本地导入数字人形象。" /></Card> : <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">{avatars.map((avatar) => { const active = avatar.id === selected; return <Card key={avatar.id} className={`overflow-hidden transition ${active ? "border-cyan-400 ring-4 ring-cyan-50" : ""}`}><div className="relative flex h-52 items-center justify-center bg-slate-100 p-3">{avatar.has_preview_video ? <video src={buildApiUrl(`/avatars/${encodeURIComponent(avatar.id)}/preview-video`)} className="h-full w-full object-contain" autoPlay muted loop playsInline preload="metadata" /> : <img src={openTalkingClient.previewUrl(avatar.id)} alt={avatar.name || avatar.id} className="h-full w-full object-contain" onError={(event) => { event.currentTarget.style.display = "none"; }} />}<div className="absolute left-3 top-3"><Badge tone={active ? "cyan" : "slate"}>{active ? "当前绑定" : avatar.is_custom ? "自定义" : "系统形象"}</Badge></div></div><div className="p-4"><div className="flex items-start justify-between gap-3"><div><h3 className="font-semibold text-slate-900">{avatar.name || avatar.id}</h3><p className="mt-1 text-xs text-slate-400">avatar_id：{avatar.id}</p></div><Badge tone="green">{avatar.model_type}</Badge></div><div className="mt-4 flex gap-2"><Button variant={active ? "primary" : "secondary"} onClick={() => setSelected(avatar.id)} className="flex-1">{active ? "已绑定" : "绑定形象"}</Button><Button variant="ghost">查看详情</Button></div></div></Card>; })}</div>}</div>;
+  const [managing, setManaging] = useState<AvatarSummary | null>(null);
+  const [motionState, setMotionState] = useState<MotionState>("idle");
+  const [motionFiles, setMotionFiles] = useState<File[]>([]);
+  const [motionSaving, setMotionSaving] = useState(false);
+  const [motionError, setMotionError] = useState("");
+
+  useEffect(() => {
+    void openTalkingClient.listAvatars()
+      .then((items) => {
+        setAvatars(items);
+        setSelected(items[0]?.id ?? "");
+      })
+      .catch(() => setAvatars([]))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const applyAvatarUpdate = (updated: AvatarSummary) => {
+    setAvatars((current) => current.map((avatar) => avatar.id === updated.id ? updated : avatar));
+    setManaging(updated);
+  };
+
+  const uploadMotions = async () => {
+    if (!managing || !motionFiles.length) {
+      setMotionError("请至少选择一个动作视频。");
+      return;
+    }
+    setMotionSaving(true);
+    setMotionError("");
+    try {
+      const updated = await openTalkingClient.uploadMotionClips({
+        avatarId: managing.id,
+        state: motionState,
+        files: motionFiles,
+      });
+      applyAvatarUpdate(updated);
+      setMotionFiles([]);
+    } catch (error) {
+      setMotionError(error instanceof Error ? error.message : "动作素材上传失败");
+    } finally {
+      setMotionSaving(false);
+    }
+  };
+
+  const removeMotion = async (state: MotionState, clipId: string) => {
+    if (!managing || !window.confirm("确认删除这段动作素材？")) return;
+    const updated = await openTalkingClient.deleteMotionClip({ avatarId: managing.id, state, clipId });
+    applyAvatarUpdate(updated);
+  };
+
+  const stateClips = managing?.motion_driver?.states[motionState] ?? [];
+  return <div className="p-6 xl:p-8">
+    <PageHeader eyebrow="Digital Human Center" title="数字人形象" description="管理数字人形象，并为自定义形象配置多段高清状态动作。" actions={<Button variant="secondary"><Icon name="upload" />导入形象</Button>} />
+    {loading ? <Card className="p-8"><EmptyState title="正在读取形象" description="正在从 OpenTalking 获取可用形象。" /></Card> : avatars.length === 0 ? <Card className="p-8"><EmptyState title="暂无可用形象" description="请先确认 OpenTalking 服务已启动，或从本地导入数字人形象。" /></Card> : <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">{avatars.map((avatar) => {
+      const active = avatar.id === selected;
+      return <Card key={avatar.id} className={`overflow-hidden transition ${active ? "border-cyan-400 ring-4 ring-cyan-50" : ""}`}>
+        <div className="relative flex h-52 items-center justify-center bg-slate-100 p-3">{avatar.has_preview_video ? <video src={buildApiUrl(`/avatars/${encodeURIComponent(avatar.id)}/preview-video`)} className="h-full w-full object-contain" autoPlay muted loop playsInline preload="metadata" /> : <img src={openTalkingClient.previewUrl(avatar.id)} alt={avatar.name || avatar.id} className="h-full w-full object-contain" onError={(event) => { event.currentTarget.style.display = "none"; }} />}<div className="absolute left-3 top-3"><Badge tone={active ? "cyan" : "slate"}>{active ? "当前绑定" : avatar.is_custom ? "自定义" : "系统形象"}</Badge></div></div>
+        <div className="p-4"><div className="flex items-start justify-between gap-3"><div><h3 className="font-semibold text-slate-900">{avatar.name || avatar.id}</h3><p className="mt-1 text-xs text-slate-400">avatar_id：{avatar.id}</p><p className="mt-1 text-xs text-slate-400">高清动作：{avatar.motion_driver?.total_clips ?? 0} 段</p></div><Badge tone="green">{avatar.model_type}</Badge></div><div className="mt-4 flex gap-2"><Button variant={active ? "primary" : "secondary"} onClick={() => setSelected(avatar.id)} className="flex-1">{active ? "已绑定" : "绑定形象"}</Button>{avatar.is_custom ? <Button variant="ghost" onClick={() => { setManaging(avatar); setMotionError(""); setMotionFiles([]); }}>管理动作</Button> : <Button variant="ghost">查看详情</Button>}</div></div>
+      </Card>;
+    })}</div>}
+    {managing ? <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4 backdrop-blur-sm"><Card className="max-h-[90vh] w-full max-w-4xl overflow-y-auto p-6"><div className="flex items-start justify-between gap-4"><div><h2 className="text-lg font-semibold text-slate-950">多段高清动作素材</h2><p className="mt-1 text-xs text-slate-400">{managing.name || managing.id} · 原始分辨率保存 · 每个状态最多 8 段</p></div><button type="button" onClick={() => setManaging(null)} className="text-2xl text-slate-300">×</button></div><div className="mt-5 grid gap-5 lg:grid-cols-[220px_1fr]"><div className="space-y-2">{MOTION_STATE_OPTIONS.map((option) => <button type="button" key={option.value} onClick={() => { setMotionState(option.value); setMotionFiles([]); setMotionError(""); }} className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left text-xs font-semibold ${motionState === option.value ? "bg-cyan-50 text-cyan-700" : "bg-slate-50 text-slate-500"}`}><span>{option.label}</span><span>{managing.motion_driver?.states[option.value]?.length ?? 0}</span></button>)}</div><div><label className="block rounded-xl border border-dashed border-cyan-300 bg-cyan-50/50 p-5 text-center text-xs text-cyan-700"><Icon name="upload" /><span className="ml-2">批量选择 MP4 / WebM / MOV / AVI</span><input type="file" multiple accept="video/mp4,video/webm,video/quicktime,video/x-msvideo,.mp4,.webm,.mov,.avi" className="sr-only" onChange={(event) => setMotionFiles(Array.from(event.target.files ?? []))} />{motionFiles.length ? <p className="mt-2 font-semibold">已选择 {motionFiles.length} 个文件</p> : null}</label>{motionError ? <p className="mt-3 text-xs text-rose-600">{motionError}</p> : null}<div className="mt-3 flex justify-end"><Button onClick={() => void uploadMotions()} disabled={motionSaving || !motionFiles.length}>{motionSaving ? "上传处理中…" : "上传到当前状态"}</Button></div><div className="mt-5 grid gap-3 sm:grid-cols-2">{stateClips.map((clip) => <div key={clip.id} className="overflow-hidden rounded-xl border border-slate-200"><video src={buildApiUrl(clip.url)} className="h-40 w-full bg-slate-950 object-contain" muted controls preload="metadata" playsInline /><div className="flex items-center justify-between gap-2 p-3"><p className="min-w-0 truncate text-xs font-medium text-slate-600">{clip.filename}</p><Button variant="danger" onClick={() => void removeMotion(motionState, clip.id)}>删除</Button></div></div>)}{!stateClips.length ? <div className="col-span-full py-10"><EmptyState title="当前状态暂无动作" description="建议上传 2～4 段 8～15 秒、首尾姿态接近的高清视频。" /></div> : null}</div></div></div></Card></div> : null}
+  </div>;
 }
 
 export function GifPage() {

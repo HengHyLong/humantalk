@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
-import { ApiError, apiGet, buildApiUrl, type AvatarSummary, type SceneBackgroundAsset, type SceneComposition } from "../lib/api";
+import { ApiError, apiGet, buildApiUrl, type AvatarSummary, type MotionState, type SceneBackgroundAsset, type SceneComposition } from "../lib/api";
 import { DEFAULT_VOICES, adminApi } from "./api";
 import { toUiError } from "./errors";
 import { openTalkingClient } from "./openTalkingClient";
@@ -110,6 +110,11 @@ export function EnhancedAvatarPage({ onDebug }: { onDebug?: (avatarId: string) =
   const [loadError, setLoadError] = useState("");
   const [form, setForm] = useState<{ file: File | null; listenVideo: File | null; thinkVideo: File | null; talkVideo: File | null; name: string; baseAvatarId: string; model: string; removeBackground: boolean }>({ file: null, listenVideo: null, thinkVideo: null, talkVideo: null, name: "", baseAvatarId: "", model: "", removeBackground: false });
   const [error, setError] = useState("");
+  const [motionAvatar, setMotionAvatar] = useState<AvatarSummary | null>(null);
+  const [motionState, setMotionState] = useState<MotionState>("idle");
+  const [motionFiles, setMotionFiles] = useState<File[]>([]);
+  const [motionSaving, setMotionSaving] = useState(false);
+  const [motionError, setMotionError] = useState("");
   const avatarPagination = usePagination(avatars);
   const reload = useCallback(() => {
     setLoading(true);
@@ -191,8 +196,48 @@ export function EnhancedAvatarPage({ onDebug }: { onDebug?: (avatarId: string) =
       setError("删除失败：系统形象不可删除，或后端未允许删除该自定义形象。");
     }
   };
+  const updateMotionAvatar = (updated: AvatarSummary) => {
+    setAvatars((current) => current.map((avatar) => avatar.id === updated.id ? updated : avatar));
+    setMotionAvatar(updated);
+  };
+  const uploadMotions = async () => {
+    if (!motionAvatar || !motionFiles.length) {
+      setMotionError("请至少选择一个动作视频。");
+      return;
+    }
+    setMotionSaving(true);
+    setMotionError("");
+    try {
+      updateMotionAvatar(await openTalkingClient.uploadMotionClips({ avatarId: motionAvatar.id, state: motionState, files: motionFiles }));
+      setMotionFiles([]);
+    } catch (caught) {
+      setMotionError(toUiError(caught).message);
+    } finally {
+      setMotionSaving(false);
+    }
+  };
+  const deleteMotion = async (clipId: string) => {
+    if (!motionAvatar || !window.confirm("确认删除这段动作素材？")) return;
+    try {
+      updateMotionAvatar(await openTalkingClient.deleteMotionClip({ avatarId: motionAvatar.id, state: motionState, clipId }));
+    } catch (caught) {
+      setMotionError(toUiError(caught).message);
+    }
+  };
   const importModal = form.name ? <Modal title="导入数字人形象" onClose={() => { setForm((current) => ({ ...current, file: null, listenVideo: null, thinkVideo: null, talkVideo: null, name: "", removeBackground: false })); setError(""); }} onSave={() => void add()} saveLabel="上传并创建"><Field label="形象名称" value={form.name} onChange={(value) => setForm({ ...form, name: value })} placeholder="例如：古装美女" /><label className="mt-4 block text-xs font-semibold text-slate-600">模型<select value={form.model} onChange={(event) => setForm({ ...form, model: event.target.value })} className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-normal"><option value="">使用后端默认模型</option>{models.map((model) => <option key={model} value={model}>{model === "video" ? "视频驱动（上传聆听 + 思考 + 讲话视频）" : model}</option>)}</select></label>{form.model === "video" ? <div className="mt-4 space-y-3"><p className="rounded-xl bg-cyan-50 px-4 py-3 text-xs leading-5 text-cyan-700">请分别上传选中数字人的聆听、思考和讲话视频。保存后会生成可绑定的 video 数字人，运行时按状态播放对应视频。</p><label className="block rounded-xl border border-dashed border-cyan-300 bg-cyan-50 p-5 text-center text-xs text-cyan-700">上传聆听视频（listen）<input type="file" accept="video/mp4,video/webm,video/quicktime,video/x-msvideo,.mp4,.webm,.mov,.avi" className="sr-only" onChange={(event) => setForm({ ...form, listenVideo: event.target.files?.[0] ?? null })} />{form.listenVideo ? <p className="mt-2 font-semibold">{form.listenVideo.name}</p> : null}</label><label className="block rounded-xl border border-dashed border-cyan-300 bg-cyan-50 p-5 text-center text-xs text-cyan-700">上传思考视频（think）<input type="file" accept="video/mp4,video/webm,video/quicktime,video/x-msvideo,.mp4,.webm,.mov,.avi" className="sr-only" onChange={(event) => setForm({ ...form, thinkVideo: event.target.files?.[0] ?? null })} />{form.thinkVideo ? <p className="mt-2 font-semibold">{form.thinkVideo.name}</p> : null}</label><label className="block rounded-xl border border-dashed border-cyan-300 bg-cyan-50 p-5 text-center text-xs text-cyan-700">上传讲话视频（talk）<input type="file" accept="video/mp4,video/webm,video/quicktime,video/x-msvideo,.mp4,.webm,.mov,.avi" className="sr-only" onChange={(event) => setForm({ ...form, talkVideo: event.target.files?.[0] ?? null })} />{form.talkVideo ? <p className="mt-2 font-semibold">{form.talkVideo.name}</p> : null}</label></div> : <div className="mt-4"><label className="block rounded-xl border border-dashed border-cyan-300 bg-cyan-50 p-5 text-center text-xs text-cyan-700">选择图片或视频（图片 ≤ 10MB，视频 ≤ 200MB）<input type="file" accept="image/jpeg,image/png,image/webp,video/mp4,video/webm,video/quicktime,video/x-msvideo,.mov,.avi" className="sr-only" onChange={(event) => setForm({ ...form, file: event.target.files?.[0] ?? null })} />{form.file ? <p className="mt-2 font-semibold">{form.file.name}{isCustomAvatarVideo(form.file) ? " · 视频源" : " · 图片源"}</p> : null}</label><label className={`mt-4 flex items-center gap-2 text-xs font-semibold text-slate-600 ${isCustomAvatarVideo(form.file) ? "opacity-50" : ""}`}><input type="checkbox" checked={form.removeBackground} disabled={isCustomAvatarVideo(form.file)} onChange={(event) => setForm({ ...form, removeBackground: event.target.checked })} className="h-4 w-4 rounded border-slate-300 text-cyan-600" />上传时抠除背景（视频源不支持）</label></div>}</Modal> : null;
-  return <div className="p-6 xl:p-8"><Header eyebrow="数字人中心 / 真实后端" title="数字人形象" description="从 OpenTalking 读取形象和模型；新增时自动使用系统模板，支持图片或视频源文件。GIF 类型需要同时上传等待聆听和张嘴讲话两张动图。" action={<Button onClick={() => setForm((current) => ({ ...current, name: current.name || "新数字人", baseAvatarId: current.baseAvatarId || avatars.find((avatar) => !avatar.is_custom)?.id || "", model: current.model || models[0] || "" }))}>+ 导入形象</Button>} />{error ? <p className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-700" role="alert">{error}</p> : null}{importModal}{loading ? <Card className="p-8"><LoadingSkeleton rows={4} /></Card> : loadError ? <ErrorState title="数字人形象暂时无法加载" description={loadError} onRetry={reload} /> : !avatars.length ? <Card className="p-8"><EmptyState title="暂无可用形象" description="当前 OpenTalking 没有返回可用形象，请先确认形象资产目录和服务配置。" /></Card> : <><div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">{avatarPagination.pageItems.map((avatar) => <Card key={avatar.id} className={`overflow-hidden ${selected === avatar.id ? "border-cyan-400 ring-4 ring-cyan-50" : ""}`}><div className="relative flex h-64 items-center justify-center bg-slate-100 p-3"><AvatarCardPreview avatar={avatar} /><div className="absolute left-3 top-3"><Badge tone={selected === avatar.id ? "cyan" : "slate"}>{selected === avatar.id ? "当前绑定" : avatar.is_custom ? "自定义" : "系统形象"}</Badge></div></div><div className="p-4"><div className="flex items-start justify-between gap-2"><div><h3 className="font-semibold text-slate-900">{avatar.name || avatar.id}</h3><p className="mt-1 text-xs text-slate-400">{avatar.id}</p></div><Badge tone="green">{avatar.model_type}</Badge></div><div className="mt-4 flex gap-2"><Button variant={selected === avatar.id ? "primary" : "secondary"} onClick={() => setSelected(avatar.id)} className="flex-1">{selected === avatar.id ? "已绑定" : "绑定"}</Button><Button variant="ghost" onClick={() => onDebug?.(avatar.id)}>直接调试</Button>{avatar.is_custom ? <Button variant="danger" onClick={() => void remove(avatar)}>删除</Button> : null}</div></div></Card>)}</div><Pagination page={avatarPagination.page} pageCount={avatarPagination.pageCount} total={avatars.length} onChange={avatarPagination.setPage} /></> }</div>;
+  const motionOptions: Array<{ value: MotionState; label: string }> = [
+    { value: "welcome", label: "欢迎 / 迎宾" },
+    { value: "idle", label: "自然待机" },
+    { value: "listen", label: "倾听" },
+    { value: "think", label: "思考" },
+    { value: "talk", label: "普通讲解" },
+    { value: "emphasis", label: "重点讲解" },
+  ];
+  const motionClips = motionAvatar?.motion_driver?.states[motionState] ?? [];
+  const motionModal = motionAvatar ? <Modal title={`多段高清动作 · ${motionAvatar.name || motionAvatar.id}`} onClose={() => { setMotionAvatar(null); setMotionFiles([]); setMotionError(""); }} error={motionError}>
+    <div className="grid gap-4 sm:grid-cols-[150px_1fr]"><div className="space-y-2">{motionOptions.map((option) => <button type="button" key={option.value} onClick={() => { setMotionState(option.value); setMotionFiles([]); setMotionError(""); }} className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left text-xs font-semibold ${motionState === option.value ? "bg-cyan-50 text-cyan-700" : "bg-slate-50 text-slate-500"}`}><span>{option.label}</span><span>{motionAvatar.motion_driver?.states[option.value]?.length ?? 0}</span></button>)}</div><div><label className="block rounded-xl border border-dashed border-cyan-300 bg-cyan-50 p-5 text-center text-xs text-cyan-700">批量选择高清动作视频<input type="file" multiple accept="video/mp4,video/webm,video/quicktime,video/x-msvideo,.mp4,.webm,.mov,.avi" className="sr-only" onChange={(event) => setMotionFiles(Array.from(event.target.files ?? []))} />{motionFiles.length ? <p className="mt-2 font-semibold">已选择 {motionFiles.length} 段</p> : <p className="mt-2 text-cyan-600/70">MP4 / WebM / MOV / AVI，保留原始分辨率</p>}</label><div className="mt-3 flex justify-end"><Button onClick={() => void uploadMotions()} disabled={motionSaving || !motionFiles.length}>{motionSaving ? "上传处理中…" : "上传到当前状态"}</Button></div><div className="mt-4 space-y-3">{motionClips.map((clip) => <div key={clip.id} className="overflow-hidden rounded-xl border border-slate-200"><video src={buildApiUrl(clip.url)} className="h-44 w-full bg-slate-950 object-contain" muted controls playsInline preload="metadata" /><div className="flex items-center justify-between gap-2 p-3"><p className="min-w-0 truncate text-xs text-slate-600">{clip.filename}</p><Button variant="danger" onClick={() => void deleteMotion(clip.id)}>删除</Button></div></div>)}{!motionClips.length ? <EmptyState title="当前状态暂无动作" description="建议上传 2～4 段 8～15 秒、首尾姿态接近的视频。" /> : null}</div></div></div>
+  </Modal> : null;
+  return <div className="p-6 xl:p-8"><Header eyebrow="数字人中心 / 真实后端" title="数字人形象" description="从 OpenTalking 读取形象和模型；新增时自动使用系统模板，支持图片或视频源文件。GIF 类型需要同时上传等待聆听和张嘴讲话两张动图。" action={<Button onClick={() => setForm((current) => ({ ...current, name: current.name || "新数字人", baseAvatarId: current.baseAvatarId || avatars.find((avatar) => !avatar.is_custom)?.id || "", model: current.model || models[0] || "" }))}>+ 导入形象</Button>} />{error ? <p className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-700" role="alert">{error}</p> : null}{importModal}{motionModal}{loading ? <Card className="p-8"><LoadingSkeleton rows={4} /></Card> : loadError ? <ErrorState title="数字人形象暂时无法加载" description={loadError} onRetry={reload} /> : !avatars.length ? <Card className="p-8"><EmptyState title="暂无可用形象" description="当前 OpenTalking 没有返回可用形象，请先确认形象资产目录和服务配置。" /></Card> : <><div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">{avatarPagination.pageItems.map((avatar) => <Card key={avatar.id} className={`overflow-hidden ${selected === avatar.id ? "border-cyan-400 ring-4 ring-cyan-50" : ""}`}><div className="relative flex h-64 items-center justify-center bg-slate-100 p-3"><AvatarCardPreview avatar={avatar} /><div className="absolute left-3 top-3"><Badge tone={selected === avatar.id ? "cyan" : "slate"}>{selected === avatar.id ? "当前绑定" : avatar.is_custom ? "自定义" : "系统形象"}</Badge></div></div><div className="p-4"><div className="flex items-start justify-between gap-2"><div><h3 className="font-semibold text-slate-900">{avatar.name || avatar.id}</h3><p className="mt-1 text-xs text-slate-400">{avatar.id}</p><p className="mt-1 text-xs text-slate-400">高清动作：{avatar.motion_driver?.total_clips ?? 0} 段</p></div><Badge tone="green">{avatar.model_type}</Badge></div><div className="mt-4 flex flex-wrap gap-2"><Button variant={selected === avatar.id ? "primary" : "secondary"} onClick={() => setSelected(avatar.id)} className="flex-1">{selected === avatar.id ? "已绑定" : "绑定"}</Button><Button variant="ghost" onClick={() => onDebug?.(avatar.id)}>直接调试</Button>{avatar.is_custom ? <Button variant="secondary" onClick={() => { setMotionAvatar(avatar); setMotionError(""); setMotionFiles([]); }}>管理动作</Button> : null}{avatar.is_custom ? <Button variant="danger" onClick={() => void remove(avatar)}>删除</Button> : null}</div></div></Card>)}</div><Pagination page={avatarPagination.page} pageCount={avatarPagination.pageCount} total={avatars.length} onChange={avatarPagination.setPage} /></> }</div>;
 }
 
 function GifThumb({ item }: { item: GifAssetMeta }) {

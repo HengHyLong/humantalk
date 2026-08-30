@@ -1056,8 +1056,9 @@ export default function App() {
   const [conversationLanguage, setConversationLanguage] = useState<ConversationLanguage>("zh-CN");
   const englishConversation = isEnglishConversation(conversationLanguage);
   const [isSpeaking, setIsSpeaking] = useState(false);
-  const [videoState, setVideoState] = useState<VideoDriverState>("listen");
+  const [videoState, setVideoState] = useState<VideoDriverState>("welcome");
   const [currentSubtitle, setCurrentSubtitle] = useState("");
+  const welcomedVideoSessionRef = useRef<string | null>(null);
   const [exhibitionVoiceConfig, setExhibitionVoiceConfig] = useState<ExhibitionVoiceConfig | null>(null);
   const [exhibitionEntities, setExhibitionEntities] = useState<ExhibitionEntityCard[]>([]);
   const [exhibitionConfigNotice, setExhibitionConfigNotice] = useState<string | null>(null);
@@ -1069,6 +1070,15 @@ export default function App() {
   const [exhibitionFollowupStage, setExhibitionFollowupStage] = useState<PendingExhibitionFollowup["stage"] | null>(null);
   const pendingContentClarificationRef = useRef<PendingContentClarification | null>(null);
   const wakeAwakeUntilRef = useRef(0);
+
+  useEffect(() => {
+    if (!sessionId) {
+      welcomedVideoSessionRef.current = null;
+    } else if (welcomedVideoSessionRef.current !== sessionId) {
+      welcomedVideoSessionRef.current = sessionId;
+      setVideoState("welcome");
+    }
+  }, [sessionId]);
 
   useEffect(() => {
     wakeAwakeUntilRef.current = 0;
@@ -4137,6 +4147,7 @@ export default function App() {
           videoDriver={model === VIDEO_MODEL}
           videoState={videoState}
           videoDriverAssets={currentAvatar?.video_driver ?? null}
+          motionDriverAssets={currentAvatar?.motion_driver ?? null}
           connection={connection}
           isSpeaking={isSpeaking}
           avatar={currentAvatar}
@@ -4282,6 +4293,7 @@ export default function App() {
                 videoDriver={!showStart && model === VIDEO_MODEL}
                 videoState={videoState}
                 videoDriverAssets={!showStart ? currentAvatar?.video_driver ?? null : null}
+                motionDriverAssets={!showStart ? currentAvatar?.motion_driver ?? null : null}
                 className="h-full w-full"
               >
                 {immersiveActive ? (

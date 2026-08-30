@@ -37,7 +37,8 @@ type DigitalHumanDisplayProps = {
   clientRenderer?: ClientRendererDescriptor | null;
   videoDriver?: boolean;
   videoState?: VideoDriverState;
-  videoDriverAssets?: { listen_url: string; think_url?: string | null; talk_url: string } | null;
+  videoDriverAssets?: { listen_url: string; think_url?: string | null; talk_url: string; states?: Partial<Record<VideoDriverState, string[]>> } | null;
+  motionDriverAssets?: { states: Partial<Record<VideoDriverState, Array<{ url: string }>>> } | null;
   connection: ConnectionStatus;
   isSpeaking: boolean;
   avatar: AvatarSummary | null;
@@ -88,6 +89,7 @@ export function DigitalHumanDisplay({
                                       videoDriver = false,
                                       videoState = "listen",
                                       videoDriverAssets = null,
+                                      motionDriverAssets = null,
                                       connection,
                                       isSpeaking,
                                       avatar,
@@ -298,6 +300,7 @@ export function DigitalHumanDisplay({
               videoDriver={videoDriver}
               videoState={videoState}
               videoDriverAssets={videoDriverAssets}
+              motionDriverAssets={motionDriverAssets}
               fullBleed
               videoFit="cover"
               backgroundColorOverride="#062b66"

@@ -138,6 +138,61 @@ def test_create_custom_video_avatar_persists_listen_and_talk_assets(tmp_path, mo
     assert client.get(created["video_driver"]["talk_url"]).content == b"talk.mp4-bytes"
 
 
+def test_custom_avatar_motion_clips_support_multiple_states_and_deletion(tmp_path, monkeypatch):
+    avatar_dir = tmp_path / "custom-motion-avatar"
+    avatar_dir.mkdir()
+    (avatar_dir / "preview.png").write_bytes(_png_bytes())
+    (avatar_dir / "reference.png").write_bytes(_png_bytes())
+    (avatar_dir / "manifest.json").write_text(
+        json.dumps({
+            "id": "custom-motion-avatar",
+            "name": "多动作数字人",
+            "model_type": "video",
+            "fps": 25,
+            "sample_rate": 16000,
+            "width": 1080,
+            "height": 1920,
+            "version": "2.0",
+            "metadata": {"custom_avatar": True},
+        }),
+        encoding="utf-8",
+    )
+
+    async def fake_read_upload(upload):
+        return Image.new("RGB", (8, 8), (10, 180, 210)), f"{upload.filename}-bytes".encode(), ".mp4"
+
+    monkeypatch.setattr(avatars, "_read_upload_video", fake_read_upload)
+    app = FastAPI()
+    app.state.settings = SimpleNamespace(avatars_dir=str(tmp_path))
+    app.include_router(avatars.router)
+    client = TestClient(app)
+
+    response = client.post(
+        "/avatars/custom-motion-avatar/motions",
+        data={"state": "talk"},
+        files=[
+            ("files", ("talk-a.mp4", b"a", "video/mp4")),
+            ("files", ("talk-b.mp4", b"b", "video/mp4")),
+        ],
+    )
+
+    assert response.status_code == 200
+    updated = response.json()
+    clips = updated["motion_driver"]["states"]["talk"]
+    assert updated["motion_driver"]["total_clips"] == 2
+    assert [clip["filename"] for clip in clips] == ["talk-a.mp4", "talk-b.mp4"]
+    first = clips[0]
+    assert client.get(first["url"]).content == b"talk-a.mp4-bytes"
+
+    deleted = client.delete(
+        f"/avatars/custom-motion-avatar/motions/talk/{first['id']}"
+    )
+    assert deleted.status_code == 200
+    remaining = deleted.json()["motion_driver"]["states"]["talk"]
+    assert len(remaining) == 1
+    assert remaining[0]["filename"] == "talk-b.mp4"
+
+
 def test_create_custom_avatar_persists_selected_person_mode(tmp_path: Path) -> None:
     base = tmp_path / "base-avatar"
     base.mkdir()

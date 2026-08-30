@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
+import { useCallback, useEffect, useMemo, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
 import type { ClientRendererDescriptor, SceneBackgroundAsset, SceneComposition } from "../lib/api";
 import { buildApiUrl } from "../lib/api";
 import { Light2dAvatar } from "./Light2dAvatar";
@@ -23,7 +23,8 @@ type SceneStageProps = {
   clientRenderer?: ClientRendererDescriptor | null;
   videoDriver?: boolean;
   videoState?: VideoDriverState;
-  videoDriverAssets?: { listen_url: string; think_url?: string | null; talk_url: string } | null;
+  videoDriverAssets?: { listen_url: string; think_url?: string | null; talk_url: string; states?: Partial<Record<VideoDriverState, string[]>> } | null;
+  motionDriverAssets?: { states: Partial<Record<VideoDriverState, Array<{ url: string }>>> } | null;
 };
 
 function backgroundUrl(background: SceneBackgroundAsset): string {
@@ -66,6 +67,7 @@ export function SceneStage({
   videoDriver = false,
   videoState = "listen",
   videoDriverAssets = null,
+  motionDriverAssets = null,
 }: SceneStageProps) {
   const [rendererFailed, setRendererFailed] = useState(false);
   useEffect(() => setRendererFailed(false), [clientRenderer?.config_url]);
@@ -107,6 +109,24 @@ export function SceneStage({
         maskPosition: avatarMaskPosition,
       }
     : undefined;
+  const motionStateUrls = useMemo(() => Object.fromEntries(
+    Object.entries(motionDriverAssets?.states ?? {}).map(([state, clips]) => [
+      state,
+      (clips ?? []).map((clip) => clip.url),
+    ]),
+  ) as Partial<Record<VideoDriverState, string[]>>, [motionDriverAssets]);
+  const motionOverlaySources = videoState === "welcome"
+    ? [...(motionStateUrls.welcome ?? []), ...(motionStateUrls.listen ?? [])]
+    : videoState === "listen" || videoState === "idle"
+      ? [...(motionStateUrls[videoState] ?? []), ...(motionStateUrls.idle ?? []), ...(motionStateUrls.listen ?? [])]
+      : videoState === "think"
+        ? (motionStateUrls.think ?? [])
+        : [];
+  const motionOverlayActive = !videoDriver
+    && !clientRenderer
+    && videoState !== "talk"
+    && videoState !== "emphasis"
+    && motionOverlaySources.length > 0;
 
   return (
     <div className={`relative min-h-0 overflow-hidden ${hasSceneBackground ? "bg-slate-950" : "bg-white"} ${className}`}>
@@ -145,7 +165,7 @@ export function SceneStage({
             <VideoBackground
               ref={videoRef}
               stream={videoStream}
-              className={`absolute inset-0 h-full w-full ${avatarFit} ${avatarObjectPosition} ${clientRenderer && !rendererFailed ? "opacity-0" : "opacity-100"}`}
+              className={`absolute inset-0 h-full w-full ${avatarFit} ${avatarObjectPosition} ${motionOverlayActive || (clientRenderer && !rendererFailed) ? "opacity-0" : "opacity-100"}`}
               style={avatarMaskStyle}
             />
           )}
@@ -153,6 +173,15 @@ export function SceneStage({
             <VideoAvatar
               state={videoState}
               videoDriver={videoDriverAssets}
+              className={`absolute inset-0 h-full w-full ${avatarFit} ${avatarObjectPosition}`}
+              style={avatarMaskStyle}
+            />
+          ) : null}
+          {motionOverlayActive ? (
+            <VideoAvatar
+              state={videoState}
+              videoDriver={{ states: motionStateUrls }}
+              fallbackToDefault={false}
               className={`absolute inset-0 h-full w-full ${avatarFit} ${avatarObjectPosition}`}
               style={avatarMaskStyle}
             />

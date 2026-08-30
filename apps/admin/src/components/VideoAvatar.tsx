@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { buildApiUrl } from "../lib/api";
 
 // Keep the source files in examples/avatars/video so the browser build uses
@@ -7,41 +7,73 @@ const LISTEN_VIDEO_URL = new URL("../../../../examples/avatars/video/listen.mp4"
 const THINK_VIDEO_URL = new URL("../../../../examples/avatars/video/think.mp4", import.meta.url).href;
 const TALK_VIDEO_URL = new URL("../../../../examples/avatars/video/talk.mp4", import.meta.url).href;
 
-export type VideoDriverState = "listen" | "think" | "talk";
+export type VideoDriverState = "idle" | "welcome" | "listen" | "think" | "talk" | "emphasis";
 type VideoSlot = 0 | 1;
-type VideoDriver = { listen_url: string; think_url?: string | null; talk_url: string };
+type VideoDriver = {
+  listen_url?: string | null;
+  think_url?: string | null;
+  talk_url?: string | null;
+  states?: Partial<Record<VideoDriverState, string[]>>;
+};
 
 type VideoAvatarProps = {
   state: VideoDriverState;
   videoDriver?: VideoDriver | null;
   className?: string;
   style?: CSSProperties;
+  fallbackToDefault?: boolean;
 };
 
 function defaultSourceFor(state: VideoDriverState): string {
-  if (state === "talk") return TALK_VIDEO_URL;
+  if (state === "talk" || state === "emphasis") return TALK_VIDEO_URL;
   if (state === "think") return THINK_VIDEO_URL;
   return LISTEN_VIDEO_URL;
 }
 
-export function VideoAvatar({ state, videoDriver, className, style }: VideoAvatarProps) {
-  const source = state === "talk"
-    ? (videoDriver?.talk_url ? buildApiUrl(videoDriver.talk_url) : TALK_VIDEO_URL)
-    : state === "think"
-      ? (videoDriver?.think_url ? buildApiUrl(videoDriver.think_url) : THINK_VIDEO_URL)
-      : (videoDriver?.listen_url ? buildApiUrl(videoDriver.listen_url) : LISTEN_VIDEO_URL);
+function uniqueSources(items: Array<string | null | undefined>): string[] {
+  return [...new Set(items.filter((item): item is string => Boolean(item)).map((item) => (
+    item.startsWith("/") ? buildApiUrl(item) : item
+  )))];
+}
+
+function sourcePoolFor(state: VideoDriverState, driver?: VideoDriver | null): string[] {
+  const configured = driver?.states ?? {};
+  if (state === "talk") {
+    return uniqueSources([...(configured.talk ?? []), ...(configured.emphasis ?? []), driver?.talk_url]);
+  }
+  if (state === "emphasis") {
+    return uniqueSources([...(configured.emphasis ?? []), ...(configured.talk ?? []), driver?.talk_url]);
+  }
+  if (state === "welcome") {
+    return uniqueSources([...(configured.welcome ?? []), ...(configured.listen ?? []), driver?.listen_url]);
+  }
+  if (state === "idle" || state === "listen") {
+    return uniqueSources([...(configured[state] ?? []), ...(configured.idle ?? []), ...(configured.listen ?? []), driver?.listen_url]);
+  }
+  return uniqueSources([...(configured.think ?? []), driver?.think_url]);
+}
+
+function pickNextSource(pool: string[], current: string): string {
+  const candidates = pool.length > 1 ? pool.filter((source) => source !== current) : pool;
+  return candidates[Math.floor(Math.random() * candidates.length)] ?? current;
+}
+
+export function VideoAvatar({ state, videoDriver, className, style, fallbackToDefault = true }: VideoAvatarProps) {
   const fallbackSource = defaultSourceFor(state);
-  // The ended handler restarts the same state from a random position. Native
-  // looping always jumps to frame zero and makes short clips look repetitive.
-  // State changes still come from the speech lifecycle, never from video end.
+  const sourcePool = useMemo(() => {
+    const configured = sourcePoolFor(state, videoDriver);
+    return configured.length ? configured : fallbackToDefault ? [fallbackSource] : [];
+  }, [fallbackSource, fallbackToDefault, state, videoDriver]);
+  const sourcePoolKey = sourcePool.join("\n");
   const loop = false;
   const videoRef0 = useRef<HTMLVideoElement>(null);
   const videoRef1 = useRef<HTMLVideoElement>(null);
   const videoRefs = [videoRef0, videoRef1] as const;
   const [activeSlot, setActiveSlot] = useState<VideoSlot>(0);
-  const [slotSources, setSlotSources] = useState<[string, string]>(() => [source, ""]);
+  const [slotSources, setSlotSources] = useState<[string, string]>(() => [sourcePool[0] ?? fallbackSource, ""]);
   const activeSlotRef = useRef<VideoSlot>(0);
-  const currentSourceRef = useRef(source);
+  const currentSourceRef = useRef(sourcePool[0] ?? fallbackSource);
+  const sourcePoolRef = useRef(sourcePool);
   const currentLoopRef = useRef(loop);
   const transitionIdRef = useRef(0);
   const cleanupTransitionRef = useRef<() => void>(() => undefined);
@@ -120,26 +152,19 @@ export function VideoAvatar({ state, videoDriver, className, style }: VideoAvata
 
   const handleVideoEnded = useCallback((slot: VideoSlot) => {
     if (slot !== activeSlotRef.current) return;
-    const video = videoRefs[slot].current;
-    if (!video) return;
-    const duration = Number.isFinite(video.duration) ? video.duration : 0;
-    const randomWindow = Math.max(0, duration - Math.min(1.2, duration * 0.35));
-    const randomTime = randomWindow > 0 ? Math.random() * randomWindow : 0;
-    try {
-      video.currentTime = randomTime;
-    } catch {
-      // The source may have been replaced by a state transition.
-    }
-    void video.play().catch(() => undefined);
-  }, []);
+    const nextSource = pickNextSource(sourcePoolRef.current, currentSourceRef.current);
+    startTransition(nextSource, false, fallbackToDefault ? fallbackSource : undefined);
+  }, [fallbackSource, fallbackToDefault, startTransition]);
 
   useEffect(() => {
-    startTransition(source, loop, source === fallbackSource ? undefined : fallbackSource);
+    sourcePoolRef.current = sourcePool;
+    const nextSource = pickNextSource(sourcePool, currentSourceRef.current);
+    startTransition(nextSource, loop, !fallbackToDefault || nextSource === fallbackSource ? undefined : fallbackSource);
     return () => cleanupTransitionRef.current();
-  }, [fallbackSource, loop, source, startTransition]);
+  }, [fallbackSource, fallbackToDefault, loop, sourcePoolKey, startTransition]);
 
   const resolvedClassName = className ?? "absolute inset-0 h-full w-full object-contain";
-  const ariaLabel = state === "talk" ? "数字人讲话" : state === "think" ? "数字人思考" : "数字人聆听";
+  const ariaLabel = state === "talk" || state === "emphasis" ? "数字人讲话" : state === "think" ? "数字人思考" : state === "welcome" ? "数字人欢迎" : "数字人聆听";
   return (
     <>
       {([0, 1] as const).map((slot) => (

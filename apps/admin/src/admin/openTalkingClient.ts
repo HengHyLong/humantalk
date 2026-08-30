@@ -31,6 +31,8 @@ export type OpenTalkingClient = {
     personMode?: "single" | "double";
     removeBackground?: boolean;
   }): Promise<AvatarSummary>;
+  uploadMotionClips(input: { avatarId: string; state: string; files: File[] }): Promise<AvatarSummary>;
+  deleteMotionClip(input: { avatarId: string; state: string; clipId: string }): Promise<AvatarSummary>;
   deleteAvatar(avatarId: string): Promise<void>;
   previewTts(input: { text: string; voice: string; provider?: string; model?: string | null }): Promise<Blob>;
   previewUrl(avatarId: string): string;
@@ -95,6 +97,19 @@ export const openTalkingClient: OpenTalkingClient = {
     }
     return uploadWithFeedback<AvatarSummary>("数字人形象上传", "/avatars/custom", form);
   },
+  uploadMotionClips: ({ avatarId, state, files }) => {
+    const form = new FormData();
+    form.set("state", state);
+    files.forEach((file) => form.append("files", file));
+    return uploadWithFeedback<AvatarSummary>(
+      "高清动作素材上传",
+      `/avatars/${encodeURIComponent(avatarId)}/motions`,
+      form,
+    );
+  },
+  deleteMotionClip: ({ avatarId, state, clipId }) => apiDelete<AvatarSummary>(
+    `/avatars/${encodeURIComponent(avatarId)}/motions/${encodeURIComponent(state)}/${encodeURIComponent(clipId)}`,
+  ),
   deleteAvatar: (avatarId) => apiDelete<{ avatar_id: string; status: string }>(`/avatars/${encodeURIComponent(avatarId)}`).then(() => undefined),
   previewTts: ({ text, voice, provider = "edge", model }) =>
     requestTTSPreview(buildTTSPreviewPayload({ text, voice, provider: provider as TtsProviderExtended, model: model ?? undefined })),

@@ -5,6 +5,7 @@ import base64
 import json
 import os
 import re
+import secrets
 import shutil
 import subprocess
 import tempfile
@@ -43,6 +44,9 @@ from apps.api.schemas.avatar import (
     AvatarSummary,
     ClientRendererCapability,
     DuoDialogCapability,
+    MotionClipCapability,
+    MotionDriverCapability,
+    MotionState,
     PersonMode,
     VideoDriverCapability,
 )
@@ -56,6 +60,15 @@ from apps.cli.prepare_cache import (
 from opentalking.avatar.wav2lip_preload import collect_wav2lip_preload_payload_for_avatar
 
 router = APIRouter(prefix="/avatars", tags=["avatars"])
+
+_MOTION_STATES: tuple[MotionState, ...] = (
+    "idle",
+    "welcome",
+    "listen",
+    "think",
+    "talk",
+    "emphasis",
+)
 
 
 def _avatars_root(request: Request) -> Path:
@@ -221,9 +234,91 @@ def _video_driver_paths(avatar_dir: Path) -> tuple[Path, Path, Path | None] | No
     return paths[0], paths[1], think_path
 
 
+def _motion_clip_records(avatar_dir: Path) -> dict[str, list[dict[str, str]]]:
+    """Return validated motion clips declared by the avatar manifest."""
+    try:
+        raw = json.loads((avatar_dir / "manifest.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    metadata = raw.get("metadata")
+    declared = metadata.get("motion_clips") if isinstance(metadata, dict) else None
+    if not isinstance(declared, dict):
+        return {}
+
+    root = avatar_dir.resolve()
+    states: dict[str, list[dict[str, str]]] = {}
+    for state in _MOTION_STATES:
+        entries = declared.get(state)
+        if not isinstance(entries, list):
+            continue
+        valid: list[dict[str, str]] = []
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            clip_id = str(entry.get("id") or "").strip()
+            relative_path = str(entry.get("path") or "").strip()
+            if not clip_id or not relative_path:
+                continue
+            path = (root / relative_path).resolve()
+            try:
+                path.relative_to(root)
+            except ValueError:
+                continue
+            if not path.is_file() or path.suffix.lower() not in {".mp4", ".webm", ".mov", ".avi"}:
+                continue
+            valid.append(
+                {
+                    "id": clip_id,
+                    "path": relative_path,
+                    "filename": str(entry.get("filename") or path.name),
+                }
+            )
+        if valid:
+            states[state] = valid
+    return states
+
+
+def _motion_driver_capability(avatar_dir: Path, avatar_id: str) -> MotionDriverCapability | None:
+    records = _motion_clip_records(avatar_dir)
+    if not records:
+        return None
+    states: dict[str, list[MotionClipCapability]] = {}
+    for state, clips in records.items():
+        states[state] = [
+            MotionClipCapability(
+                id=clip["id"],
+                state=state,  # type: ignore[arg-type]
+                filename=clip["filename"],
+                url=f"/avatars/{avatar_id}/motions/{state}/{clip['id']}",
+            )
+            for clip in clips
+        ]
+    return MotionDriverCapability(
+        states=states,
+        total_clips=sum(len(clips) for clips in states.values()),
+    )
+
+
+def _video_driver_state_urls(avatar_dir: Path, avatar_id: str) -> dict[str, list[str]]:
+    urls: dict[str, list[str]] = {}
+    paths = _video_driver_paths(avatar_dir)
+    if paths is not None:
+        urls["listen"] = [f"/avatars/{avatar_id}/video-driver/listen"]
+        urls["talk"] = [f"/avatars/{avatar_id}/video-driver/talk"]
+        urls["think"] = [f"/avatars/{avatar_id}/video-driver/think"]
+    for state, clips in _motion_clip_records(avatar_dir).items():
+        urls[state] = [
+            f"/avatars/{avatar_id}/motions/{state}/{clip['id']}"
+            for clip in clips
+        ]
+    return urls
+
+
 def _summary_from_dir(path: Path) -> AvatarSummary:
     b = load_avatar_bundle(path, strict=False)
     m = b.manifest
+    video_driver_paths = _video_driver_paths(path)
+    motion_driver = _motion_driver_capability(path, m.id)
     duo_dialog = duo_dialog_summary_from_metadata(m.metadata)
     duo_capability = None
     if duo_dialog is not None:
@@ -255,10 +350,12 @@ def _summary_from_dir(path: Path) -> AvatarSummary:
                     else "/avatars/video-driver/think"
                 ),
                 talk_url=f"/avatars/{m.id}/video-driver/talk",
+                states=_video_driver_state_urls(path, m.id),
             )
-            if _video_driver_paths(path) is not None
+            if video_driver_paths is not None
             else None
         ),
+        motion_driver=motion_driver,
     )
 
 
@@ -396,6 +493,8 @@ def _write_custom_avatar_manifest(
         "template_video",
         "video",
         "video_driver",
+        "motion_clips",
+        "motion_driver_version",
     ):
         metadata.pop(key, None)
     metadata["custom_avatar"] = True
@@ -1398,6 +1497,143 @@ async def get_preview_video(avatar_id: str, request: Request) -> FileResponse:
     path = _avatar_preview_video_path(avatar_dir)
     if path is None:
         raise HTTPException(status_code=404, detail="preview video not found")
+    return FileResponse(path, media_type=_video_media_type(path))
+
+
+@router.post("/{avatar_id}/motions", response_model=AvatarSummary)
+async def upload_avatar_motion_clips(
+    avatar_id: str,
+    request: Request,
+    state: MotionState = Form(...),
+    files: list[UploadFile] = File(...),
+) -> AvatarSummary:
+    """Attach one or more original-resolution action videos to an avatar state."""
+    root = _avatars_root(request)
+    avatar_dir = (root / avatar_id).resolve()
+    try:
+        avatar_dir.relative_to(root)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="invalid avatar_id") from exc
+    manifest_path = avatar_dir / "manifest.json"
+    if not avatar_dir.is_dir() or not manifest_path.is_file():
+        raise HTTPException(status_code=404, detail="avatar not found")
+    if not _is_custom_avatar(manifest_path):
+        raise HTTPException(status_code=403, detail="motion clips can only be changed for custom avatars")
+    if state not in _MOTION_STATES:
+        raise HTTPException(status_code=422, detail="invalid motion state")
+    if not files:
+        raise HTTPException(status_code=422, detail="at least one motion video is required")
+
+    raw = _read_manifest(manifest_path)
+    metadata = dict(raw.get("metadata") or {})
+    motion_clips = dict(metadata.get("motion_clips") or {})
+    existing = list(motion_clips.get(state) or [])
+    max_per_state = _positive_env_int("OPENTALKING_MOTION_MAX_CLIPS_PER_STATE", 8, maximum=32)
+    if len(existing) + len(files) > max_per_state:
+        raise HTTPException(
+            status_code=400,
+            detail=f"too many motion clips for {state} (max {max_per_state})",
+        )
+
+    decoded: list[tuple[bytes, str, str]] = []
+    for upload in files:
+        _, body, suffix = await _read_upload_video(upload)
+        decoded.append((body, suffix, Path(upload.filename or f"motion{suffix}").name))
+
+    state_dir = avatar_dir / "source" / "motions" / state
+    state_dir.mkdir(parents=True, exist_ok=True)
+    written: list[Path] = []
+    try:
+        for body, suffix, original_filename in decoded:
+            clip_id = f"motion_{secrets.token_hex(8)}"
+            path = state_dir / f"{clip_id}{suffix}"
+            path.write_bytes(body)
+            written.append(path)
+            existing.append(
+                {
+                    "id": clip_id,
+                    "path": path.relative_to(avatar_dir).as_posix(),
+                    "filename": original_filename,
+                }
+            )
+        motion_clips[state] = existing
+        metadata["motion_clips"] = motion_clips
+        metadata["motion_driver_version"] = 2
+        raw["metadata"] = metadata
+        _write_manifest(manifest_path, raw)
+    except Exception as exc:  # noqa: BLE001
+        for path in written:
+            path.unlink(missing_ok=True)
+        raise HTTPException(status_code=500, detail=f"failed to save motion clips: {exc}") from exc
+    return _summary_from_dir(avatar_dir)
+
+
+@router.delete("/{avatar_id}/motions/{state}/{clip_id}", response_model=AvatarSummary)
+async def delete_avatar_motion_clip(
+    avatar_id: str,
+    state: MotionState,
+    clip_id: str,
+    request: Request,
+) -> AvatarSummary:
+    root = _avatars_root(request)
+    avatar_dir = (root / avatar_id).resolve()
+    try:
+        avatar_dir.relative_to(root)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="invalid avatar_id") from exc
+    manifest_path = avatar_dir / "manifest.json"
+    if not avatar_dir.is_dir() or not manifest_path.is_file():
+        raise HTTPException(status_code=404, detail="avatar not found")
+    if not _is_custom_avatar(manifest_path):
+        raise HTTPException(status_code=403, detail="motion clips can only be changed for custom avatars")
+
+    raw = _read_manifest(manifest_path)
+    metadata = dict(raw.get("metadata") or {})
+    motion_clips = dict(metadata.get("motion_clips") or {})
+    entries = list(motion_clips.get(state) or [])
+    selected = next(
+        (entry for entry in entries if isinstance(entry, dict) and str(entry.get("id")) == clip_id),
+        None,
+    )
+    if selected is None:
+        raise HTTPException(status_code=404, detail="motion clip not found")
+    relative_path = str(selected.get("path") or "")
+    path = (avatar_dir / relative_path).resolve()
+    try:
+        path.relative_to(avatar_dir)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="invalid motion clip path") from exc
+
+    remaining = [entry for entry in entries if entry is not selected]
+    if remaining:
+        motion_clips[state] = remaining
+    else:
+        motion_clips.pop(state, None)
+    metadata["motion_clips"] = motion_clips
+    raw["metadata"] = metadata
+    _write_manifest(manifest_path, raw)
+    path.unlink(missing_ok=True)
+    return _summary_from_dir(avatar_dir)
+
+
+@router.get("/{avatar_id}/motions/{state}/{clip_id}")
+async def get_avatar_motion_clip(
+    avatar_id: str,
+    state: MotionState,
+    clip_id: str,
+    request: Request,
+) -> FileResponse:
+    root = _avatars_root(request)
+    avatar_dir = (root / avatar_id).resolve()
+    try:
+        avatar_dir.relative_to(root)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="invalid avatar_id") from exc
+    records = _motion_clip_records(avatar_dir) if avatar_dir.is_dir() else {}
+    selected = next((clip for clip in records.get(state, []) if clip["id"] == clip_id), None)
+    if selected is None:
+        raise HTTPException(status_code=404, detail="motion clip not found")
+    path = (avatar_dir / selected["path"]).resolve()
     return FileResponse(path, media_type=_video_media_type(path))
 
 

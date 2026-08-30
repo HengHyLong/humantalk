@@ -943,12 +943,22 @@ export default function App() {
   // Chat
   const [messages, setMessages] = useState<Message[]>([]);
   const [isSpeaking, setIsSpeaking] = useState(false);
-  const [videoState, setVideoState] = useState<VideoDriverState>("listen");
+  const [videoState, setVideoState] = useState<VideoDriverState>("welcome");
   const [currentSubtitle, setCurrentSubtitle] = useState("");
+  const welcomedVideoSessionRef = useRef<string | null>(null);
   const [, setRuntimeStatus] = useState<HealthResponse | null>(null);
   const [runtimeConfig, setRuntimeConfig] = useState<RuntimeConfigResponse | null>(null);
   const [runtimeConfigLoading, setRuntimeConfigLoading] = useState(false);
   const [runtimeConfigApplying, setRuntimeConfigApplying] = useState(false);
+
+  useEffect(() => {
+    if (!sessionId) {
+      welcomedVideoSessionRef.current = null;
+    } else if (welcomedVideoSessionRef.current !== sessionId) {
+      welcomedVideoSessionRef.current = sessionId;
+      setVideoState("welcome");
+    }
+  }, [sessionId]);
 
   const clearSubtitleFallbackTimer = useCallback(() => {
     if (subtitleFallbackTimerRef.current !== null) {
@@ -3141,6 +3151,7 @@ export default function App() {
                 videoDriver={!showStart && model === VIDEO_MODEL}
                 videoState={videoState}
                 videoDriverAssets={!showStart ? currentAvatar?.video_driver ?? null : null}
+                motionDriverAssets={!showStart ? currentAvatar?.motion_driver ?? null : null}
                 className="h-full w-full"
               >
                 {immersiveActive ? (
