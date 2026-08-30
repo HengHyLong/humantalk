@@ -81,6 +81,16 @@ def _rtc_max_catchup_seconds() -> float:
     return max(0.0, value_ms) / 1000.0
 
 
+def _rtc_stats_interval_seconds() -> float:
+    raw = os.environ.get("OPENTALKING_RTC_STATS_INTERVAL_SECONDS", "10").strip()
+    try:
+        value = float(raw)
+    except ValueError:
+        log.warning("Ignoring invalid OPENTALKING_RTC_STATS_INTERVAL_SECONDS=%r", raw)
+        value = 10.0
+    return max(0.0, value)
+
+
 def _normalized_video_encoder() -> str:
     raw = os.environ.get("OPENTALKING_WEBRTC_VIDEO_ENCODER", "auto").strip().lower()
     aliases = {
@@ -744,6 +754,8 @@ class WebRTCSession:
         self.pc.addTrack(self.video)
         self.pc.addTrack(self.audio)
         self.draining = False  # True while clearing queues for speech start
+        self._stats_task: asyncio.Task[None] | None = None
+        self._stats_previous: tuple[float, int, int, int] | None = None
 
     def reset_clocks(self) -> None:
         """Reset pacing wall-clock so next frame/audio is sent immediately.
@@ -780,6 +792,10 @@ class WebRTCSession:
             samples += int(np.asarray(item).size)
         return samples * 1000.0 / sample_rate
 
+    def playback_drain_timeout_seconds(self) -> float:
+        queue_duration = self.buffered_audio_duration_ms() / 1000.0
+        return min(30.0, max(1.0, queue_duration + 2.0))
+
     async def wait_for_playback_drain(self) -> None:
         """Wait until queued audio has been handed to the WebRTC sender.
 
@@ -791,8 +807,11 @@ class WebRTCSession:
         """
         audio_queue = self.audio._queue
         buffered = getattr(self.audio, "_buffer", None)
-        queue_duration = audio_queue.qsize() * 0.02
-        timeout = min(15.0, max(1.0, queue_duration + 2.0))
+        # Queue items are not guaranteed to be 20 ms. FlashTalk normally puts
+        # one proportional audio slice per video frame (40-50 ms), while other
+        # producers may enqueue a complete chunk. Derive the deadline from the
+        # samples themselves so a long final chunk is not cut off early.
+        timeout = self.playback_drain_timeout_seconds()
         deadline = asyncio.get_running_loop().time() + timeout
         while asyncio.get_running_loop().time() < deadline:
             buffered_samples = int(getattr(buffered, "size", 0) or 0)
@@ -809,7 +828,77 @@ class WebRTCSession:
         _configure_video_codec_preferences(self.pc)
         answer = await self.pc.createAnswer()
         await self.pc.setLocalDescription(answer)
+        if _rtc_stats_interval_seconds() > 0.0 and self._stats_task is None:
+            self._stats_task = asyncio.create_task(self._log_quality_stats())
         return self.pc.localDescription  # type: ignore[return-value]
+
+    async def _log_quality_stats(self) -> None:
+        """Periodically expose network quality separately from render queues."""
+        interval = _rtc_stats_interval_seconds()
+        while interval > 0.0 and self.pc.connectionState != "closed":
+            await asyncio.sleep(interval)
+            try:
+                report = await self.pc.getStats()
+                outbound = next(
+                    (
+                        item
+                        for item in report.values()
+                        if getattr(item, "type", "") == "outbound-rtp"
+                        and getattr(item, "kind", "") == "video"
+                    ),
+                    None,
+                )
+                remote = next(
+                    (
+                        item
+                        for item in report.values()
+                        if getattr(item, "type", "") == "remote-inbound-rtp"
+                        and getattr(item, "kind", "") == "video"
+                    ),
+                    None,
+                )
+                if outbound is None:
+                    continue
+
+                now = time.monotonic()
+                bytes_sent = int(getattr(outbound, "bytesSent", 0) or 0)
+                packets_sent = int(getattr(outbound, "packetsSent", 0) or 0)
+                packets_lost = int(getattr(remote, "packetsLost", 0) or 0)
+                bitrate_kbps = 0.0
+                loss_pct = 0.0
+                if self._stats_previous is not None:
+                    prev_at, prev_bytes, prev_sent, prev_lost = self._stats_previous
+                    elapsed = max(0.001, now - prev_at)
+                    sent_delta = max(0, packets_sent - prev_sent)
+                    lost_delta = max(0, packets_lost - prev_lost)
+                    bitrate_kbps = max(0, bytes_sent - prev_bytes) * 8.0 / elapsed / 1000.0
+                    packet_total = sent_delta + lost_delta
+                    if packet_total > 0:
+                        loss_pct = lost_delta * 100.0 / packet_total
+                self._stats_previous = (now, bytes_sent, packets_sent, packets_lost)
+
+                rtt_ms = float(getattr(remote, "roundTripTime", 0.0) or 0.0) * 1000.0
+                # H.264 RTP uses a 90 kHz clock, so RTCP jitter is expressed in
+                # 1/90000-second timestamp units rather than milliseconds.
+                jitter_ms = float(getattr(remote, "jitter", 0.0) or 0.0) / 90.0
+                degraded = loss_pct >= 2.0 or rtt_ms >= 250.0 or jitter_ms >= 80.0
+                log_method = log.warning if degraded else log.info
+                log_method(
+                    "WebRTC quality: video_kbps=%.0f loss_pct=%.2f rtt_ms=%.1f "
+                    "jitter_ms=%.1f packets_sent=%d packets_lost=%d vq=%d audio_buffer_ms=%.1f",
+                    bitrate_kbps,
+                    loss_pct,
+                    rtt_ms,
+                    jitter_ms,
+                    packets_sent,
+                    packets_lost,
+                    self.video._queue.qsize(),
+                    self.buffered_audio_duration_ms(),
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.exception("Failed to collect WebRTC quality stats")
 
     @staticmethod
     def _put_close_sentinel(q: asyncio.Queue) -> None:
@@ -831,6 +920,13 @@ class WebRTCSession:
             pass
 
     async def close(self) -> None:
+        if self._stats_task is not None:
+            self._stats_task.cancel()
+            try:
+                await self._stats_task
+            except asyncio.CancelledError:
+                pass
+            self._stats_task = None
         self._put_close_sentinel(self.video._queue)
         self._put_close_sentinel(self.audio._queue)
         await self.pc.close()

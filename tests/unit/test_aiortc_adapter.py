@@ -233,6 +233,24 @@ def test_buffered_audio_duration_counts_track_buffer_and_pending_queue() -> None
         session._put_close_sentinel(session.audio._queue)
 
 
+def test_playback_drain_timeout_uses_sample_duration() -> None:
+    session = WebRTCSession(fps=25.0, sample_rate=16000, mode="buffered")
+    try:
+        session.audio._queue.put_nowait(np.ones((16000 * 4,), dtype=np.int16))
+        assert session.buffered_audio_duration_ms() == pytest.approx(4000.0)
+        # The old qsize * 20 ms approximation treated this four-second item as
+        # only 20 ms and returned the one-second minimum timeout.
+        assert session.playback_drain_timeout_seconds() == pytest.approx(6.0)
+    finally:
+        session._put_close_sentinel(session.video._queue)
+        session._put_close_sentinel(session.audio._queue)
+
+
+def test_rtc_stats_interval_can_be_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENTALKING_RTC_STATS_INTERVAL_SECONDS", "0")
+    assert aiortc_adapter._rtc_stats_interval_seconds() == 0.0
+
+
 def test_buffered_tracks_rebase_shared_clock_after_long_underrun(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
