@@ -409,6 +409,7 @@ class FlashTalkRunner:
         self._media_clock_started = False
         self._av_ts_ms = 0.0
         self._speech_media_active = False
+        self._playback_draining = False
         #: Background dynamic idle cache (closes main WS briefly); speak() must await this.
         self._dynamic_idle_prepare_task: asyncio.Task[None] | None = None
         self._recording_frame_index = 0
@@ -1169,6 +1170,7 @@ class FlashTalkRunner:
                 continue
             if (
                 (self._speaking and self._speech_media_active)
+                or self._playback_draining
                 or not self.webrtc
                 or not self._webrtc_started.is_set()
             ):
@@ -1187,7 +1189,9 @@ class FlashTalkRunner:
     async def _idle_tick(self) -> None:
         if not self.webrtc:
             return
-        if self.webrtc.draining:   # block idle injection during queue drain
+        if self.webrtc.draining or self._playback_draining:
+            # Do not mix idle frames into a speech tail that WebRTC has not
+            # finished playing yet.
             return
         from opentalking.core.types.frames import VideoFrameData
         idle_frame: np.ndarray | None = None
@@ -1218,7 +1222,7 @@ class FlashTalkRunner:
             data=idle_frame,
             width=idle_frame.shape[1],
             height=idle_frame.shape[0],
-            timestamp_ms=0.0,
+            timestamp_ms=self._next_idle_frame_timestamp_ms(),
         )
         await self._video_put_safe(frame)
 
@@ -1710,7 +1714,7 @@ class FlashTalkRunner:
             data=idle_frame,
             width=idle_frame.shape[1],
             height=idle_frame.shape[0],
-            timestamp_ms=0.0,
+            timestamp_ms=self._next_idle_frame_timestamp_ms(),
         )
         await self._video_put_safe(frame)
         log.info("Initial WebRTC video frame queued: session=%s", self.session_id)
@@ -1744,6 +1748,13 @@ class FlashTalkRunner:
             return
         self.webrtc.reset_clocks()
         self._media_clock_started = True
+
+    def _next_idle_frame_timestamp_ms(self) -> float:
+        """Advance idle playback on the same timeline used by speech frames."""
+        timestamp_ms = max(0.0, float(self._av_ts_ms))
+        fps = max(1.0, float(getattr(self.flashtalk, "fps", 25) or 25))
+        self._av_ts_ms = timestamp_ms + (1000.0 / fps)
+        return timestamp_ms
 
     def _prebuffer_chunks(
         self,
@@ -1980,6 +1991,8 @@ class FlashTalkRunner:
         except asyncio.CancelledError:
             log.info("speak_uploaded_pcm cancelled: session=%s", self.session_id)
         except Exception:  # noqa: BLE001
+            self._playback_draining = False
+            self._speech_media_active = False
             log.exception("speak_uploaded_pcm failed: session=%s", self.session_id)
             if not self._closed:
                 await set_session_state(self.redis, self.session_id, "error")
@@ -2010,16 +2023,25 @@ class FlashTalkRunner:
         except asyncio.CancelledError:
             log.info("speak cancelled: session=%s", self.session_id)
         except Exception:  # noqa: BLE001
+            self._playback_draining = False
+            self._speech_media_active = False
             log.exception("speak failed: session=%s", self.session_id)
             if not self._closed:
                 await set_session_state(self.redis, self.session_id, "error")
 
     async def _publish_speech_ended(self, reply_text: str | None = None) -> None:
         if not self._speech_started:
+            self._playback_draining = False
+            self._speech_media_active = False
             return
-        if self.webrtc and self._webrtc_started.is_set() and not self._interrupt.is_set():
-            await self.webrtc.wait_for_playback_drain()
-        self._speech_started = False
+        try:
+            if self.webrtc and self._webrtc_started.is_set() and not self._interrupt.is_set():
+                self._playback_draining = True
+                await self.webrtc.wait_for_playback_drain()
+        finally:
+            self._playback_draining = False
+            self._speech_media_active = False
+            self._speech_started = False
         payload: dict[str, str] = {"session_id": self.session_id}
         if reply_text is not None:
             payload["text"] = reply_text
@@ -2054,6 +2076,7 @@ class FlashTalkRunner:
             await self._await_dynamic_idle_prepare_done()
             self._interrupt.clear()
             self._speaking = True
+            self._playback_draining = False
             if self.webrtc:
                 # Stop idle loop first, then drain queues atomically.
                 self._speech_media_active = True
@@ -2636,6 +2659,13 @@ class FlashTalkRunner:
                 raise
             finally:
                 self._speaking = False
+                self._playback_draining = bool(
+                    self._speech_media_active
+                    and self._speech_started
+                    and self.webrtc
+                    and self._webrtc_started.is_set()
+                    and not self._interrupt.is_set()
+                )
                 self._speech_media_active = False
                 self._speak_t0_wall = None
                 self._speak_milestones = None
@@ -2787,6 +2817,7 @@ class FlashTalkRunner:
             await self._await_dynamic_idle_prepare_done()
             self._interrupt.clear()
             self._speaking = True
+            self._playback_draining = False
             if self.webrtc:
                 self._speech_media_active = True
                 self.webrtc.draining = True
@@ -2975,6 +3006,13 @@ class FlashTalkRunner:
                 raise
             finally:
                 self._speaking = False
+                self._playback_draining = bool(
+                    self._speech_media_active
+                    and self._speech_started
+                    and self.webrtc
+                    and self._webrtc_started.is_set()
+                    and not self._interrupt.is_set()
+                )
                 self._speech_media_active = False
                 self._speak_t0_wall = None
                 self._speak_milestones = None
@@ -3355,6 +3393,7 @@ class FlashTalkRunner:
                 pass
         self._speaking = False
         self._speech_media_active = False
+        self._playback_draining = False
 
         # WebRTC：清缓冲并重置时钟，避免打断后仍播放旧一段的音画。
         if self.webrtc:

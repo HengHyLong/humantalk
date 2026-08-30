@@ -8,6 +8,7 @@ import numpy as np
 from PIL import Image
 import pytest
 
+import opentalking.pipeline.speak.synthesis_runner as synthesis_runner
 from opentalking.core.config import get_settings
 from opentalking.core.model_config import clear_model_config_cache
 from opentalking.media.frame_avatar import resize_reference_image_to_video
@@ -38,6 +39,77 @@ def test_reference_resize_cover_crops_without_distorting_aspect_ratio() -> None:
     ys, xs = np.where(green_mask)
     assert xs.max() - xs.min() >= 90
     assert ys.max() - ys.min() >= 45
+
+
+def test_flashtalk_idle_frames_continue_from_speech_timeline() -> None:
+    runner = FlashTalkRunner.__new__(FlashTalkRunner)
+    runner.flashtalk = SimpleNamespace(fps=20)
+    runner.webrtc = SimpleNamespace(draining=False)
+    runner._playback_draining = False
+    runner._quicktalk_idle_video = None
+    runner._idle_frames = [np.full((4, 5, 3), 9, dtype=np.uint8)]
+    runner._idle_playback_indices = []
+    runner._idle_frame_idx = 0
+    runner._last_frame = None
+    runner._media_clock_started = True
+    runner._av_ts_ms = 61_800.0
+    queued = []
+
+    async def fake_video_put(frame) -> None:
+        queued.append(frame)
+
+    runner._video_put_safe = fake_video_put
+
+    asyncio.run(runner._idle_tick())
+    asyncio.run(runner._idle_tick())
+
+    assert [frame.timestamp_ms for frame in queued] == [61_800.0, 61_850.0]
+    assert runner._av_ts_ms == 61_900.0
+
+
+def test_flashtalk_idle_frames_wait_for_speech_tail_to_drain() -> None:
+    runner = FlashTalkRunner.__new__(FlashTalkRunner)
+    runner.webrtc = SimpleNamespace(draining=False)
+    runner._playback_draining = True
+    queued = []
+
+    async def fake_video_put(frame) -> None:
+        queued.append(frame)
+
+    runner._video_put_safe = fake_video_put
+
+    asyncio.run(runner._idle_tick())
+
+    assert queued == []
+
+
+def test_speech_ended_keeps_idle_blocked_until_playback_is_drained(monkeypatch) -> None:
+    runner = FlashTalkRunner.__new__(FlashTalkRunner)
+    runner.session_id = "sess_drain"
+    runner.redis = object()
+    runner._speech_started = True
+    runner._speech_media_active = False
+    runner._playback_draining = True
+    runner._webrtc_started = SimpleNamespace(is_set=lambda: True)
+    runner._interrupt = SimpleNamespace(is_set=lambda: False)
+    observed: list[bool] = []
+    events: list[tuple[str, dict[str, str]]] = []
+
+    async def wait_for_playback_drain() -> None:
+        observed.append(runner._playback_draining)
+
+    async def fake_publish_event(_redis, _session_id, event, payload) -> None:
+        events.append((event, payload))
+
+    runner.webrtc = SimpleNamespace(wait_for_playback_drain=wait_for_playback_drain)
+    monkeypatch.setattr(synthesis_runner, "publish_event", fake_publish_event)
+
+    asyncio.run(runner._publish_speech_ended("完成"))
+
+    assert observed == [True]
+    assert runner._playback_draining is False
+    assert runner._speech_started is False
+    assert events == [("speech.ended", {"session_id": "sess_drain", "text": "完成"})]
 
 
 def test_fasterliveportrait_idle_frames_keep_reference_still() -> None:
