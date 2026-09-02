@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import pytest
 import numpy as np
 import httpx
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.testclient import TestClient
 
 import apps.api.main as api_main
@@ -117,6 +117,35 @@ def test_webrtc_ice_config_defaults_to_all_without_turn(monkeypatch: pytest.Monk
 
     assert payload["iceTransportPolicy"] == "all"
     assert payload["iceServers"] == [{"urls": "stun:stun.l.google.com:19302"}]
+
+
+def test_webrtc_offer_maps_runner_initialization_timeout_to_503() -> None:
+    session_id = "sess_slow_new_avatar"
+
+    class SlowRunner:
+        async def handle_webrtc_offer(self, _sdp: str, _type: str) -> dict[str, str]:
+            raise asyncio.TimeoutError
+
+    app = FastAPI()
+    redis = InMemoryRedis()
+    asyncio.run(
+        redis.hset(
+            session_key(session_id),
+            mapping={"session_id": session_id, "state": "created"},
+        )
+    )
+    app.state.redis = redis
+    app.state.session_runners = {session_id: SlowRunner()}
+    app.include_router(sessions_routes.router)
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        response = client.post(
+            f"/sessions/{session_id}/webrtc/offer",
+            json={"sdp": "offer", "type": "offer"},
+        )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "session worker initialization timed out"
 
 
 def test_webrtc_ice_config_defaults_to_relay_when_turn_present(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1262,6 +1291,32 @@ def test_split_flashtalk_create_returns_queued_until_worker_ready(
 
     assert response.status_code == 200
     assert response.json()["status"] == "queued"
+
+
+def test_wait_for_session_worker_ready_surfaces_avatar_init_error() -> None:
+    session_id = "sess_invalid_new_avatar"
+    redis = InMemoryRedis()
+
+    async def exercise() -> None:
+        await redis.hset(
+            session_key(session_id),
+            mapping={
+                "session_id": session_id,
+                "state": "error",
+                "error_detail": "uploaded avatar reference image is invalid",
+            },
+        )
+        with pytest.raises(HTTPException) as caught:
+            await sessions_routes._wait_for_session_worker_ready(
+                redis,
+                session_id,
+                max_wait_sec=1,
+                poll_interval=0,
+            )
+        assert caught.value.status_code == 503
+        assert caught.value.detail == "uploaded avatar reference image is invalid"
+
+    asyncio.run(exercise())
 
 
 def test_split_flashtalk_create_returns_created_when_worker_ready(

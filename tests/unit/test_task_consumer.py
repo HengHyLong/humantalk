@@ -52,6 +52,52 @@ class StubRunner:
         self.closed = True
 
 
+def test_failed_session_init_persists_error_detail(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    session_id = "sess_failed_avatar"
+    redis = InMemoryRedis()
+    runners: dict[str, object] = {}
+
+    class FailingRunner:
+        async def prepare(self) -> None:
+            raise RuntimeError("uploaded avatar reference image is invalid")
+
+    monkeypatch.setattr(
+        task_consumer,
+        "_create_runner",
+        lambda *_args, **_kwargs: FailingRunner(),
+    )
+
+    async def exercise() -> dict[str, str] | None:
+        await redis.hset(
+            session_key(session_id),
+            mapping={"session_id": session_id, "state": "created"},
+        )
+        with pytest.raises(RuntimeError, match="reference image is invalid"):
+            await task_consumer._do_init(
+                {
+                    "cmd": "init",
+                    "session_id": session_id,
+                    "avatar_id": "custom-upload",
+                    "model": "mock",
+                },
+                redis,
+                tmp_path,
+                "cpu",
+                runners,
+                session_id,
+            )
+        return await get_session_record(redis, session_id)
+
+    record = asyncio.run(exercise())
+
+    assert record is not None
+    assert record["state"] == "error"
+    assert record["error_detail"] == "uploaded avatar reference image is invalid"
+    assert session_id not in runners
+
 class UploadedPcmRunner(StubRunner):
     def __init__(self) -> None:
         super().__init__()

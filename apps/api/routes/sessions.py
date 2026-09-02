@@ -452,7 +452,10 @@ async def _wait_for_session_worker_ready(
         if state in {"worker_ready", "ready", "speaking"}:
             return True
         if state == "error":
-            raise HTTPException(status_code=503, detail="Session worker failed to initialize.")
+            raise HTTPException(
+                status_code=503,
+                detail=(rec or {}).get("error_detail") or "Session worker failed to initialize.",
+            )
         await asyncio.sleep(poll_interval)
     return False
 
@@ -741,6 +744,12 @@ async def create_session(body: CreateSessionRequest, request: Request) -> Create
                     ready_event = getattr(runner, "ready_event", None) if runner is not None else None
                     if runner is not None and (ready_event is None or ready_event.is_set()):
                         break
+                    record = await session_service.get_session(r, sid)
+                    if (record or {}).get("state") == "error":
+                        raise HTTPException(
+                            status_code=503,
+                            detail=(record or {}).get("error_detail") or "FlashTalk init failed.",
+                        )
                     await asyncio.sleep(poll_interval)
                     elapsed += poll_interval
                 else:
@@ -776,6 +785,12 @@ async def create_session(body: CreateSessionRequest, request: Request) -> Create
             ready_event = getattr(runner, "ready_event", None) if runner is not None else None
             if runner is not None and (ready_event is None or ready_event.is_set()):
                 break
+            record = await session_service.get_session(r, sid)
+            if (record or {}).get("state") == "error":
+                raise HTTPException(
+                    status_code=503,
+                    detail=(record or {}).get("error_detail") or "Session worker failed to initialize.",
+                )
             await asyncio.sleep(poll_interval)
             elapsed += poll_interval
         else:
@@ -1587,11 +1602,28 @@ async def webrtc_offer(
     if runners is not None:
         runner = runners.get(session_id)
         if not runner:
+            if s.get("state") == "error":
+                raise HTTPException(
+                    status_code=503,
+                    detail=s.get("error_detail") or "session worker failed to initialize",
+                )
             raise HTTPException(
-                status_code=404,
-                detail="session not loaded (worker not ready yet?)",
+                status_code=503,
+                detail="session worker is still initializing",
             )
-        return await runner.handle_webrtc_offer(body.sdp, body.type)
+        try:
+            return await runner.handle_webrtc_offer(body.sdp, body.type)
+        except asyncio.TimeoutError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="session worker initialization timed out",
+            ) from exc
+        except HTTPException:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            log.exception("WebRTC offer failed: session=%s", session_id)
+            detail = str(exc).strip() or type(exc).__name__
+            raise HTTPException(status_code=502, detail=f"WebRTC offer failed: {detail}") from exc
     settings = request.app.state.settings
     try:
         ans = await forward_webrtc_offer(

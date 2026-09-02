@@ -15,6 +15,7 @@ import type { MemoryLibrary, Message } from "../types";
 import type { ModelStatus } from "../lib/modelStatus";
 import { modelLabel } from "../lib/modelLabels";
 import { beginAdminProgress, finishAdminProgress, notifyAdmin, updateAdminProgress } from "./feedback";
+import { waitForSessionReady } from "../lib/sessionReadiness";
 
 type ConnectionState = "idle" | "connecting" | "queued" | "live" | "error";
 type ChatMessage = Message;
@@ -311,6 +312,10 @@ export function RealtimeTestWorkspace({ initialAvatarId = "" }: { initialAvatarI
       sessionRef.current = created.session_id;
       setSessionId(created.session_id);
       if (created.status === "queued") setConnection("queued");
+      await waitForSessionReady(
+        created.session_id,
+        (sid) => apiGet<{ state?: string; error_detail?: string }>(`/sessions/${encodeURIComponent(sid)}`),
+      );
       const playback = await startPlayback(created.session_id, videoRef.current);
       playbackRef.current = playback;
       closeEventsRef.current = connectSse(buildApiUrl(`/sessions/${created.session_id}/events`), appendEvent);

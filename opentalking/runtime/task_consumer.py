@@ -14,7 +14,7 @@ from opentalking.core.config import get_settings
 from opentalking.core.prompts import DEFAULT_LLM_SYSTEM_PROMPT
 from opentalking.core.queue_status import set_flashtalk_queue_status
 from opentalking.core.redis_keys import TASK_QUEUE
-from opentalking.core.session_store import get_session_record, set_session_state
+from opentalking.core.session_store import get_session_record, session_key, set_session_state
 from opentalking.agent.context_builder import AgentSessionConfig
 from opentalking.runtime.bus import publish_event
 from opentalking.pipeline.session.runner import SessionRunner
@@ -354,9 +354,22 @@ async def _do_init(
             "position": 0,
             "message": "worker_ready",
         })
-    except Exception:
+    except Exception as exc:
         runners.pop(sid, None)
+        error_detail = str(exc).strip() or type(exc).__name__
+        await r.hset(session_key(sid), mapping={"error_detail": error_detail})
         await set_session_state(r, sid, "error")
+        await publish_event(
+            r,
+            sid,
+            "error",
+            {
+                "session_id": sid,
+                "code": "session_init_failed",
+                "message": error_detail,
+            },
+        )
+        log.exception("Session initialization failed: session=%s", sid)
         raise
 
 

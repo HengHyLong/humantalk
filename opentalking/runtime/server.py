@@ -56,8 +56,19 @@ def create_app() -> FastAPI:
     async def webrtc_offer(session_id: str, body: OfferBody, request: Request) -> dict[str, str]:
         runner = runners.get(session_id)
         if not runner:
-            raise HTTPException(status_code=404, detail="session not loaded on this worker")
-        return await runner.handle_webrtc_offer(body.sdp, body.type)
+            raise HTTPException(status_code=503, detail="session not loaded on this worker")
+        try:
+            return await runner.handle_webrtc_offer(body.sdp, body.type)
+        except asyncio.TimeoutError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="session worker initialization timed out",
+            ) from exc
+        except HTTPException:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            detail = str(exc).strip() or type(exc).__name__
+            raise HTTPException(status_code=502, detail=f"WebRTC offer failed: {detail}") from exc
 
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:
