@@ -38,3 +38,10 @@ def reset_motion_cursor(
     if emitted_frames > 0 and count > 1:
         group_index = (group_index + 1) % count
     return group_index % count, 0
+
+
+def motion_crossfade_alpha(*, frame_index: int, frame_count: int) -> float:
+    """Return the new-clip weight for a bounded motion transition."""
+    if frame_count <= 0:
+        return 1.0
+    return min(1.0, max(0.0, float(frame_index) / float(frame_count)))

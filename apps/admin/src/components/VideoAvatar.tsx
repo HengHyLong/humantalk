@@ -108,25 +108,42 @@ export function VideoAvatar({ state, videoDriver, className, style, fallbackToDe
     if (!nextVideo) return;
     const transitionId = ++transitionIdRef.current;
     let settled = false;
+    let playbackRequested = false;
+    let frameCallbackId: number | null = null;
+    let animationFrameId: number | null = null;
+    const frameReadyVideo = nextVideo as HTMLVideoElement & {
+      requestVideoFrameCallback?: (callback: () => void) => number;
+      cancelVideoFrameCallback?: (id: number) => void;
+    };
     const cleanup = () => {
       nextVideo.removeEventListener("canplay", onCanPlay);
       nextVideo.removeEventListener("error", onError);
+      if (frameCallbackId !== null) frameReadyVideo.cancelVideoFrameCallback?.(frameCallbackId);
+      if (animationFrameId !== null) cancelAnimationFrame(animationFrameId);
       if (cleanupTransitionRef.current === cleanup) cleanupTransitionRef.current = () => undefined;
     };
-    const finish = () => {
+    const commit = () => {
       if (settled || transitionId !== transitionIdRef.current) return;
       settled = true;
       cleanup();
-      nextVideo.loop = nextLoop;
-      nextVideo.currentTime = 0;
-      void nextVideo.play().catch(() => undefined);
       currentVideo.pause();
       currentSourceRef.current = nextSource;
       currentLoopRef.current = nextLoop;
       activeSlotRef.current = nextSlot;
       setActiveSlot(nextSlot);
     };
-    const onCanPlay = () => finish();
+    const onCanPlay = () => {
+      if (playbackRequested || settled || transitionId !== transitionIdRef.current) return;
+      playbackRequested = true;
+      void nextVideo.play().then(() => {
+        if (settled || transitionId !== transitionIdRef.current) return;
+        if (frameReadyVideo.requestVideoFrameCallback) {
+          frameCallbackId = frameReadyVideo.requestVideoFrameCallback(commit);
+        } else {
+          animationFrameId = requestAnimationFrame(commit);
+        }
+      }).catch(onError);
+    };
     const onError = () => {
       if (settled || transitionId !== transitionIdRef.current) return;
       settled = true;
@@ -145,6 +162,7 @@ export function VideoAvatar({ state, videoDriver, className, style, fallbackToDe
     nextVideo.pause();
     nextVideo.preload = "auto";
     nextVideo.loop = nextLoop;
+    nextVideo.currentTime = 0;
     nextVideo.src = nextSource;
     nextVideo.load();
     if (nextVideo.readyState >= 3) queueMicrotask(onCanPlay);
@@ -183,7 +201,7 @@ export function VideoAvatar({ state, videoDriver, className, style, fallbackToDe
           onEnded={() => handleVideoEnded(slot)}
           aria-hidden={slot !== activeSlot}
           aria-label={slot === activeSlot ? ariaLabel : undefined}
-          className={`${resolvedClassName} transition-opacity duration-75 ${slot === activeSlot ? "opacity-100" : "pointer-events-none opacity-0"}`}
+          className={`${resolvedClassName} transition-opacity duration-150 ${slot === activeSlot ? "opacity-100" : "pointer-events-none opacity-0"}`}
           style={style}
         />
       ))}

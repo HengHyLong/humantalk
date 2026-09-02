@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import numpy as np
 
-from opentalking.models.quicktalk.motion_cycle import next_motion_context, reset_motion_cursor
+from opentalking.models.quicktalk.motion_cycle import (
+    motion_crossfade_alpha,
+    next_motion_context,
+    reset_motion_cursor,
+)
 from opentalking.pipeline.speak.synthesis_runner import FlashTalkRunner, _LoopingIdleVideo
 
 
@@ -66,3 +70,11 @@ def test_quicktalk_speech_reset_starts_the_next_motion_template() -> None:
         frame_index=frame_index,
     )
     assert context == "talk-b-0"
+
+
+def test_quicktalk_motion_crossfade_reaches_the_new_clip_without_overshooting() -> None:
+    assert motion_crossfade_alpha(frame_index=0, frame_count=6) == 0.0
+    assert motion_crossfade_alpha(frame_index=3, frame_count=6) == 0.5
+    assert motion_crossfade_alpha(frame_index=6, frame_count=6) == 1.0
+    assert motion_crossfade_alpha(frame_index=7, frame_count=6) == 1.0
+    assert motion_crossfade_alpha(frame_index=1, frame_count=0) == 1.0

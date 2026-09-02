@@ -10,6 +10,7 @@ features incrementally and consume frames from ``generate_frames_from_reps``.
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import tempfile
 import time
@@ -27,7 +28,7 @@ from kornia.filters import gaussian_blur2d
 from kornia.geometry.transform import invert_affine_transform, warp_affine
 
 from .runtime_v2 import FaceDetection, QuickTalkRebuild, ensure_ffmpeg, maybe_mkdir, run_cmd
-from .motion_cycle import next_motion_context, reset_motion_cursor
+from .motion_cycle import motion_crossfade_alpha, next_motion_context, reset_motion_cursor
 
 
 @dataclass
@@ -58,6 +59,10 @@ class RealtimeV3SessionState:
     template_group_index: int = 0
     template_group_frame_index: int = 0
     template_group_count: int = 1
+    active_template_group_index: int = -1
+    last_output_frame: np.ndarray | None = None
+    transition_source_frame: np.ndarray | None = None
+    transition_frame_index: int = 0
     hn: np.ndarray | None = None
     cn: np.ndarray | None = None
 
@@ -68,6 +73,10 @@ class RealtimeV3SessionState:
             group_count=self.template_group_count,
         )
         self.frame_index = 0
+        self.active_template_group_index = -1
+        self.last_output_frame = None
+        self.transition_source_frame = None
+        self.transition_frame_index = 0
         if self.hn is not None:
             self.hn.fill(0)
         if self.cn is not None:
@@ -241,6 +250,13 @@ class RealtimeV3Worker:
         # template remains the stable idle source and the fallback when no
         # usable motion clip was supplied.
         self.template_context_groups = self.motion_restore_context_groups or [self.restore_contexts]
+        try:
+            self.motion_crossfade_frames = max(
+                0,
+                int(os.environ.get("OPENTALKING_QUICKTALK_MOTION_CROSSFADE_FRAMES", "6")),
+            )
+        except ValueError:
+            self.motion_crossfade_frames = 6
         self.frame_index = 0
         self.hn = np.zeros((2, 1, 576), dtype=np.float32)
         self.cn = np.zeros((2, 1, 576), dtype=np.float32)
@@ -253,6 +269,7 @@ class RealtimeV3Worker:
             template_group_index=0,
             template_group_frame_index=0,
             template_group_count=max(1, len(self.template_context_groups)),
+            active_template_group_index=-1,
             hn=np.zeros((2, 1, 576), dtype=np.float32),
             cn=np.zeros((2, 1, 576), dtype=np.float32),
         )
@@ -618,6 +635,22 @@ class RealtimeV3Worker:
     ) -> Iterator[np.ndarray]:
         with torch.inference_mode():
             for rep in reps:
+                selected_group = (
+                    state.template_group_index % len(self.template_context_groups)
+                    if state is not None and len(self.template_context_groups) > 1
+                    else 0
+                )
+                if (
+                    state is not None
+                    and state.active_template_group_index >= 0
+                    and selected_group != state.active_template_group_index
+                    and state.last_output_frame is not None
+                    and self.motion_crossfade_frames > 0
+                ):
+                    state.transition_source_frame = state.last_output_frame.copy()
+                    state.transition_frame_index = 0
+                if state is not None:
+                    state.active_template_group_index = selected_group
                 context = self._template_item(state)
                 rep_input = rep[None, ...].astype(np.float32)
                 if state is not None:
@@ -655,7 +688,27 @@ class RealtimeV3Worker:
                     align_corners=False,
                     antialias=True,
                 ).squeeze(0)
-                yield self.fast_restore_img(context, patch_t)
+                output = self.fast_restore_img(context, patch_t)
+                if state is not None and state.transition_source_frame is not None:
+                    source = state.transition_source_frame
+                    if source.shape != output.shape:
+                        source = cv2.resize(
+                            source,
+                            (output.shape[1], output.shape[0]),
+                            interpolation=cv2.INTER_LINEAR,
+                        )
+                    state.transition_frame_index += 1
+                    alpha = motion_crossfade_alpha(
+                        frame_index=state.transition_frame_index,
+                        frame_count=self.motion_crossfade_frames,
+                    )
+                    output = cv2.addWeighted(source, 1.0 - alpha, output, alpha, 0.0)
+                    if state.transition_frame_index >= self.motion_crossfade_frames:
+                        state.transition_source_frame = None
+                        state.transition_frame_index = 0
+                if state is not None:
+                    state.last_output_frame = output.copy()
+                yield output
 
     def generate_video_from_wav(
         self,
