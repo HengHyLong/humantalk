@@ -396,7 +396,8 @@ export function RealtimeTestWorkspace({ initialAvatarId = "" }: { initialAvatarI
       : videoState === "think"
         ? (selectedMotionDriver.states.think ?? [])
         : [];
-  const showMotionOverlay = model !== VIDEO_DRIVER
+  const showMotionOverlay = Boolean(sessionId)
+    && model !== VIDEO_DRIVER
     && videoState !== "talk"
     && videoState !== "emphasis"
     && selectedMotionSources.length > 0;

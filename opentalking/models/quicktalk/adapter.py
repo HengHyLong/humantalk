@@ -68,7 +68,16 @@ def _worker_cache_key(
     neck_fade_end: float,
     hubert_device: str | None,
     model_backend: str,
+    motion_template_videos: tuple[Path, ...] = (),
+    max_motion_seconds: float | None = None,
 ) -> tuple[Any, ...]:
+    motion_signature: list[tuple[str, int, int]] = []
+    for path in motion_template_videos:
+        try:
+            stat = path.stat()
+            motion_signature.append((str(path), int(stat.st_mtime_ns), int(stat.st_size)))
+        except OSError:
+            motion_signature.append((str(path), 0, 0))
     return (
         str(asset_root),
         str(template_video),
@@ -84,6 +93,8 @@ def _worker_cache_key(
         float(neck_fade_end),
         str(hubert_device) if hubert_device else "",
         str(model_backend),
+        tuple(motion_signature),
+        float(max_motion_seconds) if max_motion_seconds is not None else None,
     )
 
 
@@ -326,6 +337,42 @@ def _prepared_quicktalk_template_and_cache(
     if template.is_file():
         return template.resolve(), face_cache.resolve() if face_cache.is_file() else None
     return None, None
+
+
+def _quicktalk_motion_templates(avatar_path: Path, metadata: dict[str, Any]) -> tuple[Path, ...]:
+    """Resolve uploaded speaking clips that may safely be used as QuickTalk templates."""
+    declared = metadata.get("motion_clips")
+    if not isinstance(declared, dict):
+        return ()
+    limit = _positive_int_env("OPENTALKING_QUICKTALK_MOTION_MAX_CLIPS", 4)
+    resolved: list[Path] = []
+    seen: set[Path] = set()
+    for state in ("talk", "emphasis"):
+        entries = declared.get(state)
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            path = _resolve_avatar_child(avatar_path, entry.get("path"), must_be_file=True)
+            if path is None or path in seen:
+                continue
+            seen.add(path)
+            resolved.append(path)
+            if len(resolved) >= limit:
+                return tuple(resolved)
+    return tuple(resolved)
+
+
+def _optional_positive_float_env(name: str, default: float | None = None) -> float | None:
+    raw = _env_value(name)
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else default
 
 
 def _normalize_asset_root(asset_root: Path) -> Path:
@@ -581,6 +628,19 @@ class QuickTalkAdapter:
             if self._max_template_seconds_env
             else None
         )
+        motion_template_videos = _quicktalk_motion_templates(bundle.path, metadata)
+        motion_template_videos = tuple(path for path in motion_template_videos if path != template_video)
+        max_motion_seconds = _optional_positive_float_env(
+            "OPENTALKING_QUICKTALK_MOTION_MAX_SECONDS",
+            8.0,
+        )
+        if motion_template_videos:
+            log.info(
+                "QuickTalk multi-motion templates selected: avatar=%s clips=%d names=%s",
+                bundle.manifest.id,
+                len(motion_template_videos),
+                [path.name for path in motion_template_videos],
+            )
 
         from opentalking.models.quicktalk.runtime import RealtimeV3Worker
 
@@ -599,6 +659,8 @@ class QuickTalkAdapter:
             neck_fade_end=self._neck_fade_end,
             hubert_device=self._hubert_device,
             model_backend=self._model_backend,
+            motion_template_videos=motion_template_videos,
+            max_motion_seconds=max_motion_seconds,
         )
 
         cache_disabled = _env_value("OPENTALKING_QUICKTALK_WORKER_CACHE", "1") == "0"
@@ -640,6 +702,8 @@ class QuickTalkAdapter:
                             neck_fade_end=self._neck_fade_end,
                             hubert_device=self._hubert_device,
                             model_backend=self._model_backend,
+                            motion_template_videos=motion_template_videos,
+                            max_motion_seconds=max_motion_seconds,
                         )
                     except Exception as exc:  # noqa: BLE001
                         fallback_device = _fallback_quicktalk_device(self._device)
@@ -667,6 +731,8 @@ class QuickTalkAdapter:
                             neck_fade_end=self._neck_fade_end,
                             hubert_device=self._hubert_device,
                             model_backend=self._model_backend,
+                            motion_template_videos=motion_template_videos,
+                            max_motion_seconds=max_motion_seconds,
                         )
                         worker = RealtimeV3Worker(
                             asset_root=asset_root,
@@ -683,6 +749,8 @@ class QuickTalkAdapter:
                             neck_fade_end=self._neck_fade_end,
                             hubert_device=self._hubert_device,
                             model_backend=self._model_backend,
+                            motion_template_videos=motion_template_videos,
+                            max_motion_seconds=max_motion_seconds,
                         )
                     if not cache_disabled:
                         _WORKER_CACHE[cache_key_to_store] = worker
@@ -723,6 +791,8 @@ class QuickTalkAdapter:
                 neck_fade_end=self._neck_fade_end,
                 hubert_device=self._hubert_device,
                 model_backend=self._model_backend,
+                motion_template_videos=motion_template_videos,
+                max_motion_seconds=max_motion_seconds,
             )
             worker = RealtimeV3Worker(
                 asset_root=asset_root,
@@ -739,6 +809,8 @@ class QuickTalkAdapter:
                 neck_fade_end=self._neck_fade_end,
                 hubert_device=self._hubert_device,
                 model_backend=self._model_backend,
+                motion_template_videos=motion_template_videos,
+                max_motion_seconds=max_motion_seconds,
             )
             if not cache_disabled:
                 _WORKER_CACHE[fallback_key] = worker

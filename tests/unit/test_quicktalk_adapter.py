@@ -13,6 +13,7 @@ from opentalking.models.quicktalk.adapter import (
     QuickTalkAdapter,
     _configured_quicktalk_device,
     _default_quicktalk_device,
+    _quicktalk_motion_templates,
 )
 
 
@@ -38,6 +39,107 @@ def _write_quicktalk_pth_assets(asset_root: Path) -> None:
     (checkpoints / "auxiliary" / "models" / "buffalo_l" / "det_10g.onnx").write_bytes(
         b"det"
     )
+
+
+def test_quicktalk_motion_templates_resolve_talk_then_emphasis_and_stay_inside_avatar(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    avatar_dir = tmp_path / "avatar"
+    talk_dir = avatar_dir / "source" / "motions" / "talk"
+    emphasis_dir = avatar_dir / "source" / "motions" / "emphasis"
+    talk_dir.mkdir(parents=True)
+    emphasis_dir.mkdir(parents=True)
+    talk_a = talk_dir / "talk-a.mp4"
+    talk_b = talk_dir / "talk-b.mp4"
+    emphasis = emphasis_dir / "emphasis.mp4"
+    for path in (talk_a, talk_b, emphasis):
+        path.write_bytes(b"video")
+    outside = tmp_path / "outside.mp4"
+    outside.write_bytes(b"outside")
+    monkeypatch.setenv("OPENTALKING_QUICKTALK_MOTION_MAX_CLIPS", "2")
+
+    resolved = _quicktalk_motion_templates(
+        avatar_dir,
+        {
+            "motion_clips": {
+                "talk": [
+                    {"path": "source/motions/talk/talk-a.mp4"},
+                    {"path": "../outside.mp4"},
+                    {"path": "source/motions/talk/talk-b.mp4"},
+                ],
+                "emphasis": [{"path": "source/motions/emphasis/emphasis.mp4"}],
+            }
+        },
+    )
+
+    assert resolved == (talk_a.resolve(), talk_b.resolve())
+
+
+def test_quicktalk_adapter_passes_uploaded_speaking_clips_to_shared_worker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from opentalking.models.quicktalk import adapter as quicktalk_adapter
+
+    quicktalk_adapter._WORKER_CACHE.clear()
+    asset_root = tmp_path / "models" / "quicktalk"
+    _write_quicktalk_pth_assets(asset_root)
+    avatar_dir = tmp_path / "avatars" / "multi-motion"
+    quicktalk_dir = avatar_dir / "quicktalk"
+    motion_dir = avatar_dir / "source" / "motions" / "talk"
+    quicktalk_dir.mkdir(parents=True)
+    motion_dir.mkdir(parents=True)
+    template = quicktalk_dir / "template_512x512.mp4"
+    talk_a = motion_dir / "talk-a.mp4"
+    talk_b = motion_dir / "talk-b.mp4"
+    for path in (template, talk_a, talk_b):
+        path.write_bytes(b"video")
+    (avatar_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "id": "multi-motion",
+                "model_type": "quicktalk",
+                "fps": 25,
+                "sample_rate": 16000,
+                "width": 512,
+                "height": 512,
+                "version": "1.0",
+                "metadata": {
+                    "motion_clips": {
+                        "talk": [
+                            {"path": "source/motions/talk/talk-a.mp4"},
+                            {"path": "source/motions/talk/talk-b.mp4"},
+                        ]
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    captured: dict[str, object] = {}
+
+    class FakeWorker:
+        fps = 25
+
+        def __init__(self, **kwargs: object) -> None:
+            captured.update(kwargs)
+
+        def make_state(self) -> object:
+            return object()
+
+    fake_runtime = types.ModuleType("opentalking.models.quicktalk.runtime")
+    fake_runtime.RealtimeV3Worker = FakeWorker
+    monkeypatch.setitem(sys.modules, "opentalking.models.quicktalk.runtime", fake_runtime)
+    monkeypatch.setenv("OPENTALKING_QUICKTALK_ASSET_ROOT", str(asset_root))
+
+    QuickTalkAdapter().load_avatar(str(avatar_dir))
+
+    assert captured["template_video"] == template.resolve()
+    assert captured["motion_template_videos"] == (talk_a.resolve(), talk_b.resolve())
+    assert captured["max_motion_seconds"] == 8.0
+    quicktalk_adapter._WORKER_CACHE.clear()
 
 
 def test_quicktalk_runtime_available_rejects_unavailable_explicit_cuda(

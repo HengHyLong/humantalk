@@ -16,7 +16,7 @@ import numpy as np
 from opentalking.core.model_paths import model_root, runtime_root
 from opentalking.core.interfaces.model_adapter import ModelAdapter
 from opentalking.core.types.frames import AudioChunk, VideoFrameData
-from opentalking.pipeline.speak.render_pipeline import render_audio_chunk_sync
+from opentalking.pipeline.speak.render_pipeline import render_audio_chunk_sync, reset_avatar_speech_state
 
 logger = logging.getLogger(__name__)
 
@@ -464,6 +464,13 @@ class LocalAudio2VideoClient:
 
     async def connect(self) -> None:
         return None
+
+    async def begin_speech(self) -> None:
+        """Reset per-utterance state and advance a multi-motion QuickTalk template."""
+        if self.avatar_state is None or not self._is_quicktalk_adapter():
+            return
+        await self._run_sync(reset_avatar_speech_state, self.avatar_state)
+        self.speech_frame_index = 0
 
     async def generate(self, audio_pcm: np.ndarray) -> list[VideoFrameData]:
         if self.avatar_state is None:

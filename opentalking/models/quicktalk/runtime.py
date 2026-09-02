@@ -27,6 +27,7 @@ from kornia.filters import gaussian_blur2d
 from kornia.geometry.transform import invert_affine_transform, warp_affine
 
 from .runtime_v2 import FaceDetection, QuickTalkRebuild, ensure_ffmpeg, maybe_mkdir, run_cmd
+from .motion_cycle import next_motion_context, reset_motion_cursor
 
 
 @dataclass
@@ -54,10 +55,18 @@ class RealtimeV3SessionState:
     """
 
     frame_index: int = 0
+    template_group_index: int = 0
+    template_group_frame_index: int = 0
+    template_group_count: int = 1
     hn: np.ndarray | None = None
     cn: np.ndarray | None = None
 
     def reset(self) -> None:
+        self.template_group_index, self.template_group_frame_index = reset_motion_cursor(
+            emitted_frames=self.frame_index,
+            group_index=self.template_group_index,
+            group_count=self.template_group_count,
+        )
         self.frame_index = 0
         if self.hn is not None:
             self.hn.fill(0)
@@ -193,6 +202,8 @@ class RealtimeV3Worker:
         neck_fade_end: float | None = None,
         hubert_device: str | None = None,
         model_backend: str = "auto",
+        motion_template_videos: Sequence[Path] | None = None,
+        max_motion_seconds: float | None = None,
     ) -> None:
         self.template_video = template_video
         self.face_cache_file = face_cache_file
@@ -220,6 +231,16 @@ class RealtimeV3Worker:
             raise RuntimeError(f"No template frames read from {template_video}")
         self.face_det_results = self._load_or_build_template_cache(max_template_seconds)
         self.restore_contexts = self._build_fast_restore_contexts()
+        self.motion_template_videos: list[Path] = []
+        self.motion_restore_context_groups: list[list[FastRestoreContext]] = []
+        self._load_motion_template_contexts(
+            motion_template_videos or (),
+            max_motion_seconds=max_motion_seconds,
+        )
+        # Uploaded speaking clips take precedence for speech. The original
+        # template remains the stable idle source and the fallback when no
+        # usable motion clip was supplied.
+        self.template_context_groups = self.motion_restore_context_groups or [self.restore_contexts]
         self.frame_index = 0
         self.hn = np.zeros((2, 1, 576), dtype=np.float32)
         self.cn = np.zeros((2, 1, 576), dtype=np.float32)
@@ -229,6 +250,9 @@ class RealtimeV3Worker:
         """Allocate fresh per-session state (LSTM hidden + template cycle)."""
         return RealtimeV3SessionState(
             frame_index=0,
+            template_group_index=0,
+            template_group_frame_index=0,
+            template_group_count=max(1, len(self.template_context_groups)),
             hn=np.zeros((2, 1, 576), dtype=np.float32),
             cn=np.zeros((2, 1, 576), dtype=np.float32),
         )
@@ -276,21 +300,41 @@ class RealtimeV3Worker:
         return out
 
     def _load_or_build_template_cache(self, max_template_seconds: float | None) -> Sequence[tuple[np.ndarray, list[int], np.ndarray]]:
-        if self.face_cache_file is not None:
-            cached = self.v2.load_face_cache(self.face_cache_file)
-            if cached is not None and len(cached) == len(self.frames):
-                print(f"v3_template_cache=asset_hit frames={len(cached)} path={self.face_cache_file}", flush=True)
-                return cached
-            print(f"v3_template_cache=asset_miss path={self.face_cache_file}", flush=True)
+        return self._load_or_build_cache_for(
+            self.template_video,
+            self.frames,
+            self.fps,
+            max_template_seconds=max_template_seconds,
+            face_cache_file=self.face_cache_file,
+        )
 
-        read_limit = max_template_seconds if max_template_seconds is not None else len(self.frames) / self.fps
-        cache_path = self.v2.face_cache_path(self.template_video, len(self.frames), self.fps, read_limit)
+    def _load_or_build_cache_for(
+        self,
+        template_video: Path,
+        frames: list[np.ndarray],
+        fps: float,
+        *,
+        max_template_seconds: float | None,
+        face_cache_file: Path | None = None,
+        cache_variant: str = "",
+    ) -> Sequence[tuple[np.ndarray, list[int], np.ndarray]]:
+        if face_cache_file is not None:
+            cached = self.v2.load_face_cache(face_cache_file)
+            if cached is not None and len(cached) == len(frames):
+                print(f"v3_template_cache=asset_hit frames={len(cached)} path={face_cache_file}", flush=True)
+                return cached
+            print(f"v3_template_cache=asset_miss path={face_cache_file}", flush=True)
+
+        read_limit = max_template_seconds if max_template_seconds is not None else len(frames) / fps
+        cache_path = self.v2.face_cache_path(template_video, len(frames), fps, read_limit)
+        if cache_path is not None and cache_variant:
+            cache_path = cache_path.with_name(f"{cache_path.stem}_{cache_variant}{cache_path.suffix}")
         cached = self.v2.load_face_cache(cache_path) if cache_path is not None else None
-        if cached is not None and len(cached) == len(self.frames):
+        if cached is not None and len(cached) == len(frames):
             print(f"v3_template_cache=hit frames={len(cached)} path={cache_path}", flush=True)
             return cached
         start = time.perf_counter()
-        results = self.v2.face_detect_frames(self.frames)
+        results = self.v2.face_detect_frames(frames)
         if cache_path is not None:
             self.v2.save_face_cache(cache_path, results)
         print(f"v3_template_cache=miss face_detect_seconds={time.perf_counter() - start:.3f} frames={len(results)}", flush=True)
@@ -367,9 +411,22 @@ class RealtimeV3Worker:
         )
 
     def _build_fast_restore_contexts(self) -> list[FastRestoreContext]:
+        return self._build_restore_contexts_for(
+            self.frames,
+            self.face_det_results,
+            label="primary",
+        )
+
+    def _build_restore_contexts_for(
+        self,
+        frames: list[np.ndarray],
+        face_det_results: Sequence[tuple[np.ndarray, list[int], np.ndarray]],
+        *,
+        label: str,
+    ) -> list[FastRestoreContext]:
         start = time.perf_counter()
         contexts: list[FastRestoreContext] = []
-        for frame, (face, coords, affine) in zip(self.frames, self.face_det_results):
+        for frame, (face, coords, affine) in zip(frames, face_det_results):
             contexts.append(
                 self._build_fast_restore_context(
                     frame=frame,
@@ -378,8 +435,60 @@ class RealtimeV3Worker:
                     affine=affine,
                 )
             )
-        print(f"v3_restore_context_seconds={time.perf_counter() - start:.3f} frames={len(contexts)}", flush=True)
+        print(
+            f"v3_restore_context_seconds={time.perf_counter() - start:.3f} "
+            f"frames={len(contexts)} template={label}",
+            flush=True,
+        )
         return contexts
+
+    def _load_motion_template_contexts(
+        self,
+        template_videos: Sequence[Path],
+        *,
+        max_motion_seconds: float | None,
+    ) -> None:
+        if not template_videos:
+            return
+        primary_height, primary_width = self.frames[0].shape[:2]
+        seen = {self.template_video.resolve()}
+        for raw_path in template_videos:
+            path = Path(raw_path).expanduser().resolve()
+            if path in seen or not path.is_file():
+                continue
+            seen.add(path)
+            try:
+                frames, fps = self._load_template_frames(path, max_motion_seconds)
+                if not frames:
+                    raise RuntimeError("no frames were decoded")
+                normalized = [
+                    frame
+                    if frame.shape[:2] == (primary_height, primary_width)
+                    else cv2.resize(frame, (primary_width, primary_height), interpolation=cv2.INTER_AREA)
+                    for frame in frames
+                ]
+                detections = self._load_or_build_cache_for(
+                    path,
+                    normalized,
+                    fps,
+                    max_template_seconds=max_motion_seconds,
+                    cache_variant=f"{primary_width}x{primary_height}",
+                )
+                contexts = self._build_restore_contexts_for(
+                    normalized,
+                    detections,
+                    label=path.name,
+                )
+                if not contexts:
+                    raise RuntimeError("no restore contexts were built")
+                self.motion_template_videos.append(path)
+                self.motion_restore_context_groups.append(contexts)
+                print(
+                    f"v3_motion_template_ready path={path} frames={len(contexts)}",
+                    flush=True,
+                )
+            except Exception as exc:
+                print(f"v3_motion_template_skipped path={path} error={exc}", flush=True)
 
     def _apply_neck_fade(self, soft_mask_roi_3d: torch.Tensor) -> torch.Tensor:
         if self.neck_fade_start is None or self.neck_fade_end is None:
@@ -423,7 +532,28 @@ class RealtimeV3Worker:
         return reps, time.perf_counter() - start
 
     def _template_item(self, state: RealtimeV3SessionState | None = None) -> FastRestoreContext:
-        n = len(self.restore_contexts)
+        groups = self.template_context_groups
+        if state is not None and len(groups) > 1:
+            current_group = state.template_group_index % len(groups)
+            context, next_group, next_frame = next_motion_context(
+                groups,
+                group_index=current_group,
+                frame_index=state.template_group_frame_index,
+            )
+            state.frame_index += 1
+            state.template_group_index = next_group
+            state.template_group_frame_index = next_frame
+            if next_group != current_group:
+                current_name = self.motion_template_videos[current_group].name
+                next_name = self.motion_template_videos[next_group].name
+                print(
+                    f"v3_motion_template_switch from={current_name} to={next_name}",
+                    flush=True,
+                )
+            return context
+
+        contexts = groups[0]
+        n = len(contexts)
         if state is not None:
             cycle = state.frame_index // n
             offset = state.frame_index % n
@@ -434,7 +564,7 @@ class RealtimeV3Worker:
             offset = self.frame_index % n
             idx = offset if cycle % 2 == 0 else n - 1 - offset
             self.frame_index += 1
-        return self.restore_contexts[idx]
+        return contexts[idx]
 
     def fast_restore_img(
         self,

@@ -163,7 +163,10 @@ export function VideoAvatar({ state, videoDriver, className, style, fallbackToDe
     return () => cleanupTransitionRef.current();
   }, [fallbackSource, fallbackToDefault, loop, sourcePoolKey, startTransition]);
 
-  const resolvedClassName = className ?? "absolute inset-0 h-full w-full object-contain";
+  // Both video elements form a double buffer and must always occupy the same
+  // layer.  Callers may add sizing / object-position classes, but must not be
+  // able to put the two slots back into normal flex/grid flow.
+  const resolvedClassName = `absolute inset-0 h-full w-full object-contain ${className ?? ""}`;
   const ariaLabel = state === "talk" || state === "emphasis" ? "数字人讲话" : state === "think" ? "数字人思考" : state === "welcome" ? "数字人欢迎" : "数字人聆听";
   return (
     <>

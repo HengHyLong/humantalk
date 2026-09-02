@@ -416,3 +416,28 @@ def test_local_wav2lip_slice_len_env_reduces_first_chunk_latency(
     assert init["slice_len"] == 12
     assert init["chunk_samples"] == 7680
     assert client.audio_chunk_samples == 7680
+
+
+def test_local_audio2video_begin_speech_resets_quicktalk_utterance_state() -> None:
+    class SessionState:
+        def __init__(self) -> None:
+            self.reset_count = 0
+
+        def reset(self) -> None:
+            self.reset_count += 1
+
+    adapter = FakeQuickTalkLocalAdapter()
+    client = LocalAudio2VideoClient(adapter, device="cuda:0")
+    session_state = SessionState()
+    client.avatar_state = type(
+        "AvatarState",
+        (),
+        {"session_state": session_state, "extra": {}},
+    )()
+    client.speech_frame_index = 42
+
+    asyncio.run(client.begin_speech())
+
+    assert session_state.reset_count == 1
+    assert client.speech_frame_index == 0
+    asyncio.run(client.close())

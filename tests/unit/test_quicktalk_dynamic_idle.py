@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from opentalking.models.quicktalk.motion_cycle import next_motion_context, reset_motion_cursor
 from opentalking.pipeline.speak.synthesis_runner import FlashTalkRunner, _LoopingIdleVideo
 
 
@@ -27,3 +28,41 @@ def test_dynamic_idle_frames_are_configured_for_forward_looping() -> None:
     runner._set_idle_frames(frames, playback_mode="loop")
 
     assert runner._idle_playback_indices == [0, 1, 2]
+
+
+def test_quicktalk_multi_motion_templates_play_forward_and_advance_without_repeat() -> None:
+    groups = [["talk-a-0", "talk-a-1"], ["talk-b-0", "talk-b-1"]]
+    group_index = 0
+    frame_index = 0
+    sequence = []
+    for _ in range(6):
+        context, group_index, frame_index = next_motion_context(
+            groups,
+            group_index=group_index,
+            frame_index=frame_index,
+        )
+        sequence.append(context)
+
+    assert sequence == [
+        "talk-a-0",
+        "talk-a-1",
+        "talk-b-0",
+        "talk-b-1",
+        "talk-a-0",
+        "talk-a-1",
+    ]
+
+
+def test_quicktalk_speech_reset_starts_the_next_motion_template() -> None:
+    group_index, frame_index = reset_motion_cursor(
+        emitted_frames=1,
+        group_index=0,
+        group_count=2,
+    )
+
+    context, _, _ = next_motion_context(
+        [["talk-a-0"], ["talk-b-0"]],
+        group_index=group_index,
+        frame_index=frame_index,
+    )
+    assert context == "talk-b-0"

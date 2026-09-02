@@ -2075,6 +2075,9 @@ class FlashTalkRunner:
             if self._closed:
                 return
             await self._await_dynamic_idle_prepare_done()
+            begin_speech = getattr(self.flashtalk, "begin_speech", None)
+            if callable(begin_speech):
+                await begin_speech()
             self._interrupt.clear()
             self._speaking = True
             self._playback_draining = False
