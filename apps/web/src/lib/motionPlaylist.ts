@@ -39,3 +39,7 @@ export function pickNextSource(pool: string[], current: string): string {
   const candidates = pool.length > 1 ? pool.filter((source) => source !== current) : pool;
   return candidates[Math.floor(Math.random() * candidates.length)] ?? current;
 }
+
+export function shouldLoopSourcePool(pool: string[]): boolean {
+  return pool.length === 1;
+}

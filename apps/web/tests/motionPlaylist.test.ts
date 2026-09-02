@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { pickNextSource, sourcePoolFor } from "../src/lib/motionPlaylist";
+import { pickNextSource, shouldLoopSourcePool, sourcePoolFor } from "../src/lib/motionPlaylist";
 
 test("talk state mixes normal and emphasis clips", () => {
   const sources = sourcePoolFor("talk", {
@@ -34,4 +34,18 @@ test("welcome falls back to avatar-specific listening clips", () => {
 
   assert.ok(sources.some((source) => source.endsWith("/listen-a")));
   assert.ok(sources.some((source) => source.endsWith("/legacy-listen")));
+});
+
+test("a duplicated single idle source uses the native video loop", () => {
+  const sources = sourcePoolFor("listen", {
+    listen_url: "/idle-a",
+    states: {
+      idle: ["/idle-a"],
+      listen: ["/idle-a"],
+    },
+  });
+
+  assert.deepEqual(sources, ["/idle-a"]);
+  assert.equal(shouldLoopSourcePool(sources), true);
+  assert.equal(shouldLoopSourcePool(["/idle-a", "/idle-b"]), false);
 });

@@ -27,6 +27,33 @@ type SceneStageProps = {
   motionDriverAssets?: { states: Partial<Record<VideoDriverState, Array<{ url: string }>>> } | null;
 };
 
+function MotionVideoOverlay({
+  state,
+  stateUrls,
+  className,
+  style,
+}: {
+  state: VideoDriverState;
+  stateUrls: Partial<Record<VideoDriverState, string[]>>;
+  className: string;
+  style?: CSSProperties;
+}) {
+  const [ready, setReady] = useState(false);
+  const handleReady = useCallback(() => setReady(true), []);
+  return (
+    <div className={`absolute inset-0 transition-opacity duration-150 ${ready ? "opacity-100" : "pointer-events-none opacity-0"}`}>
+      <VideoAvatar
+        state={state}
+        videoDriver={{ states: stateUrls }}
+        fallbackToDefault={false}
+        className={className}
+        style={style}
+        onReady={handleReady}
+      />
+    </div>
+  );
+}
+
 function backgroundUrl(background: SceneBackgroundAsset): string {
   return buildApiUrl(background.url);
 }
@@ -127,6 +154,7 @@ export function SceneStage({
     && videoState !== "talk"
     && videoState !== "emphasis"
     && motionOverlaySources.length > 0;
+  const motionOverlayKey = `${videoState}:${motionOverlaySources.join("\n")}`;
 
   return (
     <div className={`relative min-h-0 overflow-hidden ${hasSceneBackground ? "bg-slate-950" : "bg-white"} ${className}`}>
@@ -165,7 +193,7 @@ export function SceneStage({
             <VideoBackground
               ref={videoRef}
               stream={videoStream}
-              className={`absolute inset-0 h-full w-full ${avatarFit} ${avatarObjectPosition} ${motionOverlayActive || (clientRenderer && !rendererFailed) ? "opacity-0" : "opacity-100"}`}
+              className={`absolute inset-0 h-full w-full ${avatarFit} ${avatarObjectPosition} ${clientRenderer && !rendererFailed ? "opacity-0" : "opacity-100"}`}
               style={avatarMaskStyle}
             />
           )}
@@ -178,10 +206,10 @@ export function SceneStage({
             />
           ) : null}
           {motionOverlayActive ? (
-            <VideoAvatar
+            <MotionVideoOverlay
+              key={motionOverlayKey}
               state={videoState}
-              videoDriver={{ states: motionStateUrls }}
-              fallbackToDefault={false}
+              stateUrls={motionStateUrls}
               className={`absolute inset-0 h-full w-full ${avatarFit} ${avatarObjectPosition}`}
               style={avatarMaskStyle}
             />

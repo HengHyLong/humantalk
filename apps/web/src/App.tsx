@@ -2486,6 +2486,7 @@ export default function App() {
       return;
     }
     clearSubtitleState();
+    setConnection("connecting");
     const lockedAsrProvider = normalizeAsrProvider(asrProvider, "dashscope");
     let latestRuntimeStatus: HealthResponse | null = null;
     try {
@@ -2503,12 +2504,16 @@ export default function App() {
     if (startBlockReason) {
       notify(startBlockReason, "error");
       setSettingsExpanded(true);
+      setConnection("error");
       return;
     }
 
     if (PREWARMABLE_MODELS.has(model) && selectedModelConnected && selectedPrewarmState !== "ready") {
       const ready = await requestAvatarPrewarm(avatarId, model, { force: true, modelConnected: selectedModelConnected });
-      if (!ready) return;
+      if (!ready) {
+        setConnection("error");
+        return;
+      }
     }
 
     const previousSessionId = sessionIdRef.current;
@@ -4154,6 +4159,8 @@ export default function App() {
           modelLabel={selectedModelLabel}
           messages={messages}
           queueInfo={queueInfo}
+          prewarmState={selectedPrewarmState}
+          prewarmModel={selectedModelConnected && (model === "quicktalk" || model === "wav2lip") ? model : null}
           onStart={() => void handleStart()}
           onSend={handleSend}
           onSuggestionSend={handleSuggestionSend}

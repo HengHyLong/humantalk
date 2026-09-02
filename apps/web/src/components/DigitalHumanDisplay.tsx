@@ -45,6 +45,8 @@ type DigitalHumanDisplayProps = {
   modelLabel: string;
   messages: Message[];
   queueInfo?: { position: number; message: string } | null;
+  prewarmState?: "idle" | "preparing" | "ready" | "failed";
+  prewarmModel?: "quicktalk" | "wav2lip" | null;
   onStart: () => void;
   onSend: (text: string) => void;
   onSuggestionSend?: (text: string) => void;
@@ -96,6 +98,8 @@ export function DigitalHumanDisplay({
                                       modelLabel,
                                       messages,
                                       queueInfo,
+                                      prewarmState = "idle",
+                                      prewarmModel = null,
                                       onStart,
                                       onSend,
                                       onSuggestionSend,
@@ -138,8 +142,27 @@ export function DigitalHumanDisplay({
   const latestRoundRef = useRef<HTMLDivElement>(null);
   const shouldStickToBottomRef = useRef(true);
   const live = connection === "live" || connection === "expiring";
-  const busy = connection === "connecting" || connection === "queued";
   const english = isEnglishConversation(language);
+  const prewarmModelLabel = prewarmModel === "quicktalk"
+      ? "QuickTalk"
+      : prewarmModel === "wav2lip"
+          ? "Wav2Lip"
+          : "";
+  const prewarming = Boolean(prewarmModelLabel && prewarmState !== "ready");
+  const loadingTitle = connection === "queued"
+      ? (english ? "Waiting for an available session" : "正在等待可用会话")
+      : prewarming
+          ? (english ? `Preparing ${prewarmModelLabel} digital human` : `正在预热 ${prewarmModelLabel} 数字人`)
+          : (english ? "Loading digital human" : "正在加载数字人");
+  const loadingDetail = queueInfo?.position
+      ? (english ? `Queue position: ${queueInfo.position}. Please wait.` : `当前排队第 ${queueInfo.position} 位，请耐心等待`)
+      : prewarming
+          ? (english
+              ? "The model and avatar assets are loading. The conversation will open automatically when ready."
+              : "正在加载模型和形象资产，完成后将自动进入对话，请耐心等待。")
+          : (english
+              ? "Establishing the WebRTC video channel. The conversation will open automatically."
+              : "正在建立 WebRTC 视频通道，连接成功后将自动进入对话。");
   const suggestions = suggestionItems ?? (english ? ["Venue navigation", "Book a meeting", "Conference services", "About the exhibition"] : ["展馆导航", "预约洽谈", "会议服务", "关于展览"]);
   const displaySubtitle = subtitle?.trim() || (messages.length === 0 ? (english ? "You can ask me the following questions" : "你可以问我以下问题哦") : "");
   const latestVisibleMessage = messages[messages.length - 1];
@@ -650,19 +673,17 @@ export function DigitalHumanDisplay({
                 </div>
             ) : null}
 
-            {!live && !busy ? (
+            {connection === "error" ? (
                 <div className="digital-display-start-card">
                   <p className="digital-display-eyebrow">{english ? "Sichuan Expo Group Digital Human · Live" : "四川博览集团数字人 · 实时推流"}</p>
-                  <h1>{busy ? (english ? "Preparing the digital human" : "数字人正在准备中") : connection === "error" ? (english ? "Live connection unavailable" : "推流暂时未连接") : (english ? "Welcome to the smart exhibition hall" : "欢迎来到智能展厅")}</h1>
+                  <h1>{english ? "Digital human failed to load" : "数字人加载失败"}</h1>
                   <p>
-                    {busy
-                        ? queueInfo?.position
-                            ? english ? `You are number ${queueInfo.position} in the queue. Please wait.` : `当前排队第 ${queueInfo.position} 位，请稍候。`
-                            : english ? "Establishing a low-latency WebRTC video channel." : "正在建立 WebRTC 低延迟视频通道。"
-                        : english ? "Connect to start real-time Q&A and exhibition navigation." : "连接四川博览集团数字人视频推流，开始实时问答与展览导览。"}
+                    {english
+                        ? "Check the service status and try loading again."
+                        : "请检查数字人模型服务状态后重新加载。"}
                   </p>
-                  <button type="button" className="digital-display-start-button" onClick={onStart} disabled={busy}>
-                    {busy ? (english ? "Connecting..." : "连接中...") : connection === "error" ? (english ? "Reconnect" : "重新连接") : (english ? "Start" : "开始体验")}
+                  <button type="button" className="digital-display-start-button" onClick={onStart}>
+                    {english ? "Try again" : "重新加载"}
                   </button>
                   <div className="digital-display-start-meta">
                     <span>{avatar?.name ?? (english ? "Default digital human" : "默认数字人")}</span>
@@ -671,11 +692,11 @@ export function DigitalHumanDisplay({
                 </div>
             ) : null}
 
-            {busy ? (
+            {!live && connection !== "error" ? (
                 <div className="digital-display-loading" role="status" aria-live="polite">
                   <span className="digital-display-loader" aria-hidden />
-                  <strong>{english ? "Loading digital human" : "正在加载数字人"}</strong>
-                  <span>{queueInfo?.position ? (english ? `Queue position: ${queueInfo.position}` : `当前排队第 ${queueInfo.position} 位，请稍候`) : (english ? "Establishing WebRTC video channel" : "正在建立 WebRTC 视频通道")}</span>
+                  <strong>{loadingTitle}</strong>
+                  <span>{loadingDetail}</span>
                   <div className="digital-display-loading-track" aria-hidden><i /></div>
                 </div>
             ) : null}

@@ -22,6 +22,7 @@ type VideoAvatarProps = {
   className?: string;
   style?: CSSProperties;
   fallbackToDefault?: boolean;
+  onReady?: () => void;
 };
 
 function defaultSourceFor(state: VideoDriverState): string {
@@ -58,14 +59,14 @@ function pickNextSource(pool: string[], current: string): string {
   return candidates[Math.floor(Math.random() * candidates.length)] ?? current;
 }
 
-export function VideoAvatar({ state, videoDriver, className, style, fallbackToDefault = true }: VideoAvatarProps) {
+export function VideoAvatar({ state, videoDriver, className, style, fallbackToDefault = true, onReady }: VideoAvatarProps) {
   const fallbackSource = defaultSourceFor(state);
   const sourcePool = useMemo(() => {
     const configured = sourcePoolFor(state, videoDriver);
     return configured.length ? configured : fallbackToDefault ? [fallbackSource] : [];
   }, [fallbackSource, fallbackToDefault, state, videoDriver]);
   const sourcePoolKey = sourcePool.join("\n");
-  const loop = false;
+  const loop = sourcePool.length === 1;
   const videoRef0 = useRef<HTMLVideoElement>(null);
   const videoRef1 = useRef<HTMLVideoElement>(null);
   const videoRefs = [videoRef0, videoRef1] as const;
@@ -77,6 +78,30 @@ export function VideoAvatar({ state, videoDriver, className, style, fallbackToDe
   const currentLoopRef = useRef(loop);
   const transitionIdRef = useRef(0);
   const cleanupTransitionRef = useRef<() => void>(() => undefined);
+  const readyReportedRef = useRef(false);
+  const cleanupReadyCallbackRef = useRef<() => void>(() => undefined);
+
+  const reportReadyAfterFrame = useCallback((video: HTMLVideoElement, slot: VideoSlot) => {
+    if (!onReady || readyReportedRef.current) return;
+    cleanupReadyCallbackRef.current();
+    const frameReadyVideo = video as HTMLVideoElement & {
+      requestVideoFrameCallback?: (callback: () => void) => number;
+      cancelVideoFrameCallback?: (id: number) => void;
+    };
+    const finish = () => {
+      cleanupReadyCallbackRef.current = () => undefined;
+      if (slot !== activeSlotRef.current || readyReportedRef.current) return;
+      readyReportedRef.current = true;
+      onReady();
+    };
+    if (frameReadyVideo.requestVideoFrameCallback) {
+      const callbackId = frameReadyVideo.requestVideoFrameCallback(finish);
+      cleanupReadyCallbackRef.current = () => frameReadyVideo.cancelVideoFrameCallback?.(callbackId);
+    } else {
+      const animationId = requestAnimationFrame(finish);
+      cleanupReadyCallbackRef.current = () => cancelAnimationFrame(animationId);
+    }
+  }, [onReady]);
 
   const startTransition = useCallback((nextSource: string, nextLoop: boolean, fallback?: string) => {
     cleanupTransitionRef.current();
@@ -99,7 +124,9 @@ export function VideoAvatar({ state, videoDriver, className, style, fallbackToDe
         cleanupTransitionRef.current = cleanup;
         currentVideo.addEventListener("error", onError, { once: true });
       }
-      void currentVideo.play().catch(() => undefined);
+      void currentVideo.play()
+        .then(() => reportReadyAfterFrame(currentVideo, currentSlot))
+        .catch(() => undefined);
       return;
     }
 
@@ -131,6 +158,10 @@ export function VideoAvatar({ state, videoDriver, className, style, fallbackToDe
       currentLoopRef.current = nextLoop;
       activeSlotRef.current = nextSlot;
       setActiveSlot(nextSlot);
+      if (!readyReportedRef.current) {
+        readyReportedRef.current = true;
+        onReady?.();
+      }
     };
     const onCanPlay = () => {
       if (playbackRequested || settled || transitionId !== transitionIdRef.current) return;
@@ -166,7 +197,7 @@ export function VideoAvatar({ state, videoDriver, className, style, fallbackToDe
     nextVideo.src = nextSource;
     nextVideo.load();
     if (nextVideo.readyState >= 3) queueMicrotask(onCanPlay);
-  }, []);
+  }, [onReady, reportReadyAfterFrame]);
 
   const handleVideoEnded = useCallback((slot: VideoSlot) => {
     if (slot !== activeSlotRef.current) return;
@@ -175,10 +206,15 @@ export function VideoAvatar({ state, videoDriver, className, style, fallbackToDe
   }, [fallbackSource, fallbackToDefault, startTransition]);
 
   useEffect(() => {
+    readyReportedRef.current = false;
+    cleanupReadyCallbackRef.current();
     sourcePoolRef.current = sourcePool;
     const nextSource = pickNextSource(sourcePool, currentSourceRef.current);
     startTransition(nextSource, loop, !fallbackToDefault || nextSource === fallbackSource ? undefined : fallbackSource);
-    return () => cleanupTransitionRef.current();
+    return () => {
+      cleanupTransitionRef.current();
+      cleanupReadyCallbackRef.current();
+    };
   }, [fallbackSource, fallbackToDefault, loop, sourcePoolKey, startTransition]);
 
   // Both video elements form a double buffer and must always occupy the same
@@ -197,7 +233,8 @@ export function VideoAvatar({ state, videoDriver, className, style, fallbackToDe
           muted
           playsInline
           preload="auto"
-          loop={false}
+          loop={loop}
+          onPlaying={() => reportReadyAfterFrame(videoRefs[slot].current!, slot)}
           onEnded={() => handleVideoEnded(slot)}
           aria-hidden={slot !== activeSlot}
           aria-label={slot === activeSlot ? ariaLabel : undefined}
