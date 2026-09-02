@@ -29,6 +29,22 @@ def blend_frames(left: np.ndarray, right: np.ndarray, alpha: float) -> np.ndarra
     return np.clip(mixed, 0.0, 255.0).astype(np.uint8)
 
 
+def loop_crossfade_alpha(
+    source_index: int,
+    *,
+    frame_count: int,
+    crossfade_frames: int,
+) -> float:
+    """Return the first-frame weight near the end of a looping source video."""
+    overlap = min(max(0, int(crossfade_frames)), max(0, int(frame_count) // 4))
+    if overlap <= 0:
+        return 0.0
+    offset = int(source_index) - (int(frame_count) - overlap)
+    if offset < 0:
+        return 0.0
+    return min(1.0, (offset + 1) / float(overlap))
+
+
 def motion_score(signatures: list[np.ndarray], start: int, end: int) -> float:
     score = 0.0
     steps = 0

@@ -89,9 +89,14 @@ class _LoopingIdleVideo:
         self.height = max(2, int(height))
         self.output_fps = max(1.0, float(output_fps))
         self.duration_seconds = self.frame_count / self.source_fps
+        self.loop_crossfade_frames = max(
+            0,
+            _env_int("OPENTALKING_QUICKTALK_IDLE_CROSSFADE_FRAMES", 8),
+        )
         self._output_frame_index = 0
         self._source_frame_index = -1
         self._last_frame: np.ndarray | None = None
+        self._loop_anchor_frame: np.ndarray | None = None
         self._closed = False
 
     def source_index_for_output(self, output_frame_index: int) -> int:
@@ -115,21 +120,37 @@ class _LoopingIdleVideo:
 
         desired_index = self.source_index_for_output(self._output_frame_index)
         self._output_frame_index += 1
-        if desired_index == self._source_frame_index and self._last_frame is not None:
-            return self._last_frame
+        if desired_index != self._source_frame_index or self._last_frame is None:
+            if desired_index <= self._source_frame_index:
+                self._cap.set(self._cv2.CAP_PROP_POS_FRAMES, 0)
+                self._source_frame_index = -1
+                self._last_frame = None
 
-        if desired_index <= self._source_frame_index:
-            self._cap.set(self._cv2.CAP_PROP_POS_FRAMES, 0)
-            self._source_frame_index = -1
-            self._last_frame = None
+            while self._source_frame_index < desired_index:
+                ok, frame = self._cap.read()
+                if not ok:
+                    self.close()
+                    return None
+                self._source_frame_index += 1
+                self._last_frame = self._resize_frame(frame)
 
-        while self._source_frame_index < desired_index:
-            ok, frame = self._cap.read()
-            if not ok:
-                self.close()
-                return None
-            self._source_frame_index += 1
-            self._last_frame = self._resize_frame(frame)
+        if self._last_frame is None:
+            return None
+        if desired_index == 0 and self._loop_anchor_frame is None:
+            self._loop_anchor_frame = self._last_frame.copy()
+        alpha = _idle_loop_crossfade_alpha(
+            desired_index,
+            frame_count=self.frame_count,
+            crossfade_frames=self.loop_crossfade_frames,
+        )
+        if alpha > 0.0 and self._loop_anchor_frame is not None:
+            return self._cv2.addWeighted(
+                self._last_frame,
+                1.0 - alpha,
+                self._loop_anchor_frame,
+                alpha,
+                0.0,
+            )
         return self._last_frame
 
     def close(self) -> None:
@@ -218,10 +239,10 @@ def _build_idle_driver_pcm(
 
 
 from opentalking.pipeline.speak.idle_frames import (
-    blend_frames as _blend_frames,
     build_idle_playback_indices as _build_idle_playback_indices,
     build_soft_ellipse_mask as _build_soft_ellipse_mask,
     idle_frame_signature as _idle_frame_signature,
+    loop_crossfade_alpha as _idle_loop_crossfade_alpha,
     motion_score as _motion_score,
     optimize_idle_loop as _optimize_idle_loop,
     stabilize_idle_mouth as _stabilize_idle_mouth,

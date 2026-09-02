@@ -7,6 +7,7 @@ from opentalking.models.quicktalk.motion_cycle import (
     next_motion_context,
     reset_motion_cursor,
 )
+from opentalking.pipeline.speak.idle_frames import loop_crossfade_alpha
 from opentalking.pipeline.speak.synthesis_runner import FlashTalkRunner, _LoopingIdleVideo
 
 
@@ -55,6 +56,19 @@ def test_quicktalk_multi_motion_templates_play_forward_and_advance_without_repea
         "talk-a-0",
         "talk-a-1",
     ]
+
+
+def test_quicktalk_idle_video_fades_the_tail_exactly_into_the_first_frame() -> None:
+    assert loop_crossfade_alpha(91, frame_count=100, crossfade_frames=8) == 0.0
+    assert loop_crossfade_alpha(92, frame_count=100, crossfade_frames=8) == 0.125
+    assert loop_crossfade_alpha(95, frame_count=100, crossfade_frames=8) == 0.5
+    assert loop_crossfade_alpha(99, frame_count=100, crossfade_frames=8) == 1.0
+
+
+def test_quicktalk_idle_video_crossfade_is_bounded_for_short_sources() -> None:
+    assert loop_crossfade_alpha(5, frame_count=8, crossfade_frames=20) == 0.0
+    assert loop_crossfade_alpha(6, frame_count=8, crossfade_frames=20) == 0.5
+    assert loop_crossfade_alpha(7, frame_count=8, crossfade_frames=20) == 1.0
 
 
 def test_quicktalk_speech_reset_starts_the_next_motion_template() -> None:
