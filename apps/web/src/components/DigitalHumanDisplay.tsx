@@ -482,8 +482,7 @@ export function DigitalHumanDisplay({
                 ))}
               </div>
 
-              {!subtitleActive ? (
-                  <div className="digital-display-chat-input" data-prompt={english ? "Ask another question" : "继续提问"}>
+              <div className="digital-display-chat-input" data-prompt={english ? "Ask another question" : "继续提问"}>
                     {inputMode === "voice" ? (
                         <ChatInput
                             compact
@@ -537,8 +536,7 @@ export function DigitalHumanDisplay({
                           {english ? "Voice" : "语音输入"}
                         </button>
                     ) : null}
-                  </div>
-              ) : null}
+              </div>
             </section>
 
             {presentationActive ? (

@@ -23,6 +23,16 @@ def test_a_stale_subtitle_only_hides_chat_while_a_presentation_is_active() -> No
     assert "const subtitleActive = presentationActive && Boolean(subtitle?.trim());" in source
 
 
+def test_presentation_subtitle_keeps_voice_input_mounted_and_visible() -> None:
+    source = DISPLAY_SOURCE.read_text(encoding="utf-8")
+    styles = STYLE_SOURCE.read_text(encoding="utf-8")
+    input_start = source.index('<div className="digital-display-chat-input"')
+
+    assert "!subtitleActive" not in source[input_start - 80:input_start]
+    assert ".digital-display-chat-panel.is-subtitle-active { display: flex; }" in styles
+    assert ".digital-display-chat-panel.is-subtitle-active { display: none; }" not in styles
+
+
 def test_closing_registration_does_not_restore_the_dismissed_product_card() -> None:
     source = APP_SOURCE.read_text(encoding="utf-8")
 

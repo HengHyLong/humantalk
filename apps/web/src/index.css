@@ -194,7 +194,7 @@ body {
 .digital-display-chat-panel.is-conversation-hidden .digital-display-chat-feed,
 .digital-display-chat-panel.is-conversation-hidden .digital-display-chat-suggestions { display: none; }
 .digital-display-chat-panel.is-presentation-hidden { right: 5%; bottom: 3%; left: 5%; max-height: none; border-color: rgba(159, 228, 255, .25); padding: 6px; background: rgba(2, 30, 76, .34); box-shadow: 0 12px 28px rgba(1, 16, 58, .18); }
-.digital-display-chat-panel.is-subtitle-active { display: none; }
+.digital-display-chat-panel.is-subtitle-active { display: flex; }
 .digital-display-chat-panel.is-presentation-hidden .digital-display-chat-input { border-color: rgba(181, 232, 255, .4); background: rgba(2, 30, 76, .72); }
 .digital-display-chat-panel.is-presentation-hidden .digital-display-chat-input::before { align-self: center; flex: 0 0 auto; color: rgba(218, 247, 255, .84); content: attr(data-prompt); font-size: 10px; font-weight: 700; white-space: nowrap; }
 .digital-display-chat-reveal { align-self: flex-end; border: 1px solid rgba(181, 232, 255, .4); border-radius: 999px; padding: 7px 12px; color: #dcf7ff; background: rgba(2, 45, 98, .72); font-size: 10px; cursor: pointer; backdrop-filter: blur(8px); }
