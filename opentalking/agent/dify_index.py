@@ -5,6 +5,7 @@ import logging
 import threading
 from pathlib import Path
 from typing import Any
+from urllib.parse import urljoin, urlparse
 
 import httpx
 
@@ -506,6 +507,25 @@ class DifyKnowledgeIndex:
         except (TypeError, ValueError):
             data = response.get("data", [])
             return len(data) if isinstance(data, list) else 0
+
+    def get_document_download_url(self, *, kb_id: str, document_id: str) -> str:
+        """Return Dify's short-lived URL for an uploaded source document."""
+
+        dataset_id = self._require_dataset(kb_id)
+        clean_document_id = document_id.strip()
+        if not clean_document_id:
+            raise ValueError("knowledge document id is required")
+        response = self._request_json(
+            "GET",
+            f"/datasets/{dataset_id}/documents/{clean_document_id}/download",
+        )
+        raw_url = str(response.get("url") or "").strip()
+        if not raw_url:
+            raise DifyKnowledgeError("Dify 未返回文档查看地址")
+        download_url = urljoin(f"{self.base_url}/", raw_url)
+        if urlparse(download_url).scheme not in {"http", "https"}:
+            raise DifyKnowledgeError("Dify 返回了无效的文档查看地址")
+        return download_url
 
     def get_indexing_status(self, *, kb_id: str, batch_id: str) -> dict[str, Any]:
         dataset_id = self._require_dataset(kb_id)

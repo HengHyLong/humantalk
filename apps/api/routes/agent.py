@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from pydantic import BaseModel, Field
 
 from opentalking.agent.dify_index import DifyKnowledgeError, DifyKnowledgeIndex
@@ -782,9 +782,24 @@ async def delete_knowledge_document(kb_id: str, doc_id: str) -> DeleteKnowledgeD
     return DeleteKnowledgeDocumentResponse(deleted=True)
 
 
-async def _knowledge_document_response(kb_id: str, doc_id: str) -> FileResponse:
+async def _knowledge_document_response(kb_id: str, doc_id: str) -> Response:
+    store = default_knowledge_store()
+    if isinstance(store.knowledge_index, DifyKnowledgeIndex):
+        try:
+            download_url = store.knowledge_index.get_document_download_url(
+                kb_id=kb_id,
+                document_id=doc_id,
+            )
+        except DifyKnowledgeError as exc:
+            raise HTTPException(
+                status_code=exc.status_code,
+                detail={"code": exc.code, "detail": str(exc)},
+            ) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return RedirectResponse(download_url, status_code=307)
     try:
-        stored = await default_knowledge_store().get_document_content(kb_id=kb_id, doc_id=doc_id)
+        stored = await store.get_document_content(kb_id=kb_id, doc_id=doc_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="knowledge document not found") from exc
     except ValueError as exc:

@@ -96,6 +96,29 @@ def test_file_upload_uses_server_side_bearer_key(tmp_path, monkeypatch):
     }
 
 
+def test_document_download_resolves_signed_dify_url(tmp_path, monkeypatch):
+    calls: list[tuple[str, str]] = []
+
+    def fake_request(method: str, url: str, **kwargs: object) -> httpx.Response:
+        del kwargs
+        calls.append((method, url))
+        return _response({"url": "https://files.example.test/signed/document.pdf"})
+
+    monkeypatch.setattr(httpx, "request", fake_request)
+    url = _index(tmp_path).get_document_download_url(
+        kb_id="kb-001",
+        document_id="remote-doc-1",
+    )
+
+    assert url == "https://files.example.test/signed/document.pdf"
+    assert calls == [
+        (
+            "GET",
+            "http://dify.test/v1/datasets/dataset-001/documents/remote-doc-1/download",
+        )
+    ]
+
+
 def test_discovery_includes_datasets_created_in_dify_console(tmp_path, monkeypatch):
     def fake_request(method: str, url: str, **kwargs: object) -> httpx.Response:
         assert method == "GET"

@@ -1134,6 +1134,45 @@ async def test_agent_knowledge_document_routes_accept_pptx(
 
 
 @pytest.mark.asyncio
+async def test_dify_knowledge_document_view_redirects_to_signed_source_url(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    index = DifyKnowledgeIndex(
+        root=tmp_path,
+        base_url="http://dify.test/v1",
+        api_key="server-only-key",
+        dataset_map={"kb-001": "dataset-001"},
+    )
+    monkeypatch.setattr(
+        index,
+        "get_document_download_url",
+        lambda **kwargs: "https://files.example.test/signed/document.pdf",
+    )
+    store = KnowledgeStore(
+        db_path=tmp_path / "agent.sqlite",
+        knowledge_root=tmp_path / "knowledge",
+        knowledge_index=index,
+    )
+    monkeypatch.setattr(agent_routes, "default_knowledge_store", lambda: store)
+
+    app = FastAPI()
+    app.include_router(agent_routes.router)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(
+        transport=transport,
+        base_url="http://testserver",
+        follow_redirects=False,
+    ) as client:
+        response = await client.get(
+            "/agent/knowledge-bases/kb-001/documents/remote-doc-1/file"
+        )
+
+    assert response.status_code == 307
+    assert response.headers["location"] == "https://files.example.test/signed/document.pdf"
+
+
+@pytest.mark.asyncio
 async def test_agent_knowledge_document_routes_reject_duplicate_kb_upload(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
