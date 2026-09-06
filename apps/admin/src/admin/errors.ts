@@ -63,6 +63,23 @@ export function toUiError(input: unknown): UiError {
   return { code: normalized, message: SAFE_MESSAGES[normalized], requestId, retryable: normalized === "NETWORK_ERROR" || normalized === "TIMEOUT" || normalized === "INTERNAL_ERROR" || normalized === "UNKNOWN_ERROR" };
 }
 
+/**
+ * Login is an unauthenticated surface. Never show a backend-provided message
+ * here because it can contain request values, internal addresses or exception
+ * details. Account lookup failures intentionally share one message to avoid
+ * revealing whether a username exists.
+ */
+export function toLoginUiError(input: unknown): UiError {
+  const error = toUiError(input);
+  if (error.code === "NETWORK_ERROR" || error.code === "TIMEOUT" || error.code === "INTERNAL_ERROR" || error.code === "UNKNOWN_ERROR") {
+    return { ...error, message: "登录服务暂时不可用，请稍后重试" };
+  }
+  if (error.code === "VALIDATION_ERROR") {
+    return { ...error, message: "登录信息格式不正确，请重新输入" };
+  }
+  return { ...error, message: "用户名或密码错误" };
+}
+
 export function toSafeRequestError(status: number, payload: unknown, requestId?: string): AdminRequestError {
   const body = payload as { code?: unknown; message?: unknown; detail?: unknown } | null;
   const code = typeof body?.code === "string" ? body.code : undefined;

@@ -51,6 +51,8 @@ _SAFE_BUSINESS_MESSAGES = {
 
 def _safe_http_message(status_code: int, detail: object) -> tuple[str, str]:
     if status_code == 401:
+        if isinstance(detail, dict) and detail.get("code") == "INVALID_CREDENTIALS":
+            return "INVALID_CREDENTIALS", "用户名或密码错误"
         return "AUTH_REQUIRED", "登录状态已失效，请重新登录"
     if status_code == 403:
         return "FORBIDDEN", "当前账号没有权限执行此操作"

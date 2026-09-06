@@ -37,6 +37,22 @@ def test_create_app_accepts_supported_cors_formats(
     assert unified_cors.kwargs["allow_origins"] == expected
 
 
+def test_login_failure_message_does_not_expose_request_parameters() -> None:
+    code, message = api_main._safe_http_message(
+        401,
+        {
+            "code": "INVALID_CREDENTIALS",
+            "detail": "username=admin password=secret host=10.0.0.8",
+        },
+    )
+
+    assert code == "INVALID_CREDENTIALS"
+    assert message == "用户名或密码错误"
+    assert "admin" not in message
+    assert "secret" not in message
+    assert "10.0.0.8" not in message
+
+
 def test_unified_entrypoint_registers_admin_and_exhibition_routes(monkeypatch: pytest.MonkeyPatch) -> None:
     settings = Settings(admin_initialize_defaults=False)
     monkeypatch.setattr(unified_main, "get_settings", lambda: settings)
