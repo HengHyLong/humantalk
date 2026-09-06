@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { buildApiUrl } from "../lib/api";
+import { pickNextSource, sourcePoolFor, type MotionPlaybackState, type MotionVideoDriver } from "../lib/motionPlaylist";
 
 // Keep the source files in examples/avatars/video so the browser build uses
 // the same default assets as the rest of the repository.
@@ -7,14 +8,9 @@ const LISTEN_VIDEO_URL = new URL("../../../../examples/avatars/video/listen.mp4"
 const THINK_VIDEO_URL = new URL("../../../../examples/avatars/video/think.mp4", import.meta.url).href;
 const TALK_VIDEO_URL = new URL("../../../../examples/avatars/video/talk.mp4", import.meta.url).href;
 
-export type VideoDriverState = "idle" | "welcome" | "listen" | "think" | "talk" | "emphasis";
+export type VideoDriverState = MotionPlaybackState;
 type VideoSlot = 0 | 1;
-type VideoDriver = {
-  listen_url?: string | null;
-  think_url?: string | null;
-  talk_url?: string | null;
-  states?: Partial<Record<VideoDriverState, string[]>>;
-};
+type VideoDriver = MotionVideoDriver;
 
 type VideoAvatarProps = {
   state: VideoDriverState;
@@ -31,38 +27,10 @@ function defaultSourceFor(state: VideoDriverState): string {
   return LISTEN_VIDEO_URL;
 }
 
-function uniqueSources(items: Array<string | null | undefined>): string[] {
-  return [...new Set(items.filter((item): item is string => Boolean(item)).map((item) => (
-    item.startsWith("/") ? buildApiUrl(item) : item
-  )))];
-}
-
-function sourcePoolFor(state: VideoDriverState, driver?: VideoDriver | null): string[] {
-  const configured = driver?.states ?? {};
-  if (state === "talk") {
-    return uniqueSources([...(configured.talk ?? []), ...(configured.emphasis ?? []), driver?.talk_url]);
-  }
-  if (state === "emphasis") {
-    return uniqueSources([...(configured.emphasis ?? []), ...(configured.talk ?? []), driver?.talk_url]);
-  }
-  if (state === "welcome") {
-    return uniqueSources([...(configured.welcome ?? []), ...(configured.listen ?? []), driver?.listen_url]);
-  }
-  if (state === "idle" || state === "listen") {
-    return uniqueSources([...(configured[state] ?? []), ...(configured.idle ?? []), ...(configured.listen ?? []), driver?.listen_url]);
-  }
-  return uniqueSources([...(configured.think ?? []), driver?.think_url]);
-}
-
-function pickNextSource(pool: string[], current: string): string {
-  const candidates = pool.length > 1 ? pool.filter((source) => source !== current) : pool;
-  return candidates[Math.floor(Math.random() * candidates.length)] ?? current;
-}
-
 export function VideoAvatar({ state, videoDriver, className, style, fallbackToDefault = true, onReady }: VideoAvatarProps) {
   const fallbackSource = defaultSourceFor(state);
   const sourcePool = useMemo(() => {
-    const configured = sourcePoolFor(state, videoDriver);
+    const configured = sourcePoolFor(state, videoDriver).map((item) => item.startsWith("/") ? buildApiUrl(item) : item);
     return configured.length ? configured : fallbackToDefault ? [fallbackSource] : [];
   }, [fallbackSource, fallbackToDefault, state, videoDriver]);
   const sourcePoolKey = sourcePool.join("\n");

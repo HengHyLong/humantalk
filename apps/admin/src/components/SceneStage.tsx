@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
 import type { ClientRendererDescriptor, SceneBackgroundAsset, SceneComposition } from "../lib/api";
 import { buildApiUrl } from "../lib/api";
+import { mergeMotionDrivers } from "../lib/motionPlaylist";
 import { Light2dAvatar } from "./Light2dAvatar";
 import { VideoAvatar, type VideoDriverState } from "./VideoAvatar";
 import { VideoBackground } from "./VideoBackground";
@@ -142,6 +143,10 @@ export function SceneStage({
       (clips ?? []).map((clip) => clip.url),
     ]),
   ) as Partial<Record<VideoDriverState, string[]>>, [motionDriverAssets]);
+  const mergedVideoDriverAssets = useMemo(
+    () => mergeMotionDrivers(videoDriverAssets, motionDriverAssets),
+    [motionDriverAssets, videoDriverAssets],
+  );
   const motionOverlaySources = videoState === "welcome"
     ? [...(motionStateUrls.welcome ?? []), ...(motionStateUrls.listen ?? [])]
     : videoState === "listen" || videoState === "idle"
@@ -200,7 +205,7 @@ export function SceneStage({
           {videoDriver ? (
             <VideoAvatar
               state={videoState}
-              videoDriver={videoDriverAssets}
+              videoDriver={mergedVideoDriverAssets}
               className={`absolute inset-0 h-full w-full ${avatarFit} ${avatarObjectPosition}`}
               style={avatarMaskStyle}
             />

@@ -1,7 +1,39 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { pickNextSource, shouldLoopSourcePool, sourcePoolFor } from "../src/lib/motionPlaylist";
+import { mergeMotionDrivers, pickNextSource, shouldLoopSourcePool, sourcePoolFor } from "../src/lib/motionPlaylist";
+
+test("motion-only avatars provide their clips to the video driver", () => {
+  const driver = mergeMotionDrivers(null, {
+    states: {
+      listen: [{ url: "/listen-a" }, { url: "/listen-b" }],
+      talk: [{ url: "/talk-a" }],
+    },
+  });
+
+  assert.deepEqual(sourcePoolFor("listen", driver), ["/listen-a", "/listen-b"]);
+  assert.deepEqual(sourcePoolFor("talk", driver), ["/talk-a"]);
+});
+
+test("a motion-only avatar remains visible when the current state has no dedicated clip", () => {
+  const driver = mergeMotionDrivers(null, {
+    states: { talk: [{ url: "/talk-a" }] },
+  });
+
+  assert.deepEqual(sourcePoolFor("listen", driver), ["/talk-a"]);
+  assert.deepEqual(sourcePoolFor("think", driver), ["/talk-a"]);
+});
+
+test("motion clips augment legacy video-driver clips without duplicates", () => {
+  const driver = mergeMotionDrivers({
+    listen_url: "/legacy-listen",
+    states: { talk: ["/talk-a"] },
+  }, {
+    states: { talk: [{ url: "/talk-a" }, { url: "/talk-b" }] },
+  });
+
+  assert.deepEqual(driver?.states?.talk, ["/talk-a", "/talk-b"]);
+});
 
 test("talk state mixes normal and emphasis clips", () => {
   const sources = sourcePoolFor("talk", {
@@ -34,6 +66,14 @@ test("welcome falls back to avatar-specific listening clips", () => {
 
   assert.ok(sources.some((source) => source.endsWith("/listen-a")));
   assert.ok(sources.some((source) => source.endsWith("/legacy-listen")));
+});
+
+test("think falls back to avatar-specific idle clips", () => {
+  const sources = sourcePoolFor("think", {
+    states: { idle: ["/idle-a"] },
+  });
+
+  assert.deepEqual(sources, ["/idle-a"]);
 });
 
 test("a duplicated single idle source uses the native video loop", () => {

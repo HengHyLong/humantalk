@@ -16,6 +16,7 @@ import type { ModelStatus } from "../lib/modelStatus";
 import { modelLabel } from "../lib/modelLabels";
 import { beginAdminProgress, finishAdminProgress, notifyAdmin, updateAdminProgress } from "./feedback";
 import { waitForSessionReady } from "../lib/sessionReadiness";
+import { mergeMotionDrivers } from "../lib/motionPlaylist";
 
 type ConnectionState = "idle" | "connecting" | "queued" | "live" | "error";
 type ChatMessage = Message;
@@ -389,6 +390,10 @@ export function RealtimeTestWorkspace({ initialAvatarId = "" }: { initialAvatarI
       (clips ?? []).map((clip) => clip.url),
     ])),
   }), [selectedAvatar]);
+  const selectedVideoDriver = useMemo(
+    () => mergeMotionDrivers(selectedAvatar?.video_driver, selectedAvatar?.motion_driver),
+    [selectedAvatar],
+  );
   const selectedMotionSources = videoState === "welcome"
     ? [...(selectedMotionDriver.states.welcome ?? []), ...(selectedMotionDriver.states.listen ?? [])]
     : videoState === "listen" || videoState === "idle"
@@ -461,7 +466,7 @@ export function RealtimeTestWorkspace({ initialAvatarId = "" }: { initialAvatarI
               {isAvatarDebug ? <button type="button" onClick={() => window.history.back()} className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-cyan-300 hover:text-cyan-700">更换形象</button> : null}
             </div>
             {selectedAvatar && !sessionId && model !== VIDEO_DRIVER ? <img src={buildApiUrl(`/avatars/${encodeURIComponent(selectedAvatar.id)}/preview`)} alt={selectedAvatar.name || selectedAvatar.id} className="max-h-[720px] max-w-full object-contain" /> : null}
-            {model === VIDEO_DRIVER ? <VideoAvatar state={videoState} videoDriver={selectedAvatar?.video_driver} className="max-h-[720px] max-w-full object-contain" /> : null}
+            {model === VIDEO_DRIVER ? <VideoAvatar state={videoState} videoDriver={selectedVideoDriver} className="max-h-[720px] max-w-full object-contain" /> : null}
             {showMotionOverlay ? <VideoAvatar state={videoState} videoDriver={selectedMotionDriver} fallbackToDefault={false} className="max-h-[720px] max-w-full object-contain" /> : null}
             <video ref={videoRef} autoPlay playsInline className={model === VIDEO_DRIVER ? "pointer-events-none absolute h-px w-px opacity-0" : `max-h-[720px] max-w-full object-contain ${sessionId && !showMotionOverlay ? "opacity-100" : "pointer-events-none absolute opacity-0"}`} />
             {startupLoading ? <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-white/85 backdrop-blur-[2px]" role="status" aria-live="polite"><div className="flex h-14 w-14 items-center justify-center rounded-full border border-cyan-100 bg-cyan-50 shadow-sm"><span className="h-7 w-7 animate-spin rounded-full border-[3px] border-cyan-200 border-t-cyan-600" /></div><p className="mt-4 text-sm font-semibold text-slate-800">{startupLabel}</p><p className="mt-1 text-xs text-slate-500">数字人舞台正在准备，请稍候…</p></div> : null}
