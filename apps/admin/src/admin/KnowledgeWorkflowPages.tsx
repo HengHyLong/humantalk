@@ -4,6 +4,7 @@ import { Badge, Button, Card, Detail, Field, Header, Modal } from "./CrudPages";
 import { toUiError } from "./errors";
 import { EmptyState, ErrorState, LoadingSkeleton, useToast } from "./ui";
 import type { Exhibition, KnowledgeQa, MissPoolItem, PublishPackage, ScriptTemplate } from "./types";
+import { resolveScriptExhibitionId } from "./scriptForm";
 
 const selectClass = "mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-normal text-slate-800 outline-none focus:border-cyan-400";
 
@@ -169,6 +170,7 @@ export function OfficialScriptPage() {
   }, []);
   useEffect(() => { void reload(); }, [reload]);
   const scopedItems = useMemo(() => items.filter((item) => belongsToExhibition(item, scope, exhibitions)), [items, scope, exhibitions]);
+  const exhibitionIds = useMemo(() => exhibitions.map((item) => item.id), [exhibitions]);
 
   const startCreate = () => {
     if (!scope) return;
@@ -177,11 +179,12 @@ export function OfficialScriptPage() {
   };
   const save = async () => {
     if (!editing) return;
-    if (!editing.exhibitionId || !editing.name.trim() || !editing.content.trim()) { setActionError("请选择所属展会，并填写话术名称和内容。"); return; }
+    const selectedExhibitionId = resolveScriptExhibitionId(exhibitionIds, editing.exhibitionId, scope);
+    if (!selectedExhibitionId || !editing.name.trim() || !editing.content.trim()) { setActionError("请选择所属展会，并填写话术名称和内容。"); return; }
     setSaving(true);
     setActionError("");
     try {
-      const saved = await adminApi.saveScript({ ...editing, exhibition: exhibitionName(exhibitions, editing.exhibitionId), updatedAt: new Date().toISOString() });
+      const saved = await adminApi.saveScript({ ...editing, exhibitionId: selectedExhibitionId, exhibition: exhibitionName(exhibitions, selectedExhibitionId), updatedAt: new Date().toISOString() });
       setItems((current) => [saved, ...current.filter((item) => item.id !== saved.id)]);
       setEditing(null);
       pushToast("官方话术已保存。", "success");
@@ -205,7 +208,7 @@ export function OfficialScriptPage() {
     <Card className="mb-5 p-4"><div className="flex flex-wrap items-end justify-between gap-4"><ScopeSelect exhibitions={exhibitions} value={scope} onChange={setScope} /><p className="max-w-xl text-xs leading-5 text-slate-500">迎宾话术保存后，还需在“交互管理 → 语音接待”中选择该模板，才能成为数字人的启动欢迎语。</p></div></Card>
     <PageError message={actionError} />
     {loading ? <Card className="p-5"><LoadingSkeleton /></Card> : loadError ? <ErrorState description={loadError} onRetry={() => void reload()} /> : scopedItems.length === 0 ? <Card><EmptyState title="当前展会暂无官方话术" description="先创建 CNCC 的迎宾或讲解话术。" action={<Button onClick={startCreate}>添加第一条话术</Button>} /></Card> : <div className="grid gap-5 lg:grid-cols-2">{scopedItems.map((item) => <Card key={item.id} className="p-5"><div className="flex items-start justify-between gap-3"><div><h3 className="font-semibold text-slate-900">{item.name}</h3><p className="mt-1 text-xs text-slate-400">{sceneLabels[item.scene]} · {item.exhibition}</p></div><Badge tone={item.status === "active" ? "green" : "slate"}>{item.status === "active" ? "启用" : "停用"}</Badge></div><p className="mt-4 min-h-24 whitespace-pre-wrap rounded-xl bg-slate-50 p-4 text-sm leading-6 text-slate-600">{item.content}</p><div className="mt-4 flex flex-wrap justify-end gap-1"><Button variant="ghost" onClick={() => setDetail(item)}>详情</Button><Button variant="secondary" onClick={() => { setEditing(item); setActionError(""); }}>编辑</Button><Button variant="secondary" onClick={() => void toggle(item)}>{item.status === "active" ? "停用" : "启用"}</Button><Button variant="danger" onClick={() => void remove(item)}>删除</Button></div></Card>)}</div>}
-    {editing ? <Modal title="官方话术表单" onClose={() => { setEditing(null); setActionError(""); }} onSave={() => void save()} saving={saving} error={actionError}><label className="block text-xs font-semibold text-slate-600">所属展会<select value={editing.exhibitionId || scope} onChange={(event) => setEditing({ ...editing, exhibitionId: event.target.value, exhibition: exhibitionName(exhibitions, event.target.value) })} className={selectClass}>{exhibitions.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label><div className="mt-4"><Field label="话术名称" required value={editing.name} onChange={(value) => setEditing({ ...editing, name: value })} /></div><div className="mt-4 grid gap-4 sm:grid-cols-2"><label className="text-xs font-semibold text-slate-600">使用场景<select value={editing.scene} onChange={(event) => setEditing({ ...editing, scene: event.target.value as ScriptTemplate["scene"] })} className={selectClass}><option value="welcome">迎宾</option><option value="explain">讲解</option><option value="shopping">导购</option><option value="emergency">应急</option></select></label><label className="text-xs font-semibold text-slate-600">状态<select value={editing.status} onChange={(event) => setEditing({ ...editing, status: event.target.value as ScriptTemplate["status"] })} className={selectClass}><option value="active">启用</option><option value="inactive">停用</option></select></label></div><div className="mt-4"><Field label="话术内容" required textarea value={editing.content} onChange={(value) => setEditing({ ...editing, content: value })} placeholder="可使用 {exhibition_name} 等由交互端支持的占位符。" /></div></Modal> : null}
+    {editing ? <Modal title="官方话术表单" onClose={() => { setEditing(null); setActionError(""); }} onSave={() => void save()} saving={saving} error={actionError}><label className="block text-xs font-semibold text-slate-600">所属展会<select value={resolveScriptExhibitionId(exhibitionIds, editing.exhibitionId, scope)} onChange={(event) => setEditing({ ...editing, exhibitionId: event.target.value, exhibition: exhibitionName(exhibitions, event.target.value) })} className={selectClass}>{exhibitions.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label><div className="mt-4"><Field label="话术名称" required value={editing.name} onChange={(value) => setEditing({ ...editing, name: value })} /></div><div className="mt-4 grid gap-4 sm:grid-cols-2"><label className="text-xs font-semibold text-slate-600">使用场景<select value={editing.scene} onChange={(event) => setEditing({ ...editing, scene: event.target.value as ScriptTemplate["scene"] })} className={selectClass}><option value="welcome">迎宾</option><option value="explain">讲解</option><option value="shopping">导购</option><option value="emergency">应急</option></select></label><label className="text-xs font-semibold text-slate-600">状态<select value={editing.status} onChange={(event) => setEditing({ ...editing, status: event.target.value as ScriptTemplate["status"] })} className={selectClass}><option value="active">启用</option><option value="inactive">停用</option></select></label></div><div className="mt-4"><Field label="话术内容" required textarea value={editing.content} onChange={(value) => setEditing({ ...editing, content: value })} placeholder="可使用 {exhibition_name} 等由交互端支持的占位符。" /></div></Modal> : null}
     {detail ? <Detail title="官方话术详情" onClose={() => setDetail(null)} rows={[["名称", detail.name], ["所属展会", detail.exhibition], ["场景", sceneLabels[detail.scene]], ["状态", detail.status === "active" ? "启用" : "停用"], ["内容", <span className="whitespace-pre-wrap">{detail.content}</span>], ["更新时间", detail.updatedAt]]} /> : null}
   </div>;
 }

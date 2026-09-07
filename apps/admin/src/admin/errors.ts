@@ -60,7 +60,10 @@ const ADMIN_RESOURCE_LABELS: Record<string, string> = {
 };
 
 const SAFE_BUSINESS_MESSAGES: Record<string, string> = {
-  EXHIBITION_REQUIRED: "交互配置必须关联展会",
+  EXHIBITION_REQUIRED: "请选择有效的所属展会",
+  SCRIPT_CONTENT_REQUIRED: "话术名称和内容不能为空",
+  SCRIPT_SCENE_INVALID: "请选择有效的话术使用场景",
+  SCRIPT_STATUS_INVALID: "请选择有效的话术状态",
   WAKE_WORD_REQUIRED: "启用唤醒词后至少需要配置一个唤醒词",
   WAKE_WORD_LIMIT_EXCEEDED: "唤醒词最多配置 5 个",
   WAKE_WORD_LENGTH_INVALID: "每个唤醒词应为 2～12 个字符",

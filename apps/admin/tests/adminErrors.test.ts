@@ -60,6 +60,13 @@ test("authenticated admin forms show whitelisted FastAPI business errors", () =>
   assert.equal(error.requestId, "trace-welcome");
 });
 
+test("script validation errors show safe actionable messages", () => {
+  assert.equal(toSafeRequestError(422, { detail: { code: "EXHIBITION_REQUIRED" } }).message, "请选择有效的所属展会");
+  assert.equal(toSafeRequestError(422, { detail: { code: "SCRIPT_CONTENT_REQUIRED" } }).message, "话术名称和内容不能为空");
+  assert.equal(toSafeRequestError(422, { detail: { code: "SCRIPT_SCENE_INVALID" } }).message, "请选择有效的话术使用场景");
+  assert.equal(toSafeRequestError(422, { detail: { code: "SCRIPT_STATUS_INVALID" } }).message, "请选择有效的话术状态");
+});
+
 test("unknown validation details remain masked", () => {
   const error = toSafeRequestError(400, {
     detail: {

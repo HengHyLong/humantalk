@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { adminApi } from "./api";
 import { Badge, Button, Card, Field, Header, Modal, Pagination, usePagination } from "./CrudPages";
 import type { AdminUser, Exhibition, Exhibit, ExplainFlow, ScriptTemplate, ShoppingStrategy, WelcomeConfig } from "./types";
+import { formatWakeWordsInput, parseWakeWordsInput } from "./wakeWordsInput";
 
 type Props = { user: AdminUser; canWrite: boolean; initialExhibitionId?: string };
 const statusLabel = (status: "active" | "inactive") => status === "active" ? "已启用" : "已停用";
@@ -40,6 +41,7 @@ export function WelcomeConfigPage({ canWrite, initialExhibitionId }: Props) {
   const [items, setItems] = useState<WelcomeConfig[]>([]);
   const [exhibitionId, setExhibitionId] = useState(initialExhibitionId || "all");
   const [editing, setEditing] = useState<WelcomeConfig | null>(null);
+  const [wakeWordsInput, setWakeWordsInput] = useState("");
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
 
@@ -52,7 +54,9 @@ export function WelcomeConfigPage({ canWrite, initialExhibitionId }: Props) {
     setExhibitions(events);
     setScripts(scriptItems);
     setItems(configs);
-    setEditing(configs[0] || null);
+    const selected = configs[0] || null;
+    setEditing(selected);
+    setWakeWordsInput(formatWakeWordsInput(selected?.wakeWords || []));
     setError("");
   };
   useEffect(() => { void load(); }, [exhibitionId]);
@@ -64,7 +68,7 @@ export function WelcomeConfigPage({ canWrite, initialExhibitionId }: Props) {
   const create = () => {
     const event = exhibitions.find((item) => item.id === (exhibitionId === "all" ? exhibitions[0]?.id : exhibitionId)) || exhibitions[0];
     if (!event) return;
-    setEditing({
+    const next: WelcomeConfig = {
       id: `welcome-config-${Date.now()}`,
       exhibitionId: event.id,
       exhibitionName: event.name,
@@ -78,7 +82,9 @@ export function WelcomeConfigPage({ canWrite, initialExhibitionId }: Props) {
       routingStrategy: "",
       status: "inactive",
       updatedAt: "",
-    });
+    };
+    setEditing(next);
+    setWakeWordsInput(formatWakeWordsInput(next.wakeWords));
     setError("");
   };
   const save = async () => {
@@ -93,6 +99,7 @@ export function WelcomeConfigPage({ canWrite, initialExhibitionId }: Props) {
       const next = await adminApi.saveWelcomeConfig(current);
       setItems((list) => [next, ...list.filter((item) => item.id !== next.id)]);
       setEditing(next);
+      setWakeWordsInput(formatWakeWordsInput(next.wakeWords));
       setError("");
       setSaved(true);
       window.setTimeout(() => setSaved(false), 1800);
@@ -105,14 +112,14 @@ export function WelcomeConfigPage({ canWrite, initialExhibitionId }: Props) {
     <Header eyebrow="交互管理 / 场景策略" title="欢迎配置" description="配置终端启动、用户靠近和唤醒词触发的迎宾内容及现场分流。" action={<div className="flex gap-2"><Button variant="secondary" onClick={create} disabled={!canWrite}>+ 新建配置</Button><Button onClick={() => void save()} disabled={!canWrite || !current}>保存配置</Button></div>} />
     {saved ? <p className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs text-emerald-700">欢迎配置已通过 Admin API 保存到 SQLite。</p> : null}
     {error ? <p className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-700">{error}</p> : null}
-    <Card className="p-4"><ExhibitionPicker exhibitions={exhibitions} value={exhibitionId} onChange={(value) => { setExhibitionId(value); setEditing(null); }} /></Card>
+    <Card className="p-4"><ExhibitionPicker exhibitions={exhibitions} value={exhibitionId} onChange={(value) => { setExhibitionId(value); setEditing(null); setWakeWordsInput(""); }} /></Card>
     {current ? <Card className="mt-4 p-5">
       <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs text-slate-400">当前配置 · {current.exhibitionName}</p><h2 className="mt-1 text-lg font-semibold text-slate-900">迎宾触发与内容编排</h2></div><div className="flex items-center gap-2 text-xs text-slate-500"><Toggle checked={current.status === "active"} disabled={!canWrite} onChange={(value) => setEditing({ ...current, status: value ? "active" : "inactive" })} /><span>{statusLabel(current.status)}</span></div></div>
       <div className="mt-5 grid gap-5 lg:grid-cols-2">
         <div className="space-y-4">
           <p className="text-xs font-semibold text-slate-600">迎宾触发条件</p>
           <div className="grid gap-2 sm:grid-cols-3">{["终端启动", "用户靠近", "唤醒词"].map((trigger) => <label key={trigger} className={`flex items-center gap-2 rounded-xl border px-3 py-3 text-xs ${current.triggers.includes(trigger) ? "border-cyan-300 bg-cyan-50 text-cyan-700" : "border-slate-200 text-slate-500"}`}><input type="checkbox" checked={current.triggers.includes(trigger)} disabled={!canWrite} onChange={(event) => { const next = current.triggers.filter((item) => item !== trigger); setEditing({ ...current, triggers: event.target.checked ? [...next, trigger] : next }); setError(""); }} />{trigger}</label>)}</div>
-          {current.triggers.includes("唤醒词") ? <div className="space-y-4"><div><Field label="唤醒词（逗号或换行分隔）" value={current.wakeWords.join("、")} onChange={(value) => { setEditing({ ...current, wakeWords: [...new Set(splitLines(value))] }); setError(""); }} placeholder="你好小展、小展小展" /><p className="mt-2 text-[11px] text-slate-400">最多 5 个，每个 2～12 个字符。数字人处于休眠状态时，只响应包含唤醒词的语音。</p></div><label className="block text-xs font-semibold text-slate-600">无对话进入休眠时间（秒）<input type="number" min={10} max={600} step={1} value={current.wakeActiveSeconds} onChange={(event) => { setEditing({ ...current, wakeActiveSeconds: Number(event.target.value) }); setError(""); }} className="mt-2 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm font-normal text-slate-800 outline-none focus:border-cyan-400" /><p className="mt-2 text-[11px] font-normal text-slate-400">唤醒后，每次有效语音对话都会重新计时；连续无对话达到该时长后再次进入休眠。范围 10～600 秒。</p></label></div> : null}
+          {current.triggers.includes("唤醒词") ? <div className="space-y-4"><div><Field label="唤醒词（逗号或换行分隔）" textarea value={wakeWordsInput} onChange={(value) => { setWakeWordsInput(value); setEditing({ ...current, wakeWords: parseWakeWordsInput(value) }); setError(""); }} placeholder={"你好小展\n小展小展"} /><p className="mt-2 text-[11px] text-slate-400">最多 5 个，每个 2～12 个字符。数字人处于休眠状态时，只响应包含唤醒词的语音。</p></div><label className="block text-xs font-semibold text-slate-600">无对话进入休眠时间（秒）<input type="number" min={10} max={600} step={1} value={current.wakeActiveSeconds} onChange={(event) => { setEditing({ ...current, wakeActiveSeconds: Number(event.target.value) }); setError(""); }} className="mt-2 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm font-normal text-slate-800 outline-none focus:border-cyan-400" /><p className="mt-2 text-[11px] font-normal text-slate-400">唤醒后，每次有效语音对话都会重新计时；连续无对话达到该时长后再次进入休眠。范围 10～600 秒。</p></label></div> : null}
           <Select label="迎宾话术模板" value={availableWelcomeScripts.some((script) => script.id === current.scriptId) ? current.scriptId : ""} onChange={(value) => { setEditing({ ...current, scriptId: value }); setError(""); }}><option value="">请选择当前展会已启用的迎宾话术</option>{availableWelcomeScripts.map((script) => <option key={script.id} value={script.id}>{script.name}</option>)}</Select>
           <Field label="展会亮点（逗号或换行分隔）" value={current.highlights.join("、")} onChange={(value) => setEditing({ ...current, highlights: splitLines(value) })} placeholder="智能制造展区、主论坛活动" />
         </div>

@@ -12,3 +12,10 @@ test("welcome configuration only offers active scripts for the current exhibitio
   assert.match(source, /请选择当前展会已启用的迎宾话术模板/);
   assert.match(source, /availableWelcomeScripts\.map/);
 });
+
+test("wake-word editor preserves delimiters while editing", () => {
+  assert.match(source, /const \[wakeWordsInput, setWakeWordsInput\] = useState/);
+  assert.match(source, /label="唤醒词（逗号或换行分隔）" textarea value=\{wakeWordsInput\}/);
+  assert.match(source, /setWakeWordsInput\(value\)/);
+  assert.match(source, /wakeWords: parseWakeWordsInput\(value\)/);
+});
