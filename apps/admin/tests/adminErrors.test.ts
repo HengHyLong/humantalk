@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { AdminRequestError, toAdminRequestLabel, toLoginUiError, toUiError } from "../src/admin/errors";
+import { AdminRequestError, toAdminRequestLabel, toLoginUiError, toSafeRequestError, toUiError } from "../src/admin/errors";
 
 test("maps backend statuses to safe UI messages", () => {
   assert.deepEqual(toUiError(new AdminRequestError("database password leaked", { status: 500, requestId: "trace-1" })), {
@@ -44,4 +44,29 @@ test("admin request labels never expose paths, ids or query parameters", () => {
   assert.equal(unknownLabel, "数据操作");
   assert.equal(unknownLabel.includes("secret"), false);
   assert.equal(unknownLabel.includes("record-123"), false);
+});
+
+test("authenticated admin forms show whitelisted FastAPI business errors", () => {
+  const error = toSafeRequestError(400, {
+    detail: {
+      code: "WELCOME_SCRIPT_INVALID",
+      detail: "internal raw detail must not be forwarded",
+    },
+  }, "trace-welcome");
+
+  assert.equal(error.code, "WELCOME_SCRIPT_INVALID");
+  assert.equal(error.message, "欢迎配置必须关联当前展会已启用的迎宾话术");
+  assert.equal(error.message.includes("internal"), false);
+  assert.equal(error.requestId, "trace-welcome");
+});
+
+test("unknown validation details remain masked", () => {
+  const error = toSafeRequestError(400, {
+    detail: {
+      code: "UNKNOWN_VALIDATION",
+      detail: "database=postgres://secret",
+    },
+  });
+  assert.equal(error.message, "请检查输入内容后重试");
+  assert.equal(error.message.includes("secret"), false);
 });

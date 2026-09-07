@@ -59,6 +59,15 @@ const ADMIN_RESOURCE_LABELS: Record<string, string> = {
   "audit-logs": "审计日志",
 };
 
+const SAFE_BUSINESS_MESSAGES: Record<string, string> = {
+  EXHIBITION_REQUIRED: "交互配置必须关联展会",
+  WAKE_WORD_REQUIRED: "启用唤醒词后至少需要配置一个唤醒词",
+  WAKE_WORD_LIMIT_EXCEEDED: "唤醒词最多配置 5 个",
+  WAKE_WORD_LENGTH_INVALID: "每个唤醒词应为 2～12 个字符",
+  WAKE_WINDOW_INVALID: "休眠时间必须为 10～600 秒的整数",
+  WELCOME_SCRIPT_INVALID: "欢迎配置必须关联当前展会已启用的迎宾话术",
+};
+
 /** Build a user-facing label without exposing URL paths, ids or query values. */
 export function toAdminRequestLabel(path: string, method: string): string {
   const pathname = path.split(/[?#]/, 1)[0] || "";
@@ -111,7 +120,15 @@ export function toLoginUiError(input: unknown): UiError {
 
 export function toSafeRequestError(status: number, payload: unknown, requestId?: string): AdminRequestError {
   const body = payload as { code?: unknown; message?: unknown; detail?: unknown } | null;
-  const code = typeof body?.code === "string" ? body.code : undefined;
-  const message = status === 401 ? SAFE_MESSAGES.AUTH_REQUIRED : status === 403 ? SAFE_MESSAGES.FORBIDDEN : status === 404 ? SAFE_MESSAGES.NOT_FOUND : status === 409 ? SAFE_MESSAGES.CONFLICT : status === 422 ? SAFE_MESSAGES.VALIDATION_ERROR : status >= 500 ? SAFE_MESSAGES.INTERNAL_ERROR : typeof body?.message === "string" && body.message.length < 160 ? body.message : SAFE_MESSAGES.UNKNOWN_ERROR;
+  const nested = body?.detail && typeof body.detail === "object"
+    ? body.detail as { code?: unknown; detail?: unknown }
+    : null;
+  const code = typeof nested?.code === "string"
+    ? nested.code
+    : typeof body?.code === "string"
+      ? body.code
+      : undefined;
+  const businessMessage = code ? SAFE_BUSINESS_MESSAGES[code] : undefined;
+  const message = status === 401 ? SAFE_MESSAGES.AUTH_REQUIRED : status === 403 ? SAFE_MESSAGES.FORBIDDEN : status === 404 ? SAFE_MESSAGES.NOT_FOUND : status === 409 ? SAFE_MESSAGES.CONFLICT : businessMessage ?? (status === 400 || status === 422 ? SAFE_MESSAGES.VALIDATION_ERROR : status >= 500 ? SAFE_MESSAGES.INTERNAL_ERROR : typeof body?.message === "string" && body.message.length < 160 ? body.message : SAFE_MESSAGES.UNKNOWN_ERROR);
   return new AdminRequestError(message, { status, code, requestId });
 }

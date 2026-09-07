@@ -28,6 +28,12 @@ function validateWakeWords(config: WelcomeConfig): string | null {
   return null;
 }
 
+export function isAvailableWelcomeScript(script: ScriptTemplate, exhibitionId: string): boolean {
+  return script.scene === "welcome"
+    && script.status === "active"
+    && (!script.exhibitionId || script.exhibitionId === exhibitionId);
+}
+
 export function WelcomeConfigPage({ canWrite, initialExhibitionId }: Props) {
   const [exhibitions, setExhibitions] = useState<Exhibition[]>([]);
   const [scripts, setScripts] = useState<ScriptTemplate[]>([]);
@@ -52,6 +58,9 @@ export function WelcomeConfigPage({ canWrite, initialExhibitionId }: Props) {
   useEffect(() => { void load(); }, [exhibitionId]);
 
   const current = editing || items[0];
+  const availableWelcomeScripts = current
+    ? scripts.filter((script) => isAvailableWelcomeScript(script, current.exhibitionId))
+    : [];
   const create = () => {
     const event = exhibitions.find((item) => item.id === (exhibitionId === "all" ? exhibitions[0]?.id : exhibitionId)) || exhibitions[0];
     if (!event) return;
@@ -76,6 +85,10 @@ export function WelcomeConfigPage({ canWrite, initialExhibitionId }: Props) {
     if (!current) return;
     const validationError = validateWakeWords(current);
     if (validationError) { setError(validationError); return; }
+    if (!availableWelcomeScripts.some((script) => script.id === current.scriptId)) {
+      setError("请选择当前展会已启用的迎宾话术模板。");
+      return;
+    }
     try {
       const next = await adminApi.saveWelcomeConfig(current);
       setItems((list) => [next, ...list.filter((item) => item.id !== next.id)]);
@@ -100,7 +113,7 @@ export function WelcomeConfigPage({ canWrite, initialExhibitionId }: Props) {
           <p className="text-xs font-semibold text-slate-600">迎宾触发条件</p>
           <div className="grid gap-2 sm:grid-cols-3">{["终端启动", "用户靠近", "唤醒词"].map((trigger) => <label key={trigger} className={`flex items-center gap-2 rounded-xl border px-3 py-3 text-xs ${current.triggers.includes(trigger) ? "border-cyan-300 bg-cyan-50 text-cyan-700" : "border-slate-200 text-slate-500"}`}><input type="checkbox" checked={current.triggers.includes(trigger)} disabled={!canWrite} onChange={(event) => { const next = current.triggers.filter((item) => item !== trigger); setEditing({ ...current, triggers: event.target.checked ? [...next, trigger] : next }); setError(""); }} />{trigger}</label>)}</div>
           {current.triggers.includes("唤醒词") ? <div className="space-y-4"><div><Field label="唤醒词（逗号或换行分隔）" value={current.wakeWords.join("、")} onChange={(value) => { setEditing({ ...current, wakeWords: [...new Set(splitLines(value))] }); setError(""); }} placeholder="你好小展、小展小展" /><p className="mt-2 text-[11px] text-slate-400">最多 5 个，每个 2～12 个字符。数字人处于休眠状态时，只响应包含唤醒词的语音。</p></div><label className="block text-xs font-semibold text-slate-600">无对话进入休眠时间（秒）<input type="number" min={10} max={600} step={1} value={current.wakeActiveSeconds} onChange={(event) => { setEditing({ ...current, wakeActiveSeconds: Number(event.target.value) }); setError(""); }} className="mt-2 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm font-normal text-slate-800 outline-none focus:border-cyan-400" /><p className="mt-2 text-[11px] font-normal text-slate-400">唤醒后，每次有效语音对话都会重新计时；连续无对话达到该时长后再次进入休眠。范围 10～600 秒。</p></label></div> : null}
-          <Select label="迎宾话术模板" value={current.scriptId} onChange={(value) => setEditing({ ...current, scriptId: value })}>{scripts.filter((item) => item.scene === "welcome").map((script) => <option key={script.id} value={script.id}>{script.name}</option>)}</Select>
+          <Select label="迎宾话术模板" value={availableWelcomeScripts.some((script) => script.id === current.scriptId) ? current.scriptId : ""} onChange={(value) => { setEditing({ ...current, scriptId: value }); setError(""); }}><option value="">请选择当前展会已启用的迎宾话术</option>{availableWelcomeScripts.map((script) => <option key={script.id} value={script.id}>{script.name}</option>)}</Select>
           <Field label="展会亮点（逗号或换行分隔）" value={current.highlights.join("、")} onChange={(value) => setEditing({ ...current, highlights: splitLines(value) })} placeholder="智能制造展区、主论坛活动" />
         </div>
         <div className="space-y-4"><Field label="签到流程指引" value={current.checkInGuide} onChange={(value) => setEditing({ ...current, checkInGuide: value })} textarea placeholder="描述观众如何签到、领取资料或咨询服务" /><Field label="入场须知" value={current.notices} onChange={(value) => setEditing({ ...current, notices: value })} textarea /><Field label="分流策略" value={current.routingStrategy} onChange={(value) => setEditing({ ...current, routingStrategy: value })} placeholder="按时段、展馆或终端位置推荐" /></div>
