@@ -44,6 +44,8 @@ type DigitalHumanDisplayProps = {
   avatar: AvatarSummary | null;
   modelLabel: string;
   messages: Message[];
+  wakeSleeping?: boolean;
+  wakePrompt?: string;
   queueInfo?: { position: number; message: string } | null;
   prewarmState?: "idle" | "preparing" | "ready" | "failed";
   prewarmModel?: "quicktalk" | "wav2lip" | null;
@@ -97,6 +99,8 @@ export function DigitalHumanDisplay({
                                       avatar,
                                       modelLabel,
                                       messages,
+                                      wakeSleeping = false,
+                                      wakePrompt = "",
                                       queueInfo,
                                       prewarmState = "idle",
                                       prewarmModel = null,
@@ -165,7 +169,7 @@ export function DigitalHumanDisplay({
               ? "Establishing the WebRTC video channel. The conversation will open automatically."
               : "正在建立 WebRTC 视频通道，连接成功后将自动进入对话。");
   const suggestions = suggestionItems ?? (english ? ["Venue navigation", "Book a meeting", "Conference services", "About the exhibition"] : ["展馆导航", "预约洽谈", "会议服务", "关于展览"]);
-  const displaySubtitle = subtitle?.trim() || (messages.length === 0 ? (english ? "You can ask me the following questions" : "你可以问我以下问题哦") : "");
+  const displaySubtitle = subtitle?.trim() || (messages.length === 0 && !wakeSleeping ? (english ? "You can ask me the following questions" : "你可以问我以下问题哦") : "");
   const latestVisibleMessage = messages[messages.length - 1];
   const presentationMessages = selectCurrentEntityPresentation(messages);
   const visibleEntityPresentationKey = presentationMessages
@@ -182,7 +186,7 @@ export function DigitalHumanDisplay({
               : "";
   const presentationActive = Boolean(presentationKey);
   const presentationDialogVisible = true;
-  const chatPanelHidden = presentationActive || !conversationVisible;
+  const chatPanelHidden = presentationActive || (!conversationVisible && !wakeSleeping);
   const subtitleActive = presentationActive && Boolean(subtitle?.trim());
   const showLiveSubtitle = Boolean(
       subtitle?.trim()
@@ -291,12 +295,13 @@ export function DigitalHumanDisplay({
 
   useEffect(() => {
     setConversationVisible(true);
+    if (wakeSleeping) return;
     const timer = window.setTimeout(() => {
       setConversationVisible(false);
       setShowScrollToBottom(false);
     }, CONVERSATION_IDLE_HIDE_MS);
     return () => window.clearTimeout(timer);
-  }, [conversationActivity, conversationActivityKey]);
+  }, [conversationActivity, conversationActivityKey, wakeSleeping]);
 
   useEffect(() => {
     if (!presentationKey || !onAutoClosePresentation) return;
@@ -406,6 +411,9 @@ export function DigitalHumanDisplay({
                 <div ref={chatFeedContentRef} className="digital-display-chat-feed-content">
                   {exhibitionConfigNotice ? (
                       <div className="digital-display-chat-notice" role="status">{exhibitionConfigNotice}</div>
+                  ) : null}
+                  {wakeSleeping && wakePrompt.trim() ? (
+                      <div className="digital-display-wake-prompt" role="status">{wakePrompt}</div>
                   ) : null}
                   {navigationResult ? (
                       <article className="digital-display-navigation-card">

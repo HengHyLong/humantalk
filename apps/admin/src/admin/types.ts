@@ -610,6 +610,7 @@ export type WelcomeConfig = {
   triggers: string[];
   wakeWords: string[];
   wakeActiveSeconds: number;
+  wakePrompt: string;
   scriptId: string;
   highlights: string[];
   checkInGuide: string;

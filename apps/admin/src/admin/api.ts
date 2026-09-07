@@ -156,7 +156,7 @@ const DEFAULT_SCRIPTS: ScriptTemplate[] = [
 ];
 
 const DEFAULT_WELCOME_CONFIGS: WelcomeConfig[] = [
-  { id: "welcome-config-1", exhibitionId: "exhibition-1", exhibitionName: "2026 西部博览会", triggers: ["终端启动", "用户靠近", "唤醒词"], wakeWords: ["你好小展"], wakeActiveSeconds: 30, scriptId: "script-1", highlights: ["智能制造展区", "主论坛活动", "现场签到服务"], checkInGuide: "请前往1号入口签到台，出示预约二维码完成入场。", notices: "请按照现场工作人员指引有序参观，保管好随身物品。", routingStrategy: "按时段优先推荐当前开放展馆", status: "active", updatedAt: "2026-08-03 16:20:00" },
+  { id: "welcome-config-1", exhibitionId: "exhibition-1", exhibitionName: "2026 西部博览会", triggers: ["终端启动", "用户靠近", "唤醒词"], wakeWords: ["你好小展"], wakeActiveSeconds: 30, wakePrompt: "🎤想了解展会资讯？叫一声「小美小美」，小美随时为您服务！", scriptId: "script-1", highlights: ["智能制造展区", "主论坛活动", "现场签到服务"], checkInGuide: "请前往1号入口签到台，出示预约二维码完成入场。", notices: "请按照现场工作人员指引有序参观，保管好随身物品。", routingStrategy: "按时段优先推荐当前开放展馆", status: "active", updatedAt: "2026-08-03 16:20:00" },
 ];
 
 const DEFAULT_EXPLAIN_FLOWS: ExplainFlow[] = [
@@ -399,7 +399,7 @@ function migrateInteractionMockData(): void {
   const normalizeExhibition = (id: string | undefined) => exhibitionName.has(id || "") ? id as string : fallbackExhibitionId;
   const welcomeConfigs = readStore<WelcomeConfig[]>("welcome-configs", DEFAULT_WELCOME_CONFIGS).map((item) => {
     const itemExhibitionId = normalizeExhibition(item.exhibitionId);
-    return { ...item, exhibitionId: itemExhibitionId, exhibitionName: exhibitionName.get(itemExhibitionId) || item.exhibitionName, scriptId: scriptById.get(item.scriptId)?.scene === "welcome" ? item.scriptId : welcomeScriptId };
+    return { ...item, exhibitionId: itemExhibitionId, exhibitionName: exhibitionName.get(itemExhibitionId) || item.exhibitionName, wakePrompt: item.wakePrompt || "🎤想了解展会资讯？叫一声「小美小美」，小美随时为您服务！", scriptId: scriptById.get(item.scriptId)?.scene === "welcome" ? item.scriptId : welcomeScriptId };
   });
   const explainFlows = readStore<ExplainFlow[]>("explain-flows", DEFAULT_EXPLAIN_FLOWS).map((item) => ({
     ...item,
@@ -492,10 +492,11 @@ export class MockAdminApiClient implements AdminApiClient {
         triggers: normalizeWelcomeTrigger(item.triggers),
         wakeWords: normalizeWakeWords(item as unknown as JsonRecord),
         wakeActiveSeconds: normalizeWakeActiveSeconds(item.wakeActiveSeconds),
+        wakePrompt: item.wakePrompt || "🎤想了解展会资讯？叫一声「小美小美」，小美随时为您服务！",
       }))
       .filter((item) => !exhibitionId || exhibitionId === "all" || item.exhibitionId === exhibitionId);
   }
-  async saveWelcomeConfig(item: WelcomeConfig) { const exhibition = (await this.listExhibitions()).find((candidate) => candidate.id === item.exhibitionId); if (!exhibition) throw new Error("欢迎配置所属展会不存在"); const scripts = await this.listScripts(); if (!scripts.some((script) => script.id === item.scriptId && script.scene === "welcome")) throw new Error("欢迎配置必须关联迎宾话术"); const saved = { ...item, triggers: normalizeWelcomeTrigger(item.triggers), wakeWords: [...new Set(item.wakeWords.map((word) => word.trim()).filter(Boolean))], wakeActiveSeconds: normalizeWakeActiveSeconds(item.wakeActiveSeconds), exhibitionName: exhibition.name, updatedAt: now() }; writeStore("welcome-configs", [saved, ...(await this.listWelcomeConfigs()).filter((candidate) => candidate.id !== item.id)]); return saved; }
+  async saveWelcomeConfig(item: WelcomeConfig) { const exhibition = (await this.listExhibitions()).find((candidate) => candidate.id === item.exhibitionId); if (!exhibition) throw new Error("欢迎配置所属展会不存在"); const scripts = await this.listScripts(); if (!scripts.some((script) => script.id === item.scriptId && script.scene === "welcome")) throw new Error("欢迎配置必须关联迎宾话术"); const saved = { ...item, triggers: normalizeWelcomeTrigger(item.triggers), wakeWords: [...new Set(item.wakeWords.map((word) => word.trim()).filter(Boolean))], wakeActiveSeconds: normalizeWakeActiveSeconds(item.wakeActiveSeconds), wakePrompt: item.wakePrompt.trim() || "🎤想了解展会资讯？叫一声「小美小美」，小美随时为您服务！", exhibitionName: exhibition.name, updatedAt: now() }; writeStore("welcome-configs", [saved, ...(await this.listWelcomeConfigs()).filter((candidate) => candidate.id !== item.id)]); return saved; }
   async listExplainFlows(exhibitionId?: string) { migrateInteractionMockData(); return (await readStore<ExplainFlow[]>("explain-flows", DEFAULT_EXPLAIN_FLOWS)).filter((item) => !exhibitionId || exhibitionId === "all" || item.exhibitionId === exhibitionId); }
   async saveExplainFlow(item: ExplainFlow) { const exhibition = (await this.listExhibitions()).find((candidate) => candidate.id === item.exhibitionId); if (!exhibition) throw new Error("讲解流程所属展会不存在"); const scripts = await this.listScripts(); if (!scripts.some((script) => script.id === item.scriptId && script.scene === "explain")) throw new Error("讲解流程必须关联讲解话术"); const saved = { ...item, exhibitionName: exhibition.name, updatedAt: now() }; writeStore("explain-flows", [saved, ...(await this.listExplainFlows()).filter((candidate) => candidate.id !== item.id)]); return saved; }
   async deleteExplainFlow(id: string) { writeStore("explain-flows", (await this.listExplainFlows()).filter((item) => item.id !== id)); }
@@ -974,6 +975,7 @@ export class FetchAdminApiClient implements AdminApiClient {
       triggers: normalizeWelcomeTrigger(item.triggers ?? item.trigger),
       wakeWords: normalizeWakeWords(item),
       wakeActiveSeconds: normalizeWakeActiveSeconds(item.wakeActiveSeconds ?? item.wake_active_seconds),
+      wakePrompt: String(item.wakePrompt || item.wake_prompt || "🎤想了解展会资讯？叫一声「小美小美」，小美随时为您服务！"),
       scriptId: String(item.scriptId || item.script_id || ""),
       highlights: stringArray(item.highlights),
       checkInGuide: String(item.checkInGuide || item.check_in_guide || ""),

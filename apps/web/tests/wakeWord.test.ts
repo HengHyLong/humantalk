@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { evaluateWakeWordGate, matchWakeWord } from "../src/lib/wakeWord";
 
 const appSource = readFileSync(fileURLToPath(new URL("../src/App.tsx", import.meta.url)), "utf8");
+const displaySource = readFileSync(fileURLToPath(new URL("../src/components/DigitalHumanDisplay.tsx", import.meta.url)), "utf8");
 
 test("wake word matcher ignores punctuation and returns the remaining command", () => {
   assert.deepEqual(matchWakeWord("你好，小展！A1 馆怎么走？", ["你好小展"]), {
@@ -97,4 +98,13 @@ test("recognized voice is actually blocked by the wake gate while sleeping", () 
   assert.match(appSource, /const gate = evaluateWakeWordGate\(/);
   assert.match(appSource, /if \(!gate\.accepted\) return;/);
   assert.doesNotMatch(appSource, /未命中唤醒词时仍保留普通对话兜底/);
+});
+
+test("wake prompt is shown initially and returns when the active window expires", () => {
+  assert.match(appSource, /setWakeSleeping\(normalized\.wake_word\.enabled && normalized\.wake_word\.words\.length > 0\)/);
+  assert.match(appSource, /keepWakeSessionActiveUntil\(gate\.awakeUntil\)/);
+  assert.match(appSource, /currentWakeConfig\?\.enabled && currentWakeConfig\.words\.length > 0/);
+  assert.match(appSource, /setWakeSleeping\(true\)/);
+  assert.match(displaySource, /wakeSleeping && wakePrompt\.trim\(\)/);
+  assert.match(displaySource, /digital-display-wake-prompt/);
 });

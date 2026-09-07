@@ -185,10 +185,12 @@ test("Mock Admin API covers interaction strategy configuration", async () => {
   assert.ok(welcome.triggers.includes("终端启动"));
   assert.deepEqual(welcome.wakeWords, ["你好小展"]);
   assert.equal(welcome.wakeActiveSeconds, 30);
+  assert.equal(welcome.wakePrompt, "🎤想了解展会资讯？叫一声「小美小美」，小美随时为您服务！");
   assert.equal((await api.listWelcomeConfigs("exhibition-2")).length, 0);
-  const updatedWelcome = await api.saveWelcomeConfig({ ...welcome, notices: "请有序参观", wakeActiveSeconds: 45 });
+  const updatedWelcome = await api.saveWelcomeConfig({ ...welcome, notices: "请有序参观", wakeActiveSeconds: 45, wakePrompt: "请呼叫小美" });
   assert.equal(updatedWelcome.notices, "请有序参观");
   assert.equal(updatedWelcome.wakeActiveSeconds, 45);
+  assert.equal(updatedWelcome.wakePrompt, "请呼叫小美");
   const flow = (await api.listExplainFlows("exhibition-1"))[0];
   assert.equal(flow.exhibitionId, "exhibition-1");
   assert.equal((await api.saveExplainFlow({ ...flow, status: "inactive" })).status, "inactive");

@@ -208,17 +208,18 @@ def test_welcome_wake_word_validation_and_public_config(tmp_path) -> None:
         saved = client.post(
             "/api/v1/admin/interaction/welcome-configs",
             headers=headers,
-            json={"id": "welcome-valid", "exhibitionId": "expo-test", "triggers": ["唤醒词：你好小展"], "wakeActiveSeconds": 60, "scriptId": "script-welcome-test", "status": "active"},
+            json={"id": "welcome-valid", "exhibitionId": "expo-test", "triggers": ["唤醒词：你好小展"], "wakeActiveSeconds": 60, "wakePrompt": "请说你好小展唤醒我", "scriptId": "script-welcome-test", "status": "active"},
         )
         assert saved.status_code == 200
         assert saved.json()["triggers"] == ["唤醒词"]
         assert saved.json()["wakeWords"] == ["你好小展"]
         assert saved.json()["wakeActiveSeconds"] == 60
+        assert saved.json()["wakePrompt"] == "请说你好小展唤醒我"
 
         public = client.get("/exhibitions/expo-test/digital-human-config")
         assert public.status_code == 200
         assert public.json()["supports_deferred_speak"] is True
-        assert public.json()["wake_word"] == {"enabled": True, "words": ["你好小展"], "active_window_seconds": 60}
+        assert public.json()["wake_word"] == {"enabled": True, "words": ["你好小展"], "active_window_seconds": 60, "prompt": "请说你好小展唤醒我"}
         assert public.json()["welcome"]["text"] == "您好，欢迎来到测试展会。"
 
 

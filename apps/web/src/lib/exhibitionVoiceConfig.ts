@@ -52,6 +52,8 @@ export function normalizeExhibitionVoiceConfig(
         const seconds = Number(raw.wake_word?.active_window_seconds ?? raw.wakeWord?.activeWindowSeconds ?? 30);
         return Number.isInteger(seconds) && seconds >= 10 && seconds <= 600 ? seconds : 30;
       })(),
+      prompt: String(raw.wake_word?.prompt ?? raw.wakeWord?.prompt ?? "🎤想了解展会资讯？叫一声「小美小美」，小美随时为您服务！").trim()
+        || "🎤想了解展会资讯？叫一声「小美小美」，小美随时为您服务！",
     },
     welcome: {
       script_id: String(raw.welcome?.script_id || ""),

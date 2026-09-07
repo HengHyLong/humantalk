@@ -68,5 +68,13 @@ test("wake window uses the configured value", () => {
   });
 
   assert.equal(config.wake_word.active_window_seconds, 60);
+  assert.equal(config.wake_word.prompt, "🎤想了解展会资讯？叫一声「小美小美」，小美随时为您服务！");
   assert.equal(normalizeExhibitionVoiceConfig({ wake_word: { enabled: true, words: ["你好小展"], active_window_seconds: 5 } }).wake_word.active_window_seconds, 30);
+});
+
+test("wake prompt uses the managed value", () => {
+  const config = normalizeExhibitionVoiceConfig({
+    wake_word: { enabled: true, words: ["小美小美"], active_window_seconds: 60, prompt: "请叫一声小美小美" },
+  });
+  assert.equal(config.wake_word.prompt, "请叫一声小美小美");
 });

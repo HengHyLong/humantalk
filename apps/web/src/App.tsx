@@ -1071,6 +1071,33 @@ export default function App() {
   const [exhibitionFollowupStage, setExhibitionFollowupStage] = useState<PendingExhibitionFollowup["stage"] | null>(null);
   const pendingContentClarificationRef = useRef<PendingContentClarification | null>(null);
   const wakeAwakeUntilRef = useRef(0);
+  const wakeSleepTimerRef = useRef<number | null>(null);
+  const [wakeSleeping, setWakeSleeping] = useState(false);
+
+  const clearWakeSleepTimer = useCallback(() => {
+    if (wakeSleepTimerRef.current !== null) {
+      window.clearTimeout(wakeSleepTimerRef.current);
+      wakeSleepTimerRef.current = null;
+    }
+  }, []);
+
+  const keepWakeSessionActiveUntil = useCallback((awakeUntil: number) => {
+    clearWakeSleepTimer();
+    wakeAwakeUntilRef.current = awakeUntil;
+    setWakeSleeping(false);
+    const delay = Math.max(0, awakeUntil - Date.now());
+    wakeSleepTimerRef.current = window.setTimeout(() => {
+      wakeSleepTimerRef.current = null;
+      if (Date.now() < wakeAwakeUntilRef.current) return;
+      wakeAwakeUntilRef.current = 0;
+      const currentWakeConfig = exhibitionVoiceConfigRef.current?.wake_word;
+      if (currentWakeConfig?.enabled && currentWakeConfig.words.length > 0) {
+        setWakeSleeping(true);
+      }
+    }, delay);
+  }, [clearWakeSleepTimer]);
+
+  useEffect(() => () => clearWakeSleepTimer(), [clearWakeSleepTimer]);
 
   useEffect(() => {
     if (!sessionId) {
@@ -1082,13 +1109,16 @@ export default function App() {
   }, [sessionId]);
 
   useEffect(() => {
+    clearWakeSleepTimer();
     wakeAwakeUntilRef.current = 0;
+    const currentWakeConfig = exhibitionVoiceConfigRef.current?.wake_word;
+    setWakeSleeping(Boolean(currentWakeConfig?.enabled && currentWakeConfig.words.length > 0));
     pendingShoppingRegistrationRef.current = null;
     pendingExhibitionFollowupRef.current = null;
     setExhibitionFollowupStage(null);
     pendingContentClarificationRef.current = null;
     setShoppingRegistration(null);
-  }, [configuredExhibitionId, sessionId]);
+  }, [clearWakeSleepTimer, configuredExhibitionId, sessionId]);
   const [, setRuntimeStatus] = useState<HealthResponse | null>(null);
   const [runtimeConfig, setRuntimeConfig] = useState<RuntimeConfigResponse | null>(null);
   const [runtimeConfigLoading, setRuntimeConfigLoading] = useState(false);
@@ -1458,7 +1488,9 @@ export default function App() {
       const normalized = normalizeExhibitionVoiceConfig(raw, configuredExhibitionId);
       setExhibitionVoiceConfig(normalized);
       exhibitionVoiceConfigRef.current = normalized;
+      clearWakeSleepTimer();
       wakeAwakeUntilRef.current = 0;
+      setWakeSleeping(normalized.wake_word.enabled && normalized.wake_word.words.length > 0);
       setExhibitionConfigNotice(
         normalized.keywords.navigation.length ? null : "本次展览暂未发布导航关键词，将按普通展品问答处理。",
       );
@@ -1466,10 +1498,12 @@ export default function App() {
       console.warn("load exhibition voice config failed", error);
       setExhibitionVoiceConfig(null);
       exhibitionVoiceConfigRef.current = null;
+      clearWakeSleepTimer();
       wakeAwakeUntilRef.current = 0;
+      setWakeSleeping(false);
       setExhibitionConfigNotice("展会导航配置暂不可用，普通展品问答仍可使用。");
     }
-  }, [configuredExhibitionId]);
+  }, [clearWakeSleepTimer, configuredExhibitionId]);
 
   const handleSceneCompositionsChange = useCallback((scenes: SceneComposition[]) => {
     setSceneCompositions(scenes);
@@ -2413,7 +2447,7 @@ export default function App() {
         const wakeConfig = exhibitionVoiceConfigRef.current?.wake_word;
         if (wakeConfig?.enabled && wakeAwakeUntilRef.current > 0) {
           // “无对话进入休眠”从本轮播报结束后重新计时，避免长回答期间误休眠。
-          wakeAwakeUntilRef.current = Date.now() + wakeConfig.active_window_seconds * 1000;
+          keepWakeSessionActiveUntil(Date.now() + wakeConfig.active_window_seconds * 1000);
         }
         if (msgId) {
           if (finalText) {
@@ -2442,7 +2476,7 @@ export default function App() {
       }
     });
     return stop;
-  }, [appendAssistantError, clearSubtitleFallbackTimer, clearSubtitleState, finishSubtitleState, flushSubtitleDisplay, flushSubtitleMessage, notify, sessionId]);
+  }, [appendAssistantError, clearSubtitleFallbackTimer, clearSubtitleState, finishSubtitleState, flushSubtitleDisplay, flushSubtitleMessage, keepWakeSessionActiveUntil, notify, sessionId]);
 
   // Resolves when FlashTalk slot is acquired (session.queued position=0)
   const slotAcquiredRef = useRef<(() => void) | null>(null);
@@ -3220,7 +3254,7 @@ export default function App() {
     const baseVoiceConfig = exhibitionVoiceConfig ?? {
       exhibition_id: configuredExhibitionId ?? "current",
       keywords: { navigation: [], exhibition_content: [] },
-      wake_word: { enabled: false, words: [], active_window_seconds: 30 },
+      wake_word: { enabled: false, words: [], active_window_seconds: 30, prompt: "" },
       welcome: { script_id: "", text: "" },
     };
     const configuredMatch = matchVoiceIntent(text, {
@@ -3594,7 +3628,7 @@ export default function App() {
     });
     if (!gate.accepted) return;
 
-    wakeAwakeUntilRef.current = gate.awakeUntil;
+    keepWakeSessionActiveUntil(gate.awakeUntil);
     if (gate.wakeOnly) {
       const welcomeText = exhibitionVoiceConfig?.welcome.text.trim();
       if (welcomeText) {
@@ -3603,7 +3637,7 @@ export default function App() {
       return;
     }
     await routeRecognizedText(gate.text);
-  }, [enqueueSpeech, exhibitionEntities, exhibitionVoiceConfig, isSpeaking, routeRecognizedText]);
+  }, [enqueueSpeech, exhibitionEntities, exhibitionVoiceConfig, isSpeaking, keepWakeSessionActiveUntil, routeRecognizedText]);
 
   const handleRealtimeVoiceAudio = useCallback(async (blob: Blob) => {
     if (!sessionId) return;
@@ -4167,6 +4201,8 @@ export default function App() {
           avatar={currentAvatar}
           modelLabel={selectedModelLabel}
           messages={messages}
+          wakeSleeping={wakeSleeping}
+          wakePrompt={exhibitionVoiceConfig?.wake_word.prompt}
           queueInfo={queueInfo}
           prewarmState={selectedPrewarmState}
           prewarmModel={selectedModelConnected && (model === "quicktalk" || model === "wav2lip") ? model : null}

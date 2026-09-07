@@ -309,6 +309,7 @@ export type ExhibitionVoiceConfig = {
     enabled: boolean;
     words: string[];
     active_window_seconds: number;
+    prompt: string;
   };
   welcome: {
     script_id: string;
@@ -359,7 +360,8 @@ export type ShoppingRegistrationResult = {
   spoken_text: string;
 };
 
-export type ExhibitionVoiceConfigResponse = Partial<ExhibitionVoiceConfig> & {
+export type ExhibitionVoiceConfigResponse = Partial<Omit<ExhibitionVoiceConfig, "wake_word">> & {
+  wake_word?: Partial<ExhibitionVoiceConfig["wake_word"]>;
   exhibitionId?: string;
   bound_avatar_id?: string | null;
   bound_model?: string | null;
@@ -373,6 +375,7 @@ export type ExhibitionVoiceConfigResponse = Partial<ExhibitionVoiceConfig> & {
     enabled?: boolean;
     words?: string[];
     activeWindowSeconds?: number;
+    prompt?: string;
   };
   keyword_groups?: {
     navigation?: string[];

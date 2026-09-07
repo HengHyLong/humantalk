@@ -1110,6 +1110,14 @@ def _welcome_active_seconds(data: dict[str, Any]) -> int:
     return seconds if 10 <= seconds <= 600 else 30
 
 
+DEFAULT_WAKE_PROMPT = "🎤想了解展会资讯？叫一声「小美小美」，小美随时为您服务！"
+
+
+def _welcome_wake_prompt(data: dict[str, Any]) -> str:
+    value = str(data.get("wakePrompt", data.get("wake_prompt", ""))).strip()
+    return value[:500] or DEFAULT_WAKE_PROMPT
+
+
 def _auto_route_directions(store: AdminStore, points: list[dict[str, Any]]) -> list[str]:
     directions: list[str] = []
     for start, destination in zip(points, points[1:]):
@@ -1258,6 +1266,7 @@ def _validate_record(store: AdminStore, kind: str, data: dict[str, Any], record_
         data["triggers"] = triggers
         data["wakeWords"] = wake_words
         data["wakeActiveSeconds"] = active_seconds
+        data["wakePrompt"] = _welcome_wake_prompt(data)
 
 
 EVENT_IMPORT_KINDS = ("exhibitors", "venues", "exhibits", "points", "routes", "schedules", "broadcasts", "knowledge_bases", "documents", "qa")
@@ -2438,6 +2447,7 @@ def public_config(exhibition_id: str, request: Request) -> dict[str, Any]:
             "enabled": wake_enabled,
             "words": wake_words if wake_enabled else [],
             "active_window_seconds": _welcome_active_seconds(welcome_config),
+            "prompt": _welcome_wake_prompt(welcome_config),
         },
         "welcome": {
             "script_id": str(welcome_script.get("id") or ""),
