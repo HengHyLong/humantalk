@@ -5,6 +5,14 @@ export type WakeWordMatch = {
   remainder: string;
 };
 
+export type WakeWordGateResult = {
+  accepted: boolean;
+  wakeOnly: boolean;
+  text: string;
+  matchedWord: string | null;
+  awakeUntil: number;
+};
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -32,4 +40,44 @@ export function matchWakeWord(text: string, words: string[]): WakeWordMatch | nu
     return { word, remainder };
   }
   return null;
+}
+
+/**
+ * Apply the post-STT wake gate. While sleeping, only speech containing a
+ * configured wake word is accepted. Every accepted utterance refreshes the
+ * same inactivity deadline used to return to sleep.
+ */
+export function evaluateWakeWordGate({
+  text,
+  words,
+  now,
+  awakeUntil,
+  sleepTimeoutSeconds,
+}: {
+  text: string;
+  words: string[];
+  now: number;
+  awakeUntil: number;
+  sleepTimeoutSeconds: number;
+}): WakeWordGateResult {
+  const matched = matchWakeWord(text, words);
+  const isAwake = now < awakeUntil;
+
+  if (!matched && !isAwake) {
+    return {
+      accepted: false,
+      wakeOnly: false,
+      text: "",
+      matchedWord: null,
+      awakeUntil,
+    };
+  }
+
+  return {
+    accepted: true,
+    wakeOnly: Boolean(matched && !matched.remainder),
+    text: matched ? matched.remainder : text.trim(),
+    matchedWord: matched?.word ?? null,
+    awakeUntil: now + sleepTimeoutSeconds * 1000,
+  };
 }

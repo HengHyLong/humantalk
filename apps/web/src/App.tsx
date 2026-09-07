@@ -75,7 +75,7 @@ import {
   matchVoiceIntent,
   normalizeExhibitionVoiceConfig,
 } from "./lib/exhibitionVoiceConfig";
-import { matchWakeWord } from "./lib/wakeWord";
+import { evaluateWakeWordGate } from "./lib/wakeWord";
 import { connectSse } from "./lib/sse";
 import {
   DEFAULT_TTS_PREVIEW_TEXT,
@@ -1060,6 +1060,7 @@ export default function App() {
   const [currentSubtitle, setCurrentSubtitle] = useState("");
   const welcomedVideoSessionRef = useRef<string | null>(null);
   const [exhibitionVoiceConfig, setExhibitionVoiceConfig] = useState<ExhibitionVoiceConfig | null>(null);
+  const exhibitionVoiceConfigRef = useRef<ExhibitionVoiceConfig | null>(null);
   const [exhibitionEntities, setExhibitionEntities] = useState<ExhibitionEntityCard[]>([]);
   const [exhibitionConfigNotice, setExhibitionConfigNotice] = useState<string | null>(null);
   const [lastVoiceIntent, setLastVoiceIntent] = useState<"navigation" | "exhibition_content" | "shopping" | null>(null);
@@ -1456,6 +1457,7 @@ export default function App() {
       const raw = await getExhibitionVoiceConfig(configuredExhibitionId);
       const normalized = normalizeExhibitionVoiceConfig(raw, configuredExhibitionId);
       setExhibitionVoiceConfig(normalized);
+      exhibitionVoiceConfigRef.current = normalized;
       wakeAwakeUntilRef.current = 0;
       setExhibitionConfigNotice(
         normalized.keywords.navigation.length ? null : "本次展览暂未发布导航关键词，将按普通展品问答处理。",
@@ -1463,6 +1465,7 @@ export default function App() {
     } catch (error) {
       console.warn("load exhibition voice config failed", error);
       setExhibitionVoiceConfig(null);
+      exhibitionVoiceConfigRef.current = null;
       wakeAwakeUntilRef.current = 0;
       setExhibitionConfigNotice("展会导航配置暂不可用，普通展品问答仍可使用。");
     }
@@ -2407,6 +2410,11 @@ export default function App() {
         const msgId = streamingAssistantMsgIdRef.current;
         setVideoState("listen");
         finishSubtitleState(finalText);
+        const wakeConfig = exhibitionVoiceConfigRef.current?.wake_word;
+        if (wakeConfig?.enabled && wakeAwakeUntilRef.current > 0) {
+          // “无对话进入休眠”从本轮播报结束后重新计时，避免长回答期间误休眠。
+          wakeAwakeUntilRef.current = Date.now() + wakeConfig.active_window_seconds * 1000;
+        }
         if (msgId) {
           if (finalText) {
             setMessages((prev) => {
@@ -3576,25 +3584,26 @@ export default function App() {
       return;
     }
 
-    const now = Date.now();
-    const matched = matchWakeWord(text, wakeConfig.words);
-    if (!matched && now >= wakeAwakeUntilRef.current) {
-      // 未命中唤醒词时仍保留普通对话兜底，交给展会问答/大模型链路处理，
-      // 避免把用户的正常语音直接丢弃。
-      await routeRecognizedText(text);
-      return;
-    }
+    const gate = evaluateWakeWordGate({
+      text,
+      words: wakeConfig.words,
+      now: Date.now(),
+      // 数字人正在回答时仍属于当前对话，允许用户抢话，不因倒计时到点而拒绝。
+      awakeUntil: isSpeaking ? Number.POSITIVE_INFINITY : wakeAwakeUntilRef.current,
+      sleepTimeoutSeconds: wakeConfig.active_window_seconds,
+    });
+    if (!gate.accepted) return;
 
-    wakeAwakeUntilRef.current = now + wakeConfig.active_window_seconds * 1000;
-    if (matched && !matched.remainder) {
+    wakeAwakeUntilRef.current = gate.awakeUntil;
+    if (gate.wakeOnly) {
       const welcomeText = exhibitionVoiceConfig?.welcome.text.trim();
       if (welcomeText) {
         enqueueSpeech(welcomeText, text, matchExhibitionEntities(text, exhibitionEntities), true);
       }
       return;
     }
-    await routeRecognizedText(matched?.remainder || text);
-  }, [enqueueSpeech, exhibitionEntities, exhibitionVoiceConfig, routeRecognizedText]);
+    await routeRecognizedText(gate.text);
+  }, [enqueueSpeech, exhibitionEntities, exhibitionVoiceConfig, isSpeaking, routeRecognizedText]);
 
   const handleRealtimeVoiceAudio = useCallback(async (blob: Blob) => {
     if (!sessionId) return;
