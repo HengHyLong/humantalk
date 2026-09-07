@@ -188,7 +188,7 @@ body {
 @keyframes digital-display-spin { to { transform: rotate(360deg); } }
 @keyframes digital-display-loading-progress { 0% { transform: translateX(-120%); } 55%, 100% { transform: translateX(280%); } }
 
-.digital-display-chat-panel { position: absolute; z-index: 20; right: 3%; bottom: 7%; left: 3%; display: flex; max-height: min(46vh, 520px); min-height: 0; flex-direction: column; gap: 10px; border: 1px solid rgba(159, 228, 255, .4); border-radius: 18px; padding: 15px; background: rgba(7, 111, 188, .16); box-shadow: 0 16px 32px rgba(0, 22, 72, .12); transition: border-color .2s ease, background .2s ease, box-shadow .2s ease; }
+.digital-display-chat-panel { position: absolute; z-index: 20; right: 3%; bottom: 3%; left: 3%; display: flex; max-height: min(46vh, 520px); min-height: 0; flex-direction: column; gap: 10px; border: 1px solid rgba(159, 228, 255, .4); border-radius: 18px; padding: 15px; background: rgba(7, 111, 188, .16); box-shadow: 0 16px 32px rgba(0, 22, 72, .12); transition: border-color .2s ease, background .2s ease, box-shadow .2s ease; }
 .digital-display-chat-panel.is-conversation-hidden { border-color: transparent; padding-top: 4px; background: transparent; box-shadow: none; }
 .digital-display-chat-panel.is-conversation-hidden .digital-display-chat-heading,
 .digital-display-chat-panel.is-conversation-hidden .digital-display-chat-feed,
@@ -342,6 +342,7 @@ body {
 
 @media (max-width: 760px) {
   .digital-display-shell { height: 100dvh; min-height: 580px; }
+  .digital-display-chat-panel { bottom: max(14px, env(safe-area-inset-bottom, 0px)); }
   .digital-display-registration-card { grid-template-columns: 92px minmax(0, 1fr); }
   .digital-display-registration-card > img { width: min(100%, 92px); height: auto; }
   .digital-display-waist-panel.is-registration { top: 31%; max-height: 58vh; overflow-y: auto; }
