@@ -1,5 +1,5 @@
 import { ROLE_BUTTON_PERMISSIONS, ROLE_PERMISSIONS } from "./policy";
-import { AdminRequestError, toSafeRequestError } from "./errors";
+import { AdminRequestError, toAdminRequestLabel, toSafeRequestError } from "./errors";
 import { beginAdminProgress, finishAdminProgress, notifyAdmin, updateAdminProgress } from "./feedback";
 import { EDGE_ZH_VOICES } from "../constants/edgeZhVoices";
 import type {
@@ -98,6 +98,11 @@ function readStoredSessionToken(): string {
   } catch {
     return "";
   }
+}
+
+export function clearAdminSessionStorage(): void {
+  window.localStorage.removeItem(`${STORAGE_PREFIX}token`);
+  window.localStorage.removeItem("opentalking-admin-session");
 }
 
 const poster = (seed: string) => `https://images.unsplash.com/photo-${seed}?auto=format&fit=crop&w=800&q=80`;
@@ -719,11 +724,7 @@ export class FetchAdminApiClient implements AdminApiClient {
   }
 
   private requestLabel(path: string, method: string): string {
-    if (path.includes("/gifs/upload")) return "GIF 文件上传";
-    if (path.includes("/event/images/upload")) return "展会图片上传";
-    if (path.includes("/import/preview")) return "Excel/ZIP 导入校验";
-    const resource = path.split("/").filter(Boolean).slice(-1)[0] || "请求";
-    return method === "GET" ? `读取${resource}` : `${resource}操作`;
+    return toAdminRequestLabel(path, method);
   }
 
   private async formRequest(url: string, init: RequestInit, token: string, progressId: string, label: string): Promise<Response> {
@@ -746,6 +747,7 @@ export class FetchAdminApiClient implements AdminApiClient {
   private async request<T>(path: string, init: RequestInit = {}, tokenOverride?: string): Promise<T> {
     const token = tokenOverride ?? this.token();
     const method = String(init.method || "GET").toUpperCase();
+    const isAuthRequest = path.startsWith("/auth/");
     const label = this.requestLabel(path, method);
     const isMutation = method !== "GET" && method !== "HEAD";
     const isUpload = init.body instanceof FormData && typeof XMLHttpRequest !== "undefined";
@@ -765,12 +767,12 @@ export class FetchAdminApiClient implements AdminApiClient {
         : await fetch(buildAdminFetchUrl(`/v1${path}`), requestInit);
     } catch (error) {
       if (progressId) finishAdminProgress(progressId, label, false);
-      notifyAdmin(`${label}失败：无法连接服务，请稍后重试`, "error");
+      if (!isAuthRequest) notifyAdmin(`${label}失败：无法连接服务，请稍后重试`, "error");
       throw new AdminRequestError(error instanceof Error ? error.message : "Network request failed", { code: "NETWORK_ERROR" });
     }
-    if (response.status === 401 && path !== "/auth/login") {
-      window.localStorage.removeItem(`${STORAGE_PREFIX}token`);
-      window.localStorage.removeItem("opentalking-admin-session");
+    const authExpired = response.status === 401 && !isAuthRequest;
+    if (authExpired) {
+      clearAdminSessionStorage();
       window.dispatchEvent(new CustomEvent("opentalking-admin-auth-expired"));
     }
     if (!response.ok) {
@@ -780,11 +782,11 @@ export class FetchAdminApiClient implements AdminApiClient {
       } catch { /* keep status fallback */ }
       if (progressId) finishAdminProgress(progressId, label, false);
       const requestError = toSafeRequestError(response.status, payload, response.headers.get("X-Trace-Id") || response.headers.get("X-Request-Id") || undefined);
-      notifyAdmin(`${label}失败：${requestError.message}`, "error");
+      if (!isAuthRequest && !authExpired) notifyAdmin(`${label}失败：${requestError.message}`, "error");
       throw requestError;
     }
     if (progressId) finishAdminProgress(progressId, label, true);
-    if (isMutation) notifyAdmin(`${label}成功`, "success");
+    if (isMutation && !isAuthRequest) notifyAdmin(`${label}成功`, "success");
     if (response.status === 204) return undefined as T;
     return response.json() as Promise<T>;
   }

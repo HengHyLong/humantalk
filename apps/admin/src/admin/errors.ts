@@ -42,6 +42,35 @@ const SAFE_MESSAGES: Record<UiErrorCode, string> = {
   UNKNOWN_ERROR: "操作未完成，请稍后重试",
 };
 
+const ADMIN_RESOURCE_LABELS: Record<string, string> = {
+  exhibitions: "展会数据",
+  venues: "场地数据",
+  exhibitors: "展商数据",
+  exhibits: "展品数据",
+  schedules: "活动排期",
+  routes: "路线数据",
+  points: "点位数据",
+  broadcasts: "应急播报",
+  documents: "文档数据",
+  users: "用户数据",
+  roles: "角色数据",
+  permissions: "权限数据",
+  alerts: "告警数据",
+  "audit-logs": "审计日志",
+};
+
+/** Build a user-facing label without exposing URL paths, ids or query values. */
+export function toAdminRequestLabel(path: string, method: string): string {
+  const pathname = path.split(/[?#]/, 1)[0] || "";
+  if (pathname.includes("/gifs/upload")) return "GIF 文件上传";
+  if (pathname.includes("/event/images/upload")) return "展会图片上传";
+  if (pathname.includes("/import/preview")) return "Excel/ZIP 导入校验";
+
+  const segments = pathname.split("/").filter(Boolean).reverse();
+  const resourceLabel = segments.map((segment) => ADMIN_RESOURCE_LABELS[segment]).find(Boolean) ?? "数据";
+  return method.toUpperCase() === "GET" ? `读取${resourceLabel}` : `${resourceLabel}操作`;
+}
+
 function codeFromStatus(status?: number): UiErrorCode | undefined {
   if (status === 401) return "AUTH_REQUIRED";
   if (status === 403) return "FORBIDDEN";

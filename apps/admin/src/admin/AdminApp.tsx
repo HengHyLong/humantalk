@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { buildApiUrl, type AvatarSummary, type MotionState } from "../lib/api";
-import { DEFAULT_VOICES, adminApi } from "./api";
+import { DEFAULT_VOICES, adminApi, clearAdminSessionStorage } from "./api";
 import { canAccess, canUseButton, roleLabel } from "./policy";
 import { openTalkingClient } from "./openTalkingClient";
 import { RealtimeTestWorkspace } from "./RealtimeTestWorkspace";
@@ -570,7 +570,7 @@ export function AdminApp() {
   useEffect(() => { setMobileOpen(false); }, [path]);
   useEffect(() => { if (user && path === "/") navigate("/dashboard"); }, [path, user]);
   const login = async (username: string, password: string) => { const result = await adminApi.login(username, password); setUser(result.user); window.localStorage.setItem("opentalking-admin-session", JSON.stringify(result)); navigate("/dashboard"); };
-  const logout = () => { window.localStorage.removeItem("opentalking-admin-session"); setUser(null); };
+  const logout = () => { clearAdminSessionStorage(); setUser(null); };
   if (!user) return <LoginScreen onLogin={login} />;
   const title = PAGE_LABELS[path] ?? "管理模块";
   const isKnown = Boolean(PAGE_LABELS[path]);

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { AdminRequestError, toLoginUiError, toUiError } from "../src/admin/errors";
+import { AdminRequestError, toAdminRequestLabel, toLoginUiError, toUiError } from "../src/admin/errors";
 
 test("maps backend statuses to safe UI messages", () => {
   assert.deepEqual(toUiError(new AdminRequestError("database password leaked", { status: 500, requestId: "trace-1" })), {
@@ -32,4 +32,16 @@ test("login errors never expose unauthenticated request or backend details", () 
   const serverError = toLoginUiError(new Error("POST http://10.0.0.8/auth/login failed"));
   assert.equal(serverError.message, "登录服务暂时不可用，请稍后重试");
   assert.equal(serverError.message.includes("10.0.0.8"), false);
+});
+
+test("admin request labels never expose paths, ids or query parameters", () => {
+  const venueLabel = toAdminRequestLabel("/admin/event/venues?page=1&page_size=100", "GET");
+  assert.equal(venueLabel, "读取场地数据");
+  assert.equal(venueLabel.includes("page"), false);
+  assert.equal(venueLabel.includes("venues"), false);
+
+  const unknownLabel = toAdminRequestLabel("/admin/internal/secrets/record-123?token=secret", "PATCH");
+  assert.equal(unknownLabel, "数据操作");
+  assert.equal(unknownLabel.includes("secret"), false);
+  assert.equal(unknownLabel.includes("record-123"), false);
 });

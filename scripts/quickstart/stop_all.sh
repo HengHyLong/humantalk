@@ -209,10 +209,23 @@ stop_pid_glob() {
   fi
 }
 
+unified_repo_pids() {
+  local pid cwd
+  # Include direct Uvicorn launches, which do not create quickstart PID files.
+  local pattern='(^|/|[[:space:]])opentalking-unified([[:space:]]|$)|python[^[:space:]]*[[:space:]]+-m[[:space:]]+apps\.unified\.main([[:space:]]|$)|uvicorn[[:space:]].*apps\.unified\.main:[[:alnum:]_]+'
+  while read -r pid; do
+    [[ "$pid" =~ ^[0-9]+$ && "$pid" != "$$" ]] || continue
+    cwd="$(readlink -f "/proc/$pid/cwd" 2>/dev/null || true)"
+    # Missing ownership evidence must never authorize stopping another service.
+    [[ "$cwd" == "$repo_root" ]] || continue
+    printf '%s\n' "$pid"
+  done < <(pgrep -f "$pattern" || true)
+}
+
 stop_unified_port() {
   local port="$1"
   local pids
-  pids="$(pgrep -f "opentalking-unified|python.*-m apps\\.unified\\.main" || true)"
+  pids="$(unified_repo_pids)"
   if [[ -z "$pids" ]]; then
     return
   fi
@@ -222,17 +235,23 @@ stop_unified_port() {
     fi
     local env_text
     env_text="$(cat "/proc/$pid/environ" 2>/dev/null | tr '\0' '\n' || true)"
-    if printf '%s\n' "$env_text" | grep -qx "OPENTALKING_UNIFIED_PORT=$port"; then
+    local command_line cli_port
+    command_line="$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || true)"
+    cli_port="$(printf '%s\n' "$command_line" | sed -nE 's/.* --port[= ]+([0-9]+)( |$).*/\1/p')"
+    if [[ -n "$cli_port" ]]; then
+      [[ "$cli_port" == "$port" ]] || continue
       stop_process_pid "OpenTalking API unified residue" "port $port" "$pid"
-    elif [[ -z "$env_text" ]]; then
-      stop_process_pid "OpenTalking API unified residue" "cmdline; env unreadable" "$pid"
+    elif printf '%s\n' "$env_text" | grep -qx "OPENTALKING_UNIFIED_PORT=$port"; then
+      stop_process_pid "OpenTalking API unified residue" "port $port" "$pid"
+    else
+      echo "OpenTalking API: skipping pid=$pid (cannot verify requested port $port)"
     fi
   done
 }
 
 stop_unified_all() {
   local pids
-  pids="$(pgrep -f "opentalking-unified|python.*-m apps\\.unified\\.main" || true)"
+  pids="$(unified_repo_pids)"
   if [[ -z "$pids" ]]; then
     return
   fi
@@ -242,7 +261,7 @@ stop_unified_all() {
     fi
     local cwd
     cwd="$(readlink -f "/proc/$pid/cwd" 2>/dev/null || true)"
-    if [[ "$cwd" == "$repo_root" ]] || [[ -z "$cwd" ]]; then
+    if [[ "$cwd" == "$repo_root" ]]; then
       stop_process_pid "OpenTalking API unified residue" "repo cwd" "$pid"
     fi
   done

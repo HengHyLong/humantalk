@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { MockAdminApiClient } from "../src/admin/api";
+import { MockAdminApiClient, clearAdminSessionStorage } from "../src/admin/api";
 
 const values = new Map<string, string>();
 Object.defineProperty(globalThis, "window", {
@@ -14,6 +14,16 @@ Object.defineProperty(globalThis, "window", {
     },
     setTimeout,
   },
+});
+
+test("clearing an admin session removes both stored credentials", () => {
+  values.set("opentalking-admin-token", "token-value");
+  values.set("opentalking-admin-session", JSON.stringify({ token: "token-value" }));
+
+  clearAdminSessionStorage();
+
+  assert.equal(values.has("opentalking-admin-token"), false);
+  assert.equal(values.has("opentalking-admin-session"), false);
 });
 
 test("Mock Admin API covers login and P1 CRUD/state flows", async () => {
