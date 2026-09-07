@@ -44,6 +44,7 @@ import type {
 } from "./types";
 
 const STORAGE_PREFIX = "opentalking-admin-";
+const ADMIN_SESSION_REFRESH_INTERVAL_MS = 60_000;
 const now = () => new Date().toISOString();
 const leadSourceName = (item: Lead) => item.sourceName || (item.source === "exhibit_survey" ? "展品调研二维码" : item.terminalName || "人工录入");
 export type EventImageResource = "exhibitors" | "exhibits" | "venues" | "points" | "routes";
@@ -90,14 +91,39 @@ function writeStore<T>(key: string, value: T): void {
   }
 }
 
-function readStoredSessionToken(): string {
+type AdminLoginSession = {
+  token: string;
+  refreshToken?: string;
+  expiresAt?: number;
+  refreshedAt?: number;
+  user: AdminUser;
+};
+
+function readStoredSession(): Partial<AdminLoginSession> | null {
   try {
     const raw = window.localStorage.getItem("opentalking-admin-session");
-    const session = raw ? JSON.parse(raw) as { token?: unknown } : null;
-    return typeof session?.token === "string" ? session.token : "";
+    return raw ? JSON.parse(raw) as Partial<AdminLoginSession> : null;
   } catch {
-    return "";
+    return null;
   }
+}
+
+function readStoredSessionToken(): string {
+  const token = readStoredSession()?.token;
+  return typeof token === "string" ? token : "";
+}
+
+function persistAdminSessionTokens(tokens: { token: string; refreshToken?: string; expiresAt?: number }): void {
+  const current = readStoredSession();
+  window.localStorage.setItem(`${STORAGE_PREFIX}token`, tokens.token);
+  if (!current?.user) return;
+  window.localStorage.setItem("opentalking-admin-session", JSON.stringify({
+    ...current,
+    token: tokens.token,
+    refreshToken: tokens.refreshToken || current.refreshToken,
+    expiresAt: tokens.expiresAt || current.expiresAt,
+    refreshedAt: Date.now(),
+  }));
 }
 
 export function clearAdminSessionStorage(): void {
@@ -248,7 +274,7 @@ const DEFAULT_ALERTS: AlertEvent[] = [
 ];
 
 export interface AdminApiClient {
-  login(username: string, password: string): Promise<{ token: string; user: AdminUser }>;
+  login(username: string, password: string): Promise<AdminLoginSession>;
   getDashboard(): Promise<DashboardData>;
   listGifs(): Promise<GifAssetMeta[]>;
   createGif(input: Omit<GifAssetMeta, "id" | "createdAt">): Promise<GifAssetMeta>;
@@ -405,7 +431,7 @@ function migrateInteractionMockData(): void {
 export class MockAdminApiClient implements AdminApiClient {
   async login(username: string, password: string) {
     if (username !== "admin" || password !== "Admin@123456") throw new Error("账号或密码不正确");
-    return { token: `mock-jwt-${Date.now()}`, user: buildUser(username, "sys_admin") };
+    return { token: `mock-jwt-${Date.now()}`, expiresAt: Math.floor(Date.now() / 1000) + 1800, refreshedAt: Date.now(), user: buildUser(username, "sys_admin") };
   }
 
   async getDashboard(): Promise<DashboardData> {
@@ -719,8 +745,48 @@ function normalizeWakeActiveSeconds(value: unknown): number {
 }
 
 export class FetchAdminApiClient implements AdminApiClient {
+  private refreshPromise: Promise<string> | null = null;
+  private lastRefreshAttemptAt = 0;
+
   private token(): string {
     return window.localStorage.getItem(`${STORAGE_PREFIX}token`) || readStoredSessionToken();
+  }
+
+  private async refreshTokenOnActivity(): Promise<string> {
+    const currentToken = this.token();
+    const session = readStoredSession();
+    const refreshToken = typeof session?.refreshToken === "string" ? session.refreshToken : "";
+    const refreshedAt = typeof session?.refreshedAt === "number" ? session.refreshedAt : 0;
+    if (!currentToken || !refreshToken || Date.now() - Math.max(refreshedAt, this.lastRefreshAttemptAt) < ADMIN_SESSION_REFRESH_INTERVAL_MS) return currentToken;
+    if (this.refreshPromise) return this.refreshPromise;
+    this.lastRefreshAttemptAt = Date.now();
+
+    this.refreshPromise = (async () => {
+      try {
+        const response = await fetch(buildAdminFetchUrl("/v1/auth/refresh"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ refresh_token: refreshToken }),
+        });
+        if (!response.ok) return currentToken;
+        const payload = await response.json() as JsonRecord;
+        const token = String(payload.token || payload.access_token || "");
+        if (!token) return currentToken;
+        persistAdminSessionTokens({
+          token,
+          refreshToken: String(payload.refresh_token || refreshToken),
+          expiresAt: Number(payload.expires_at || session?.expiresAt || 0),
+        });
+        return token;
+      } catch {
+        // Keep using the current access token. Its normal 401 handling remains
+        // authoritative if the refresh service is temporarily unavailable.
+        return currentToken;
+      } finally {
+        this.refreshPromise = null;
+      }
+    })();
+    return this.refreshPromise;
   }
 
   private requestLabel(path: string, method: string): string {
@@ -745,9 +811,9 @@ export class FetchAdminApiClient implements AdminApiClient {
   }
 
   private async request<T>(path: string, init: RequestInit = {}, tokenOverride?: string): Promise<T> {
-    const token = tokenOverride ?? this.token();
     const method = String(init.method || "GET").toUpperCase();
     const isAuthRequest = path.startsWith("/auth/");
+    const token = tokenOverride ?? (isAuthRequest ? this.token() : await this.refreshTokenOnActivity());
     const label = this.requestLabel(path, method);
     const isMutation = method !== "GET" && method !== "HEAD";
     const isUpload = init.body instanceof FormData && typeof XMLHttpRequest !== "undefined";
@@ -792,8 +858,9 @@ export class FetchAdminApiClient implements AdminApiClient {
   }
 
   private async download(path: string): Promise<string> {
+    const token = await this.refreshTokenOnActivity();
     let response: Response;
-    try { response = await fetch(buildAdminFetchUrl(`/v1${path}`), { headers: this.token() ? { Authorization: `Bearer ${this.token()}` } : {} }); } catch (error) { notifyAdmin("文件下载失败：无法连接服务，请稍后重试", "error"); throw new AdminRequestError(error instanceof Error ? error.message : "Network request failed", { code: "NETWORK_ERROR" }); }
+    try { response = await fetch(buildAdminFetchUrl(`/v1${path}`), { headers: token ? { Authorization: `Bearer ${token}` } : {} }); } catch (error) { notifyAdmin("文件下载失败：无法连接服务，请稍后重试", "error"); throw new AdminRequestError(error instanceof Error ? error.message : "Network request failed", { code: "NETWORK_ERROR" }); }
     if (!response.ok) { let payload: unknown = null; try { payload = await response.json(); } catch { /* safe fallback */ } const requestError = toSafeRequestError(response.status, payload, response.headers.get("X-Trace-Id") || undefined); notifyAdmin(`文件下载失败：${requestError.message}`, "error"); throw requestError; }
     const result = await response.text();
     notifyAdmin("文件下载成功", "success");
@@ -801,8 +868,9 @@ export class FetchAdminApiClient implements AdminApiClient {
   }
 
   private async downloadBlob(path: string): Promise<Blob> {
+    const token = await this.refreshTokenOnActivity();
     let response: Response;
-    try { response = await fetch(buildAdminFetchUrl(`/v1${path}`), { headers: this.token() ? { Authorization: `Bearer ${this.token()}` } : {} }); } catch (error) { notifyAdmin("文件下载失败：无法连接服务，请稍后重试", "error"); throw new AdminRequestError(error instanceof Error ? error.message : "Network request failed", { code: "NETWORK_ERROR" }); }
+    try { response = await fetch(buildAdminFetchUrl(`/v1${path}`), { headers: token ? { Authorization: `Bearer ${token}` } : {} }); } catch (error) { notifyAdmin("文件下载失败：无法连接服务，请稍后重试", "error"); throw new AdminRequestError(error instanceof Error ? error.message : "Network request failed", { code: "NETWORK_ERROR" }); }
     if (!response.ok) { let payload: unknown = null; try { payload = await response.json(); } catch { /* safe fallback */ } const requestError = toSafeRequestError(response.status, payload, response.headers.get("X-Trace-Id") || undefined); notifyAdmin(`文件下载失败：${requestError.message}`, "error"); throw requestError; }
     const result = await response.blob();
     notifyAdmin("文件下载成功", "success");
@@ -957,7 +1025,7 @@ export class FetchAdminApiClient implements AdminApiClient {
     };
   }
 
-  async login(username: string, password: string): Promise<{ token: string; user: AdminUser }> {
+  async login(username: string, password: string): Promise<AdminLoginSession> {
     const response = await this.request<JsonRecord>("/auth/login", { method: "POST", body: JSON.stringify({ username, password }) });
     const token = String(response.token || response.access_token || "");
     window.localStorage.setItem(`${STORAGE_PREFIX}token`, token);
@@ -966,6 +1034,9 @@ export class FetchAdminApiClient implements AdminApiClient {
     const role = (ROLE_PERMISSIONS[roleCode] ? roleCode : "readonly") as AdminUser["role"];
     return {
       token,
+      refreshToken: String(response.refresh_token || ""),
+      expiresAt: Number(response.expires_at || 0),
+      refreshedAt: Date.now(),
       user: {
         id: String(response.user?.id || ""),
         username: String(response.user?.username || username),
@@ -1022,7 +1093,8 @@ export class FetchAdminApiClient implements AdminApiClient {
     return this.gif({ ...uploaded, ...saved });
   }
   async fetchGifBlobUrl(id: string) {
-    const response = await fetch(buildAdminFetchUrl(`/v1/admin/assets/gifs/${encodeURIComponent(id)}/file`), { headers: this.token() ? { Authorization: `Bearer ${this.token()}` } : {} });
+    const token = await this.refreshTokenOnActivity();
+    const response = await fetch(buildAdminFetchUrl(`/v1/admin/assets/gifs/${encodeURIComponent(id)}/file`), { headers: token ? { Authorization: `Bearer ${token}` } : {} });
     if (!response.ok) throw new Error(`Gif 文件读取失败（${response.status}）`);
     return URL.createObjectURL(await response.blob());
   }

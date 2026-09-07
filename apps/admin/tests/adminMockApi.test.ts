@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { MockAdminApiClient, clearAdminSessionStorage } from "../src/admin/api";
+import { FetchAdminApiClient, MockAdminApiClient, clearAdminSessionStorage } from "../src/admin/api";
 
 const values = new Map<string, string>();
 Object.defineProperty(globalThis, "window", {
   configurable: true,
   value: {
+    location: { href: "http://localhost/admin" },
     localStorage: {
       getItem: (key: string) => values.get(key) ?? null,
       setItem: (key: string, value: string) => values.set(key, value),
@@ -14,6 +15,38 @@ Object.defineProperty(globalThis, "window", {
     },
     setTimeout,
   },
+});
+
+test("authenticated activity refreshes and stores the sliding session token", async () => {
+  values.set("opentalking-admin-token", "old-access-token");
+  values.set("opentalking-admin-session", JSON.stringify({
+    token: "old-access-token",
+    refreshToken: "refresh-token",
+    refreshedAt: Date.now() - 61_000,
+    user: { id: "user-1", username: "admin", displayName: "管理员", role: "sys_admin", permissions: [], buttonPermissions: [] },
+  }));
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ url: string; authorization: string }> = [];
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    calls.push({ url, authorization: new Headers(init?.headers).get("Authorization") || "" });
+    if (url.endsWith("/api/v1/auth/refresh")) {
+      return Response.json({ token: "new-access-token", refresh_token: "new-refresh-token", expires_at: 4_000_000_000 });
+    }
+    return Response.json({ interaction_count: 0, online_terminals: 0, pending_knowledge: 0, new_leads: 0, alerts: 0, todo: [] });
+  };
+
+  try {
+    await new FetchAdminApiClient().getDashboard();
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].authorization, "Bearer new-access-token");
+  assert.equal(values.get("opentalking-admin-token"), "new-access-token");
+  const session = JSON.parse(values.get("opentalking-admin-session") || "{}") as { refreshToken?: string };
+  assert.equal(session.refreshToken, "new-refresh-token");
 });
 
 test("clearing an admin session removes both stored credentials", () => {
