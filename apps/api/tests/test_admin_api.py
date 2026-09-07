@@ -10,7 +10,16 @@ from apps.api.admin import AdminStore
 from apps.api.admin.middleware import AdminTraceMiddleware
 from apps.api.admin.routes import public_router, router
 from apps.api.admin.security import password_hasher
+from apps.api.routes import scene_assets
 from opentalking.agent.dify_index import DifyKnowledgeIndex
+
+
+PNG_BYTES = (
+    b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
+    b"\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89"
+    b"\x00\x00\x00\rIDATx\x9cc\xf8\xff\xff?\x00\x05\xfe\x02\xfeA\xe2!\xbc"
+    b"\x00\x00\x00\x00IEND\xaeB`\x82"
+)
 
 
 def _client(tmp_path) -> TestClient:
@@ -20,6 +29,7 @@ def _client(tmp_path) -> TestClient:
         admin_jwt_secret="test-secret-that-is-long-enough-for-hs256",
         admin_access_token_minutes=30,
         admin_refresh_token_days=7,
+        scene_assets_dir=str(tmp_path / "scene-assets"),
     )
     app = FastAPI()
     app.state.settings = settings
@@ -29,6 +39,7 @@ def _client(tmp_path) -> TestClient:
     app.add_middleware(AdminTraceMiddleware)
     app.include_router(router)
     app.include_router(public_router)
+    app.include_router(scene_assets.router)
     return TestClient(app)
 
 
@@ -36,6 +47,45 @@ def _login(client: TestClient) -> dict[str, str]:
     response = client.post("/api/v1/auth/login", json={"username": "admin", "password": "Admin@123456"})
     assert response.status_code == 200
     return {"Authorization": f"Bearer {response.json()['token']}"}
+
+
+def test_event_image_upload_persists_and_is_downloadable(tmp_path) -> None:
+    with _client(tmp_path) as client:
+        headers = _login(client)
+        for resource in ("exhibitors", "exhibits", "venues", "points", "routes"):
+            response = client.post(
+                "/api/v1/admin/event/images/upload",
+                headers=headers,
+                data={"resource": resource},
+                files=[("files", (f"{resource}.png", PNG_BYTES, "image/png"))],
+            )
+
+            assert response.status_code == 200, response.text
+            assert len(response.json()["urls"]) == 1
+            image_url = response.json()["urls"][0]
+            assert image_url.startswith("/scene-assets/files/")
+            downloaded = client.get(image_url)
+            assert downloaded.status_code == 200
+            assert downloaded.content == PNG_BYTES
+            assert downloaded.headers["content-type"].startswith("image/png")
+
+
+def test_event_image_upload_rejects_batch_without_leaving_partial_files(tmp_path) -> None:
+    with _client(tmp_path) as client:
+        headers = _login(client)
+        response = client.post(
+            "/api/v1/admin/event/images/upload",
+            headers=headers,
+            data={"resource": "exhibitors"},
+            files=[
+                ("files", ("valid.png", PNG_BYTES, "image/png")),
+                ("files", ("broken.png", b"not-a-png", "image/png")),
+            ],
+        )
+
+        assert response.status_code == 400
+        files_root = tmp_path / "scene-assets" / "files"
+        assert not list(files_root.glob("file-*"))
 
 
 def test_admin_auth_permissions_and_refresh(tmp_path) -> None:

@@ -516,6 +516,7 @@ async def test_llm_config(record_id: str, request: Request, auth: dict[str, Any]
     return {"success": True, "latencyMs": latency_ms, "message": "连接成功"}
 
 EVENT_IMAGE_RESOURCES = {"exhibitors", "exhibits", "venues", "points", "routes"}
+EVENT_IMAGE_MAX_BYTES = 10 * 1024 * 1024
 
 COLLECTION_RESOURCES = {
     "assets": {"avatars": "avatars", "gifs": "gifs", "voice-configs": "voice_configs", "scene-bindings": "scene_bindings", "idle-contents": "idle_contents"},
@@ -942,28 +943,39 @@ async def upload_event_images(
     settings = getattr(request.app.state, "settings", None)
     service_store = SceneAssetStore(Path(getattr(settings, "scene_assets_dir", "./data/scene-assets")), seed_defaults=True)
     allowed_extensions = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".svg"}
-    uploaded: list[dict[str, Any]] = []
+    validated: list[tuple[bytes, str, str, str]] = []
     for file in files:
+        filename = file.filename or "image.jpg"
         content_type = (file.content_type or "").lower()
-        extension = Path(file.filename or "image.jpg").suffix.lower()
+        extension = Path(filename).suffix.lower()
         if not content_type.startswith("image/") or extension not in allowed_extensions:
             raise HTTPException(status_code=400, detail={"code": "UNSUPPORTED_FILE", "detail": "仅支持 JPG、PNG、WebP、GIF 或 SVG 图片"})
-        content = await file.read()
+        content = await file.read(EVENT_IMAGE_MAX_BYTES + 1)
         if not content:
             raise HTTPException(status_code=400, detail={"code": "EMPTY_FILE", "detail": "不能上传空文件"})
-        if len(content) > 10 * 1024 * 1024:
+        if len(content) > EVENT_IMAGE_MAX_BYTES:
             raise HTTPException(status_code=413, detail={"code": "FILE_TOO_LARGE", "detail": "单张图片不能超过 10MB"})
-        try:
+        validated.append((content, filename, content_type, Path(filename).stem))
+
+    uploaded: list[dict[str, Any]] = []
+    try:
+        for content, filename, content_type, name in validated:
             saved = service_store.create_file(
                 content=content,
-                filename=file.filename or "image",
+                filename=filename,
                 mime_type=content_type,
-                name=Path(file.filename or "image").stem,
+                name=name,
                 category=f"event:{resource}",
             )
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail={"code": "UNSUPPORTED_FILE", "detail": "文件格式不受支持，请上传平台要求的文件类型"}) from exc
-        uploaded.append(saved)
+            uploaded.append(saved)
+    except ValueError as exc:
+        for item in uploaded:
+            service_store.delete_file(str(item["id"]))
+        raise HTTPException(status_code=400, detail={"code": "UNSUPPORTED_FILE", "detail": "文件格式不受支持，请上传平台要求的文件类型"}) from exc
+    except Exception:
+        for item in uploaded:
+            service_store.delete_file(str(item["id"]))
+        raise
     _audit(request, auth, action="upload", resource_type="service_file", resource_id=str(uploaded[0]["id"]), before=None, after={"resource": resource, "items": uploaded})
     return {"urls": [item["url"] for item in uploaded], "items": uploaded}
 
