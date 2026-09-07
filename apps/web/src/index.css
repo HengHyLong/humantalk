@@ -188,17 +188,28 @@ body {
 @keyframes digital-display-spin { to { transform: rotate(360deg); } }
 @keyframes digital-display-loading-progress { 0% { transform: translateX(-120%); } 55%, 100% { transform: translateX(280%); } }
 
-.digital-display-chat-panel { position: absolute; z-index: 20; right: 3%; bottom: 3%; left: 3%; display: flex; max-height: min(46vh, 520px); min-height: 0; flex-direction: column; gap: 10px; border: 1px solid rgba(159, 228, 255, .4); border-radius: 18px; padding: 15px; background: rgba(7, 111, 188, .16); box-shadow: 0 16px 32px rgba(0, 22, 72, .12); transition: border-color .2s ease, background .2s ease, box-shadow .2s ease; }
+.digital-display-chat-panel { position: absolute; z-index: 20; right: 3%; bottom: 2%; left: 3%; display: flex; max-height: min(46vh, 520px); min-height: 0; flex-direction: column; gap: 10px; border: 1px solid rgba(159, 228, 255, .4); border-radius: 18px; padding: 15px; background: rgba(7, 111, 188, .16); box-shadow: 0 16px 32px rgba(0, 22, 72, .12); transition: border-color .2s ease, background .2s ease, box-shadow .2s ease; }
 .digital-display-chat-panel.is-conversation-hidden { border-color: transparent; padding-top: 4px; background: transparent; box-shadow: none; }
 .digital-display-chat-panel.is-conversation-hidden .digital-display-chat-heading,
-.digital-display-chat-panel.is-conversation-hidden .digital-display-chat-feed,
-.digital-display-chat-panel.is-conversation-hidden .digital-display-chat-suggestions { display: none; }
+.digital-display-chat-panel.is-conversation-hidden .digital-display-chat-feed { display: none; }
 .digital-display-chat-panel.is-presentation-hidden { right: 5%; bottom: 3%; left: 5%; max-height: none; border-color: rgba(159, 228, 255, .25); padding: 6px; background: rgba(2, 30, 76, .34); box-shadow: 0 12px 28px rgba(1, 16, 58, .18); }
 .digital-display-chat-panel.is-subtitle-active { display: flex; }
 .digital-display-chat-panel.is-presentation-hidden .digital-display-chat-input { border-color: rgba(181, 232, 255, .4); background: rgba(2, 30, 76, .72); }
 .digital-display-chat-panel.is-presentation-hidden .digital-display-chat-input::before { align-self: center; flex: 0 0 auto; color: rgba(218, 247, 255, .84); content: attr(data-prompt); font-size: 10px; font-weight: 700; white-space: nowrap; }
 .digital-display-chat-reveal { align-self: flex-end; border: 1px solid rgba(181, 232, 255, .4); border-radius: 999px; padding: 7px 12px; color: #dcf7ff; background: rgba(2, 45, 98, .72); font-size: 10px; cursor: pointer; backdrop-filter: blur(8px); }
 .digital-display-chat-reveal:hover { background: rgba(21, 111, 170, .78); }
+.digital-display-quick-actions { position: absolute; top: 82px; left: 22px; z-index: 38; display: flex; align-items: flex-start; gap: 10px; }
+.digital-display-quick-actions-trigger { display: grid; width: 48px; height: 48px; flex: 0 0 auto; place-items: center; border: 1px solid rgba(190, 237, 255, .5); border-radius: 50%; color: #e9faff; background: rgba(2, 48, 101, .78); box-shadow: 0 10px 28px rgba(0, 18, 58, .3); cursor: pointer; backdrop-filter: blur(10px); transition: border-color .18s ease, background .18s ease, transform .18s ease; }
+.digital-display-quick-actions-trigger:hover,
+.digital-display-quick-actions.is-open .digital-display-quick-actions-trigger { border-color: rgba(196, 245, 255, .9); background: rgba(17, 139, 190, .9); transform: scale(1.04); }
+.digital-display-quick-actions-trigger > span { display: grid; grid-template-columns: repeat(2, 5px); gap: 4px; }
+.digital-display-quick-actions-trigger i { display: block; width: 5px; height: 5px; border-radius: 50%; background: currentColor; box-shadow: 0 0 7px rgba(196, 245, 255, .55); }
+.digital-display-quick-actions-menu { display: grid; min-width: 112px; gap: 7px; border: 1px solid rgba(181, 232, 255, .38); border-radius: 14px; padding: 9px; background: rgba(2, 38, 84, .8); box-shadow: 0 16px 34px rgba(0, 18, 58, .3); backdrop-filter: blur(12px); animation: digital-display-quick-actions-in .18s ease-out; }
+.digital-display-quick-actions-menu[hidden] { display: none; }
+.digital-display-quick-actions-menu button { border: 1px solid rgba(181, 232, 255, .34); border-radius: 999px; padding: 8px 12px; color: rgba(238, 251, 255, .96); background: rgba(24, 119, 176, .5); font-size: 11px; white-space: nowrap; cursor: pointer; }
+.digital-display-quick-actions-menu button:hover:not(:disabled) { background: rgba(49, 172, 220, .72); }
+.digital-display-quick-actions-menu button:disabled { cursor: default; opacity: .55; }
+@keyframes digital-display-quick-actions-in { from { opacity: 0; transform: translateX(-6px) scale(.96); } to { opacity: 1; transform: translateX(0) scale(1); } }
 .digital-display-presentation-stack { position: absolute; top: 52%; bottom: clamp(72px, 8%, 120px); left: 50%; z-index: 34; display: flex; width: min(860px, 92%); max-width: 100%; min-height: 0; flex-direction: column; align-items: stretch; transform: translateX(-50%); }
 .digital-display-presentation-stack.is-registration { width: min(620px, 92%); }
 .digital-display-presentation-stack .digital-display-waist-panel { position: relative; top: auto; right: auto; bottom: auto; left: auto; width: 100%; max-width: none; min-height: 0; flex: 1 1 auto; transform: none; }
@@ -313,10 +324,6 @@ body {
 .exhibition-product-list-image { touch-action: pan-y; }
 .exhibition-product-list-item-placeholder { display: grid; place-items: center; color: rgba(223, 248, 255, .74); font-size: 12px; }
 .exhibition-product-list-item > strong { display: -webkit-box; min-height: 2.8em; overflow: hidden; padding: 8px 9px 9px; color: #f3fbff; font-size: 12px; line-height: 1.4; text-overflow: ellipsis; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
-.digital-display-chat-suggestions { display: flex; flex: 0 0 auto; flex-wrap: wrap; gap: 7px; }
-.digital-display-chat-suggestions button { border: 1px solid rgba(181, 232, 255, .36); border-radius: 999px; padding: 7px 11px; color: rgba(232, 249, 255, .94); background: rgba(21, 122, 190, .38); font-size: 10px; cursor: pointer; backdrop-filter: blur(5px); }
-.digital-display-chat-suggestions button:hover:not(:disabled) { background: rgba(63, 186, 236, .58); }
-.digital-display-chat-suggestions button:disabled { cursor: default; opacity: .65; }
 .digital-display-chat-input { display: flex; min-width: 0; flex: 0 0 auto; align-items: stretch; gap: 8px; border: 1px solid rgba(181, 232, 255, .3); border-radius: 12px; padding: 8px 9px; background: rgba(2, 30, 76, .55); box-shadow: 0 12px 28px rgba(1, 16, 58, .18); }
 .digital-display-chat-input > .digital-display-voice-input { min-width: 0; flex: 1; }
 .digital-display-chat-input input { min-width: 0; flex: 1; border: 1px solid rgba(174, 228, 255, .25); border-radius: 8px; padding: 10px 11px; color: #e9faff; background: rgba(3, 39, 91, .65); outline: none; font-size: 12px; }
@@ -342,7 +349,11 @@ body {
 
 @media (max-width: 760px) {
   .digital-display-shell { height: 100dvh; min-height: 580px; }
-  .digital-display-chat-panel { bottom: max(14px, env(safe-area-inset-bottom, 0px)); }
+  .digital-display-chat-panel { bottom: max(8px, env(safe-area-inset-bottom, 0px)); }
+  .digital-display-quick-actions { top: 78px; left: 14px; gap: 8px; }
+  .digital-display-quick-actions-trigger { width: 44px; height: 44px; }
+  .digital-display-quick-actions-menu { min-width: 104px; padding: 8px; }
+  .digital-display-quick-actions-menu button { padding: 7px 10px; font-size: 10px; }
   .digital-display-registration-card { grid-template-columns: 92px minmax(0, 1fr); }
   .digital-display-registration-card > img { width: min(100%, 92px); height: auto; }
   .digital-display-waist-panel.is-registration { top: 31%; max-height: 58vh; overflow-y: auto; }

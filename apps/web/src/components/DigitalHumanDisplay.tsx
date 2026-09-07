@@ -134,6 +134,7 @@ export function DigitalHumanDisplay({
   const [inputMode, setInputMode] = useState<"voice" | "keyboard">("voice");
   const [conversationActivity, setConversationActivity] = useState(0);
   const [conversationVisible, setConversationVisible] = useState(true);
+  const [quickActionsOpen, setQuickActionsOpen] = useState(false);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [latestRoundHeight, setLatestRoundHeight] = useState<number | null>(null);
   const [lightboxImage, setLightboxImage] = useState<{ src: string; alt: string } | null>(null);
@@ -202,6 +203,10 @@ export function DigitalHumanDisplay({
   const chatFeedStyle = latestRoundHeight == null
       ? undefined
       : ({ "--digital-display-latest-round-height": `${latestRoundHeight}px` } as CSSProperties);
+
+  useEffect(() => {
+    if (presentationActive) setQuickActionsOpen(false);
+  }, [presentationActive]);
 
   const updateScrollToBottomVisibility = useCallback(() => {
     const feed = chatFeedRef.current;
@@ -347,6 +352,39 @@ export function DigitalHumanDisplay({
               ))}
             </aside>
 
+            <aside className={`digital-display-quick-actions ${quickActionsOpen ? "is-open" : ""}`}>
+              <button
+                  type="button"
+                  className="digital-display-quick-actions-trigger"
+                  onClick={() => setQuickActionsOpen((open) => !open)}
+                  aria-expanded={quickActionsOpen}
+                  aria-controls="digital-display-quick-actions-menu"
+                  aria-label={quickActionsOpen ? (english ? "Hide shortcuts" : "收起快捷入口") : (english ? "Show shortcuts" : "展开快捷入口")}
+              >
+                <span aria-hidden><i /><i /><i /><i /></span>
+              </button>
+              <div
+                  id="digital-display-quick-actions-menu"
+                  className="digital-display-quick-actions-menu"
+                  aria-label={english ? "Suggested questions" : "快捷入口"}
+                  hidden={!quickActionsOpen}
+              >
+                {suggestions.map((suggestion) => (
+                    <button
+                        key={suggestion}
+                        type="button"
+                        onClick={() => {
+                          setQuickActionsOpen(false);
+                          if (live) (onSuggestionSend ?? onSend)(suggestion);
+                        }}
+                        disabled={!live}
+                    >
+                      {suggestion}
+                    </button>
+                ))}
+              </div>
+            </aside>
+
             <section
                 className={`digital-display-chat-panel ${chatPanelHidden ? "is-conversation-hidden" : ""} ${presentationActive ? "is-presentation-hidden" : ""} ${subtitleActive ? "is-subtitle-active" : ""}`}
                 data-prompt={english ? "Ask another question" : "继续提问"}
@@ -467,19 +505,6 @@ export function DigitalHumanDisplay({
                       {english ? "Back to latest" : "回到底部"}
                     </button>
                 ) : null}
-              </div>
-
-              <div className="digital-display-chat-suggestions" aria-label={english ? "Suggested questions" : "常见问题"}>
-                {suggestions.map((suggestion) => (
-                    <button
-                        key={suggestion}
-                        type="button"
-                        onClick={() => live && (onSuggestionSend ?? onSend)(suggestion)}
-                        disabled={!live}
-                    >
-                      {suggestion}
-                    </button>
-                ))}
               </div>
 
               <div className="digital-display-chat-input" data-prompt={english ? "Ask another question" : "继续提问"}>
