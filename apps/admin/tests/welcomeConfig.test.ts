@@ -15,7 +15,8 @@ test("welcome configuration only offers active scripts for the current exhibitio
 
 test("wake-word editor preserves delimiters while editing", () => {
   assert.match(source, /const \[wakeWordsInput, setWakeWordsInput\] = useState/);
-  assert.match(source, /label="唤醒词（逗号或换行分隔）" textarea value=\{wakeWordsInput\}/);
-  assert.match(source, /setWakeWordsInput\(value\)/);
-  assert.match(source, /wakeWords: parseWakeWordsInput\(value\)/);
+  assert.match(source, /<textarea id="wake-words-input" data-testid="wake-words-input"/);
+  assert.match(source, /setWakeWordsInput\(event\.target\.value\)/);
+  assert.doesNotMatch(source, /setWakeWordsInput\(event\.target\.value\); setEditing/);
+  assert.match(source, /configToSave = \{ \.\.\.current, wakeWords: parseWakeWordsInput\(wakeWordsInput\) \}/);
 });
