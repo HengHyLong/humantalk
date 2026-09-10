@@ -147,3 +147,29 @@ AUDIO2VIDEO_PLAYBACK_AUDIO_RESERVE_MS=1200
 服务启动并建立 WebRTC 会话后，日志应出现 `WebRTC H.264 encoder active: codec=h264_nvenc`。如果驱动、PyAV 或 NVENC 会话不可用，OpenTalking 会记录原因并自动回退到 `libx264`。NVENC 只降低最终视频压缩开销；如果 `FlashTalk live generate` 日志中的模型生成耗时已经超过对应音频时长，仍需降低模型实时输出尺寸或帧率。
 
 `AUDIO2VIDEO_PLAYBACK_AUDIO_RESERVE_MS` 用于避免等待视频队列时耗尽旧音频。日志中的 `audio_buffer_ms=等待前->等待后->新音频入队后` 可以确认背压期间没有提前播放新音频；等待后的数值通常会停在储备线附近。`av_queue_skew_ms` 是音频减视频的排队时长估算，持续为较大正数表示音频积压更多，持续为较大负数表示视频积压更多。数值提高会增强抗抖动能力，也会增加一定播放缓冲。
+
+## 可选人脸补丁超分
+
+QuickTalk 默认生成 256×256 人脸补丁，再放大并融合回模板画布。对于 1K 竖屏形象，可以在融合前启用 2× TorchScript 超分，把补丁提升到 512×512。该路径仅作用于 `backend: local`；使用 `backend: omnirt` 时需要在 OmniRT QuickTalk runtime 内启用对应能力。
+
+先在一次性的转换环境中把官方 `RealESRGAN_x2plus.pth` 转成 TorchScript。转换需要 BasicSR，实时服务不需要：
+
+```bash
+uv sync --extra quicktalk-face-sr-export
+uv run python scripts/export_realesrgan_x2_torchscript.py \
+  --weights /models/RealESRGAN_x2plus.pth \
+  --output /models/realesrgan_x2plus.torchscript.pt
+```
+
+服务端配置：
+
+```env
+OPENTALKING_QUICKTALK_FACE_SR_ENABLED=1
+OPENTALKING_QUICKTALK_FACE_SR_MODEL_PATH=/models/realesrgan_x2plus.torchscript.pt
+OPENTALKING_QUICKTALK_FACE_SR_FP16=1
+OPENTALKING_QUICKTALK_FACE_SR_STRENGTH=0.7
+OPENTALKING_QUICKTALK_FACE_SR_TEMPORAL_ALPHA=0.7
+OPENTALKING_QUICKTALK_FACE_SR_MIN_ROI_EDGE=320
+```
+
+模型在 QuickTalk worker 创建时加载和预热，每个会话独立保存高频细节的时序状态。小于阈值的人脸区域会跳过超分；模型缺失、格式错误或运行失败时会记录告警并自动退回原始补丁，不中断会话。TorchScript 模型必须接收并返回 `[1, 3, H, W]`、RGB、`0..1` 张量，并同时放大宽高。
