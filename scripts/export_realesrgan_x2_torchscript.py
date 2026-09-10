@@ -8,11 +8,14 @@ server only needs torch and the generated TorchScript file at runtime.
 from __future__ import annotations
 
 import argparse
+import logging
 from pathlib import Path
 
 import torch
 from torch import nn
 from torch.nn import functional as F
+
+log = logging.getLogger(__name__)
 
 
 # Standalone, checkpoint-compatible reimplementation of BasicSR's RRDBNet.
@@ -92,6 +95,24 @@ def _load_state(path: Path) -> dict[str, torch.Tensor]:
     return state
 
 
+def _trace_and_maybe_freeze(
+    model: nn.Module,
+    sample: torch.Tensor,
+) -> torch.jit.ScriptModule:
+    traced = torch.jit.trace(model, sample, strict=True).eval()
+    try:
+        return torch.jit.freeze(traced)
+    except RuntimeError as exc:
+        # Some PyTorch/CUDA combinations hit an internal assertion in
+        # frozen_conv_folding. Freezing is only an optional optimization;
+        # an eval-mode traced module has the same weights and output.
+        log.warning(
+            "TorchScript freeze failed; saving the compatible traced model instead: %s",
+            exc,
+        )
+        return traced
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Export RealESRGAN_x2plus.pth to a QuickTalk TorchScript model."
@@ -107,8 +128,7 @@ def main() -> None:
     model = model.eval().to(device=device, dtype=torch.float32)
     sample = torch.zeros((1, 3, 256, 256), device=device, dtype=torch.float32)
     with torch.inference_mode():
-        traced = torch.jit.trace(model, sample, strict=True)
-        traced = torch.jit.freeze(traced.eval())
+        traced = _trace_and_maybe_freeze(model, sample)
         output = traced(sample)
     if tuple(output.shape) != (1, 3, 512, 512):
         raise RuntimeError(f"unexpected exported model output shape: {tuple(output.shape)}")
