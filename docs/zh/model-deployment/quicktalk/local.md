@@ -152,13 +152,13 @@ AUDIO2VIDEO_PLAYBACK_AUDIO_RESERVE_MS=1200
 
 QuickTalk 默认生成 256×256 人脸补丁，再放大并融合回模板画布。对于 1K 竖屏形象，可以在融合前启用 2× TorchScript 超分，把补丁提升到 512×512。该路径仅作用于 `backend: local`；使用 `backend: omnirt` 时需要在 OmniRT QuickTalk runtime 内启用对应能力。
 
-先在一次性的转换环境中把官方 `RealESRGAN_x2plus.pth` 转成 TorchScript。转换需要 BasicSR，实时服务不需要：
+使用仓库内置的兼容导出脚本，把官方 `RealESRGAN_x2plus.pth` 转成 TorchScript。脚本只依赖 QuickTalk 已使用的 PyTorch，不需要安装 BasicSR：
 
 ```bash
-uv sync --extra quicktalk-face-sr-export
 uv run python scripts/export_realesrgan_x2_torchscript.py \
   --weights /models/RealESRGAN_x2plus.pth \
-  --output /models/realesrgan_x2plus.torchscript.pt
+  --output /models/realesrgan_x2plus.torchscript.pt \
+  --device cuda:0
 ```
 
 服务端配置：

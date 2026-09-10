@@ -112,9 +112,6 @@ quicktalk-cuda = [
   "imageio-ffmpeg>=0.5",
   "onnxruntime-gpu>=1.24.0,<1.27",
 ]
-quicktalk-face-sr-export = [
-  "basicsr>=1.4.2",
-]
 local-cosyvoice-service = [
   "fastapi>=0.109",
   "uvicorn[standard]>=0.27",

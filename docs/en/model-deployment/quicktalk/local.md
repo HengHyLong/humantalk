@@ -92,13 +92,13 @@ After a WebRTC session starts, the log should contain `WebRTC H.264 encoder acti
 
 QuickTalk normally generates a 256×256 face patch and enlarges it before compositing it back into the template canvas. For a 1K portrait avatar, an optional 2× TorchScript stage can enhance the patch to 512×512 before compositing. This path applies only to `backend: local`; with `backend: omnirt`, the equivalent feature must be enabled in the OmniRT QuickTalk runtime.
 
-Convert the official `RealESRGAN_x2plus.pth` checkpoint once. BasicSR is needed for conversion but not by the realtime service:
+Use the repository's compatible exporter to convert the official `RealESRGAN_x2plus.pth` checkpoint. It only needs the PyTorch already used by QuickTalk; BasicSR is not required:
 
 ```bash
-uv sync --extra quicktalk-face-sr-export
 uv run python scripts/export_realesrgan_x2_torchscript.py \
   --weights /models/RealESRGAN_x2plus.pth \
-  --output /models/realesrgan_x2plus.torchscript.pt
+  --output /models/realesrgan_x2plus.torchscript.pt \
+  --device cuda:0
 ```
 
 Configure the server:
