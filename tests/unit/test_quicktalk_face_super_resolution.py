@@ -28,6 +28,7 @@ def _worker(enhancer: _FakeEnhancer | None) -> RealtimeV3Worker:
     worker.face_sr_strength = 0.5
     worker.face_sr_temporal_alpha = 0.75
     worker.face_sr_min_roi_edge = 320
+    worker.face_sr_interval = 1
     return worker
 
 
@@ -67,6 +68,50 @@ def test_face_sr_temporal_filter_smooths_only_the_added_detail() -> None:
 
     # Current detail is zero and the previous detail contributes 25%; strength is 50%.
     assert torch.allclose(second, torch.full_like(second, 0.125))
+
+
+def test_face_sr_interval_reuses_only_detail_with_current_mouth_base() -> None:
+    enhancer = _FakeEnhancer(1.0)
+    worker = _worker(enhancer)
+    worker.face_sr_interval = 2
+    state = RealtimeV3SessionState()
+
+    first_patch = torch.zeros((3, 2, 2), dtype=torch.float32)
+    worker._enhance_face_patch(
+        first_patch,
+        target_height=500,
+        target_width=400,
+        state=state,
+    )
+    current_patch = torch.full((3, 2, 2), 0.25, dtype=torch.float32)
+    second = worker._enhance_face_patch(
+        current_patch,
+        target_height=500,
+        target_width=400,
+        state=state,
+    )
+
+    assert enhancer.calls == 1
+    # Current-frame low-frequency content is 0.25; only cached detail is reused.
+    assert torch.allclose(second, torch.full_like(second, 0.75))
+
+
+def test_face_sr_interval_runs_again_on_scheduled_frame() -> None:
+    enhancer = _FakeEnhancer(1.0)
+    worker = _worker(enhancer)
+    worker.face_sr_interval = 2
+    state = RealtimeV3SessionState()
+    patch = torch.zeros((3, 2, 2), dtype=torch.float32)
+
+    for _ in range(3):
+        worker._enhance_face_patch(
+            patch,
+            target_height=500,
+            target_width=400,
+            state=state,
+        )
+
+    assert enhancer.calls == 2
 
 
 def test_face_sr_bypasses_small_face_roi() -> None:
@@ -109,9 +154,13 @@ def test_face_sr_failure_falls_back_to_original_patch() -> None:
 
 
 def test_session_reset_drops_face_sr_temporal_history() -> None:
-    state = RealtimeV3SessionState(face_sr_previous_detail=torch.ones((3, 4, 4)))
+    state = RealtimeV3SessionState(
+        face_sr_previous_detail=torch.ones((3, 4, 4)),
+        face_sr_frame_index=7,
+    )
     state.reset()
     assert state.face_sr_previous_detail is None
+    assert state.face_sr_frame_index == 0
 
 
 def test_enabled_face_sr_without_model_path_is_fail_open(monkeypatch) -> None:

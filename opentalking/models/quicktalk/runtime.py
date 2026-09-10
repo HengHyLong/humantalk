@@ -65,6 +65,7 @@ class RealtimeV3SessionState:
     transition_source_frame: np.ndarray | None = None
     transition_frame_index: int = 0
     face_sr_previous_detail: torch.Tensor | None = None
+    face_sr_frame_index: int = 0
     hn: np.ndarray | None = None
     cn: np.ndarray | None = None
 
@@ -80,6 +81,7 @@ class RealtimeV3SessionState:
         self.transition_source_frame = None
         self.transition_frame_index = 0
         self.face_sr_previous_detail = None
+        self.face_sr_frame_index = 0
         if self.hn is not None:
             self.hn.fill(0)
         if self.cn is not None:
@@ -246,6 +248,7 @@ class RealtimeV3Worker:
             self.face_sr_strength,
             self.face_sr_temporal_alpha,
             self.face_sr_min_roi_edge,
+            self.face_sr_interval,
         ) = face_sr_parameters()
         self.input_names = self.v2.model_backend.input_names
         self.frames, self.fps = self._load_template_frames(template_video, max_template_seconds)
@@ -654,12 +657,35 @@ class RealtimeV3Worker:
         if enhancer is None or max(target_height, target_width) < min_roi_edge:
             if state is not None:
                 state.face_sr_previous_detail = None
+                state.face_sr_frame_index = 0
             return patch_t
+
+        interval = max(1, int(getattr(self, "face_sr_interval", 1)))
+        previous = state.face_sr_previous_detail if state is not None else None
+        frame_index = state.face_sr_frame_index if state is not None else 0
+        should_run_sr = interval == 1 or previous is None or frame_index % interval == 0
+        if state is not None:
+            state.face_sr_frame_index += 1
+
+        if not should_run_sr and previous is not None:
+            # Preserve the current QuickTalk mouth geometry in the bicubic base.
+            # Only reuse the prior frame's high-frequency SR residual, avoiding a
+            # full previous-frame face that would visibly delay lip motion.
+            baseline = F.interpolate(
+                patch_t.unsqueeze(0),
+                size=previous.shape[-2:],
+                mode="bicubic",
+                align_corners=False,
+                antialias=True,
+            ).squeeze(0)
+            strength = float(getattr(self, "face_sr_strength", 0.7))
+            return (baseline + strength * previous).clamp(0.0, 1.0)
 
         enhanced = enhancer.enhance(patch_t)
         if enhanced.shape[-2:] == patch_t.shape[-2:]:
             if state is not None:
                 state.face_sr_previous_detail = None
+                state.face_sr_frame_index = 0
             return patch_t
 
         baseline = F.interpolate(
@@ -979,6 +1005,7 @@ class MultiFaceRealtimeV3Worker(RealtimeV3Worker):
             self.face_sr_strength,
             self.face_sr_temporal_alpha,
             self.face_sr_min_roi_edge,
+            self.face_sr_interval,
         ) = face_sr_parameters()
         self.input_names = self.v2.model_backend.input_names
         self.frames, self.fps = self._load_template_frames(template_video, max_template_seconds)

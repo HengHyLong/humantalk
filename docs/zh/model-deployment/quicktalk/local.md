@@ -170,6 +170,7 @@ OPENTALKING_QUICKTALK_FACE_SR_FP16=1
 OPENTALKING_QUICKTALK_FACE_SR_STRENGTH=0.7
 OPENTALKING_QUICKTALK_FACE_SR_TEMPORAL_ALPHA=0.7
 OPENTALKING_QUICKTALK_FACE_SR_MIN_ROI_EDGE=320
+OPENTALKING_QUICKTALK_FACE_SR_INTERVAL=2
 ```
 
-模型在 QuickTalk worker 创建时加载和预热，每个会话独立保存高频细节的时序状态。小于阈值的人脸区域会跳过超分；模型缺失、格式错误或运行失败时会记录告警并自动退回原始补丁，不中断会话。TorchScript 模型必须接收并返回 `[1, 3, H, W]`、RGB、`0..1` 张量，并同时放大宽高。
+模型在 QuickTalk worker 创建时加载和预热，每个会话独立保存高频细节的时序状态。`FACE_SR_INTERVAL=2` 表示每两帧执行一次超分；跳过的帧仍使用当前 QuickTalk 口型，只复用上一帧的高频细节，避免复用整张旧人脸造成口型滞后。默认值为 `1`（每帧超分）；若端到端生成仍达不到实时速度，可改为 `3`。小于阈值的人脸区域会跳过超分；模型缺失、格式错误或运行失败时会记录告警并自动退回原始补丁，不中断会话。TorchScript 模型必须接收并返回 `[1, 3, H, W]`、RGB、`0..1` 张量，并同时放大宽高。

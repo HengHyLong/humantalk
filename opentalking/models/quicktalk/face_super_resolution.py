@@ -48,6 +48,7 @@ def face_sr_cache_signature() -> tuple[Any, ...]:
         _env_float("OPENTALKING_QUICKTALK_FACE_SR_STRENGTH", 0.7),
         _env_float("OPENTALKING_QUICKTALK_FACE_SR_TEMPORAL_ALPHA", 0.7),
         _env_int("OPENTALKING_QUICKTALK_FACE_SR_MIN_ROI_EDGE", 320),
+        _env_int("OPENTALKING_QUICKTALK_FACE_SR_INTERVAL", 1),
     )
 
 
@@ -162,11 +163,12 @@ def create_face_super_resolution(
     return enhancer
 
 
-def face_sr_parameters() -> tuple[float, float, int]:
+def face_sr_parameters() -> tuple[float, float, int, int]:
     strength = min(1.0, max(0.0, _env_float("OPENTALKING_QUICKTALK_FACE_SR_STRENGTH", 0.7)))
     temporal_alpha = min(
         1.0,
         max(0.0, _env_float("OPENTALKING_QUICKTALK_FACE_SR_TEMPORAL_ALPHA", 0.7)),
     )
     min_roi_edge = max(1, _env_int("OPENTALKING_QUICKTALK_FACE_SR_MIN_ROI_EDGE", 320))
-    return strength, temporal_alpha, min_roi_edge
+    interval = max(1, _env_int("OPENTALKING_QUICKTALK_FACE_SR_INTERVAL", 1))
+    return strength, temporal_alpha, min_roi_edge, interval

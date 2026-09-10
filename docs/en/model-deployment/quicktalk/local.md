@@ -110,6 +110,7 @@ OPENTALKING_QUICKTALK_FACE_SR_FP16=1
 OPENTALKING_QUICKTALK_FACE_SR_STRENGTH=0.7
 OPENTALKING_QUICKTALK_FACE_SR_TEMPORAL_ALPHA=0.7
 OPENTALKING_QUICKTALK_FACE_SR_MIN_ROI_EDGE=320
+OPENTALKING_QUICKTALK_FACE_SR_INTERVAL=2
 ```
 
-The model is loaded and warmed once per QuickTalk worker, while temporal high-frequency state remains session-local. Face regions smaller than the threshold bypass SR. A missing, invalid, or failing model logs a warning and falls back to the original patch without interrupting the conversation. The TorchScript model must accept and return an RGB `0..1` tensor shaped `[1, 3, H, W]` and enlarge both spatial dimensions.
+The model is loaded and warmed once per QuickTalk worker, while temporal high-frequency state remains session-local. `FACE_SR_INTERVAL=2` runs SR every other frame. Skipped frames retain the current QuickTalk mouth geometry and reuse only the previous high-frequency residual, rather than reusing an old full face. The default is `1` (every frame); use `3` if end-to-end generation still cannot keep up in real time. Face regions smaller than the threshold bypass SR. A missing, invalid, or failing model logs a warning and falls back to the original patch without interrupting the conversation. The TorchScript model must accept and return an RGB `0..1` tensor shaped `[1, 3, H, W]` and enlarge both spatial dimensions.
