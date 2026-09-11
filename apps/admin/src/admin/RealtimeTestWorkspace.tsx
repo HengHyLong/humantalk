@@ -12,7 +12,7 @@ import type { AgentConfig } from "../components/AvatarSelectionStage";
 import type { TtsProviderExtended } from "../constants/ttsBailian";
 import type { VoiceCloneApplication } from "../lib/voiceCloneApply";
 import type { MemoryLibrary, Message } from "../types";
-import type { ModelStatus } from "../lib/modelStatus";
+import { ensureSelectableModelStatuses, VIDEO_MODEL_ID, type ModelStatus } from "../lib/modelStatus";
 import { modelLabel } from "../lib/modelLabels";
 import { beginAdminProgress, finishAdminProgress, notifyAdmin, updateAdminProgress } from "./feedback";
 import { waitForSessionReady } from "../lib/sessionReadiness";
@@ -21,7 +21,7 @@ import { mergeMotionDrivers } from "../lib/motionPlaylist";
 type ConnectionState = "idle" | "connecting" | "queued" | "live" | "error";
 type ChatMessage = Message;
 const MAX_CONVERSATION_MESSAGES = 36;
-const VIDEO_DRIVER = "video";
+const VIDEO_DRIVER = VIDEO_MODEL_ID;
 const VIDEO_SESSION_MODEL = "mock";
 
 function keepRecentConversation(messages: ChatMessage[]): ChatMessage[] {
@@ -146,10 +146,13 @@ export function RealtimeTestWorkspace({ initialAvatarId = "" }: { initialAvatarI
     ]).then(([avatarResponse, modelResponse, knowledgeResponse, healthResponse, voiceResponse]) => {
       if (cancelled) return;
       setAvatars(avatarResponse);
-      const statuses = [
-        ...(modelResponse.statuses ?? (modelResponse.models ?? []).map((id) => ({ id, connected: true }))).filter((item) => item.id !== VIDEO_DRIVER),
-        { id: VIDEO_DRIVER, connected: true },
-      ];
+      const reportedStatuses = modelResponse.statuses
+        ?? (modelResponse.models ?? []).map((id) => ({ id, connected: true }));
+      const statuses = ensureSelectableModelStatuses(
+        reportedStatuses,
+        modelResponse.models ?? [],
+        true,
+      );
       setModels(statuses);
       setAvatarId((current) => current || requestedAvatarId || avatarResponse[0]?.id || "");
       setModel((current) => current || modelResponse.default_model || statuses[0]?.id || "mock");

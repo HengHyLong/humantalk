@@ -36,11 +36,34 @@ const LLM_PROVIDER_OPTIONS: Array<{ value: string; label: string; baseUrl: strin
   { value: "custom", label: "自定义兼容服务", baseUrl: "", model: "" },
 ];
 function emptyLlmConfig(): LlmConfig {
-  const preset = LLM_PROVIDER_OPTIONS[0];
-  return { id: `new-${Date.now()}`, name: "", provider: preset.value, baseUrl: preset.baseUrl, model: preset.model, apiKey: "", apiKeyConfigured: false, systemPrompt: "您好！我是四川国际博览集团的数字人小美。\n我诞生于博览集团的数字化服务升级之中，依托人工智能和大数据技术，致力于为您提供专业、高效的会展资讯服务。\n作为四川唯一 一家以会展业为主业的省属国企，博览集团承担着中国西部国际博览会组委会秘书处的职能。而我，就是您了解西博会、农博会、计算机大会等重大展会，以及集团会展运营、传媒、置业、商服、数字、金融等业务板块的智能向导。\n无论您想查询展会信息、了解参展流程，还是咨询合作事宜，都可以随时向我提问。我会用最快的速度、最准确的信息，为您提供\"一站式\"智能服务。\n很高兴为您服务，请问有什么可以帮您的吗？", isActive: false, usage: "conversation", source: "managed", readOnly: false, createdAt: "", updatedAt: "" };
+  const preset = LLM_PROVIDER_OPTIONS.find((option) => option.value === "dashscope")!;
+  return { id: `new-${Date.now()}`, name: "", provider: preset.value, baseUrl: preset.baseUrl, model: preset.model, apiKey: "", apiKeyConfigured: false, systemPrompt: "您好！我是四川国际博览集团的数字人小美。", publicBaseUrl: "", callMode: "video", characterId: "1", voice: "Tina", isActive: false, usage: "conversation", source: "managed", readOnly: false, createdAt: "", updatedAt: "" };
+}
+function editableViduConfig(item?: LlmConfig): LlmConfig {
+  const readOnly = Boolean(item?.readOnly);
+  return {
+    id: item && !readOnly ? item.id : `new-${Date.now()}`,
+    name: item?.name || "Vidu 外部数字人驱动",
+    provider: "vidu",
+    baseUrl: item?.baseUrl || "http://127.0.0.1:18088/proxy/cn",
+    model: "vidu-live",
+    apiKey: "",
+    apiKeyConfigured: readOnly ? false : Boolean(item?.apiKeyConfigured),
+    systemPrompt: "",
+    publicBaseUrl: "",
+    callMode: "video",
+    characterId: "1",
+    voice: "Tina",
+    isActive: readOnly ? false : Boolean(item?.isActive),
+    usage: "digital_human",
+    source: "managed",
+    readOnly: false,
+    createdAt: readOnly ? "" : item?.createdAt || "",
+    updatedAt: readOnly ? "" : item?.updatedAt || "",
+  };
 }
 
-export function LlmConfigManagementPage({ canWrite }: SystemProps) {
+export function LlmConfigManagementPage({ canWrite, onNavigate }: SystemProps) {
   const [items, setItems] = useState<LlmConfig[]>([]);
   const [editing, setEditing] = useState<LlmConfig | null>(null);
   const [loading, setLoading] = useState(true);
@@ -57,22 +80,28 @@ export function LlmConfigManagementPage({ canWrite }: SystemProps) {
   useEffect(() => { void reload(); }, []);
   const save = async () => {
     if (!editing) return;
-    if (!editing.name.trim() || !editing.baseUrl.trim() || !editing.model.trim()) { setError("请填写配置名称、Base URL 和模型名称。"); return; }
+    if (editing.provider !== "vidu" && (!editing.name.trim() || !editing.baseUrl.trim() || !editing.model.trim())) { setError("请填写配置名称、Base URL 和模型名称。"); return; }
     if (!editing.apiKeyConfigured && !editing.apiKey.trim()) { setError("首次保存必须填写 API Key。"); return; }
     setBusyId(editing.id);
     setError("");
     setNotice("");
     try {
-      const saved = await adminApi.saveLlmConfig(editing);
-      setItems((current) => [saved, ...current.filter((item) => item.id !== saved.id && item.id !== editing.id)]);
+      let saved = await adminApi.saveLlmConfig({
+        ...editing,
+        usage: editing.provider === "vidu" ? "digital_human" : "conversation",
+      });
+      if (saved.provider === "vidu" && !saved.isActive) {
+        saved = await adminApi.activateLlmConfig(saved.id);
+      }
+      setItems((current) => [saved, ...current.filter((item) => item.id !== saved.id && item.id !== editing.id).map((item) => (item.usage || "conversation") === (saved.usage || "conversation") ? { ...item, isActive: false } : item)]);
       setEditing(null);
-      setNotice(saved.isActive ? "配置已保存，并已刷新当前数字人会话。" : "配置已保存到 SQLite。");
+      setNotice(saved.provider === "vidu" && saved.isActive ? "Vidu Key 已保存。仅选择 Vidu 模型并上传单张图片的数字人会使用该外部驱动。" : saved.isActive ? "配置已保存，新建对话会话将使用该配置。" : "配置已保存到 SQLite。");
     } catch (caught) { setError(caught instanceof Error ? caught.message : "大模型配置保存失败。"); }
     finally { setBusyId(""); }
   };
   const activate = async (item: LlmConfig) => {
     setBusyId(item.id); setError(""); setNotice("");
-    try { const saved = await adminApi.activateLlmConfig(item.id); setItems((current) => current.map((candidate) => (candidate.usage || "conversation") === "conversation" ? { ...candidate, isActive: candidate.id === saved.id } : candidate)); setNotice(`已启用“${saved.name}”，新会话和现有会话将使用该配置。`); }
+    try { const saved = await adminApi.activateLlmConfig(item.id); setItems((current) => current.map((candidate) => (candidate.usage || "conversation") === (saved.usage || "conversation") ? { ...candidate, isActive: candidate.id === saved.id } : candidate)); setNotice(`已启用“${saved.name}”，新会话将使用该配置。`); }
     catch (caught) { setError(caught instanceof Error ? caught.message : "启用配置失败。"); }
     finally { setBusyId(""); }
   };
@@ -89,14 +118,16 @@ export function LlmConfigManagementPage({ canWrite }: SystemProps) {
     catch (caught) { setError(caught instanceof Error ? caught.message : "删除配置失败。"); }
     finally { setBusyId(""); }
   };
-  const active = items.find((item) => item.isActive && (item.usage || "conversation") === "conversation")
-    ?? items.find((item) => item.isActive);
-  return <div className="p-6 xl:p-8"><Header eyebrow="系统管理" title="大模型配置" description="统一查看配置文件与 Admin 管理的大模型服务；配置文件中的密钥仅显示配置状态，不会返回明文。" action={<Button onClick={() => setEditing(emptyLlmConfig())} disabled={!canWrite}>+ 新增配置</Button>} />
+  const active = items.find((item) => item.isActive && (item.usage || "conversation") === "conversation");
+  const activeVidu = items.find((item) => item.isActive && item.usage === "digital_human" && item.provider === "vidu");
+  const editableVidu = items.find((item) => item.provider === "vidu" && !item.readOnly) || items.find((item) => item.provider === "vidu");
+  const conversationItems = items.filter((item) => item.provider !== "vidu");
+  return <div className="p-6 xl:p-8"><Header eyebrow="系统管理" title="大模型配置" description="对话大模型与外部数字人驱动独立配置；接入 Vidu 不会替换原有数字人驱动。" action={<Button onClick={() => setEditing(emptyLlmConfig())} disabled={!canWrite}>+ 新增配置</Button>} />
     {error ? <p className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-700">{error}</p> : null}
     {notice ? <p className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs text-emerald-700">{notice}</p> : null}
-    <Card className="mb-4 p-5"><div className="flex flex-wrap items-center justify-between gap-4"><div><p className="text-xs font-semibold text-slate-400">当前运行配置</p><h2 className="mt-2 text-lg font-semibold text-slate-900">{active?.name || "尚未检测到当前运行配置"}</h2><p className="mt-1 text-xs text-slate-500">{active ? `${active.model} · ${active.baseUrl}` : "请在下方选择一项配置并设为当前配置。"}</p></div><Badge tone={active ? "green" : "amber"}>{active ? "运行中" : "待配置"}</Badge></div></Card>
-    <Card className="overflow-x-auto"><table className="w-full min-w-[920px] text-left text-xs"><thead className="border-b border-slate-200 bg-slate-50 text-slate-400"><tr>{["配置名称", "服务商", "模型", "状态", "更新时间", "操作"].map((label) => <th key={label} className="px-4 py-4 font-semibold">{label}</th>)}</tr></thead><tbody className="divide-y divide-slate-100">{items.map((item) => <tr key={item.id}><td className="px-4 py-4 font-semibold text-slate-800">{item.name}</td><td className="px-4 py-4 text-slate-600">{LLM_PROVIDER_OPTIONS.find((option) => option.value === item.provider)?.label || item.provider}</td><td className="px-4 py-4 font-mono text-slate-600">{item.model || "-"}</td><td className="px-4 py-4"><Badge tone={item.isActive ? "green" : "slate"}>{item.isActive ? (item.readOnly ? "配置生效" : "当前使用") : "未启用"}</Badge></td><td className="whitespace-nowrap px-4 py-4 text-slate-400">{item.source === "config" ? "随服务启动加载" : item.updatedAt || item.createdAt || "-"}</td><td className="whitespace-nowrap px-4 py-4"><Button variant="ghost" onClick={() => void test(item)} disabled={busyId === item.id || !item.apiKeyConfigured}>测试连接</Button><Button variant="secondary" onClick={() => void activate(item)} disabled={!canWrite || item.readOnly || item.isActive || (item.usage || "conversation") !== "conversation" || busyId === item.id}>设为当前配置</Button><Button variant="ghost" onClick={() => setEditing({ ...item, apiKey: "" })} disabled={!canWrite || item.readOnly}>编辑</Button><Button variant="danger" onClick={() => void remove(item)} disabled={!canWrite || item.readOnly || item.isActive || busyId === item.id}>删除</Button></td></tr>)}</tbody></table>{loading ? <p className="px-4 py-12 text-center text-sm text-slate-400">配置读取中…</p> : !items.length ? <p className="px-4 py-12 text-center text-sm text-slate-400">配置文件和 Admin 中均暂无大模型配置。</p> : null}</Card>
-    {editing ? <Modal title={editing.id.startsWith("new-") ? "新增大模型配置" : "编辑大模型配置"} onClose={() => setEditing(null)} onSave={() => void save()} saveLabel={busyId ? "保存中…" : "保存配置"}><div className="space-y-4"><Field label="配置名称" value={editing.name} onChange={(value) => setEditing({ ...editing, name: value })} placeholder="例如：百炼 Qwen 生产环境" /><Select label="服务商" value={editing.provider} onChange={(value) => { const provider = value as LlmConfig["provider"]; const preset = LLM_PROVIDER_OPTIONS.find((option) => option.value === provider); setEditing({ ...editing, provider, baseUrl: preset?.baseUrl || editing.baseUrl, model: preset?.model || editing.model }); }}>{LLM_PROVIDER_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</Select><Field label="Base URL（填写到 /v1）" value={editing.baseUrl} onChange={(value) => setEditing({ ...editing, baseUrl: value })} placeholder="https://example.com/v1" /><Field label="模型名称" value={editing.model} onChange={(value) => setEditing({ ...editing, model: value })} placeholder="qwen-flash" /><label className="block text-xs font-semibold text-slate-600">API Key<input type="password" autoComplete="new-password" value={editing.apiKey} onChange={(event) => setEditing({ ...editing, apiKey: event.target.value })} placeholder={editing.apiKeyConfigured ? "已配置；留空表示保持不变" : "请输入 API Key"} className="mt-2 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm font-normal text-slate-800 outline-none focus:border-cyan-400" /></label><Field label="系统提示词" value={editing.systemPrompt} onChange={(value) => setEditing({ ...editing, systemPrompt: value })} textarea /></div></Modal> : null}
+    <div className="mb-4 grid gap-4 lg:grid-cols-2"><Card className="p-5"><div className="flex flex-wrap items-center justify-between gap-4"><div><p className="text-xs font-semibold text-slate-400">当前对话大模型</p><h2 className="mt-2 text-lg font-semibold text-slate-900">{active?.name || "尚未检测到当前运行配置"}</h2><p className="mt-1 text-xs text-slate-500">{active ? `${active.model} · ${active.baseUrl}` : "请在下方选择一项对话配置并启用。"}</p></div><Badge tone={active ? "green" : "amber"}>{active ? "运行中" : "待配置"}</Badge></div></Card><Card className="p-5"><div className="flex flex-wrap items-center justify-between gap-4"><div><p className="text-xs font-semibold text-slate-400">Vidu 外部数字人驱动</p><h2 className="mt-2 text-lg font-semibold text-slate-900">{activeVidu ? "已配置 Vidu Key" : "尚未配置 Vidu Key"}</h2><p className="mt-1 text-xs text-slate-500">只需配置 Key；数字人图片在“数字人形象”中选择 Vidu 后上传。</p></div><div className="flex items-center gap-2"><Badge tone={activeVidu ? "green" : "amber"}>{activeVidu ? "已接入" : "待配置"}</Badge><Button variant="secondary" onClick={() => setEditing(editableViduConfig(editableVidu))} disabled={!canWrite}>{activeVidu ? "更新 Key" : "配置 Key"}</Button></div></div></Card></div>
+    <Card className="overflow-x-auto"><table className="w-full min-w-[920px] text-left text-xs"><thead className="border-b border-slate-200 bg-slate-50 text-slate-400"><tr>{["配置名称", "服务商", "模型", "状态", "更新时间", "操作"].map((label) => <th key={label} className="px-4 py-4 font-semibold">{label}</th>)}</tr></thead><tbody className="divide-y divide-slate-100">{conversationItems.map((item) => <tr key={item.id}><td className="px-4 py-4 font-semibold text-slate-800">{item.name}</td><td className="px-4 py-4 text-slate-600">{LLM_PROVIDER_OPTIONS.find((option) => option.value === item.provider)?.label || item.provider}</td><td className="px-4 py-4 font-mono text-slate-600">{item.model || "-"}</td><td className="px-4 py-4"><Badge tone={item.isActive ? "green" : "slate"}>{item.isActive ? (item.readOnly ? "配置生效" : "当前使用") : "未启用"}</Badge></td><td className="whitespace-nowrap px-4 py-4 text-slate-400">{item.source === "config" ? "随服务启动加载" : item.updatedAt || item.createdAt || "-"}</td><td className="whitespace-nowrap px-4 py-4"><Button variant="ghost" onClick={() => void test(item)} disabled={busyId === item.id || !item.apiKeyConfigured}>测试连接</Button><Button variant="secondary" onClick={() => void activate(item)} disabled={!canWrite || item.readOnly || item.isActive || (item.usage || "conversation") !== "conversation" || busyId === item.id}>设为当前配置</Button><Button variant="ghost" onClick={() => setEditing({ ...item, apiKey: "" })} disabled={!canWrite || item.readOnly}>编辑</Button><Button variant="danger" onClick={() => void remove(item)} disabled={!canWrite || item.readOnly || item.isActive || busyId === item.id}>删除</Button></td></tr>)}</tbody></table>{loading ? <p className="px-4 py-12 text-center text-sm text-slate-400">配置读取中…</p> : !conversationItems.length ? <p className="px-4 py-12 text-center text-sm text-slate-400">配置文件和 Admin 中均暂无对话大模型配置。</p> : null}</Card>
+    {editing ? <Modal title={editing.provider === "vidu" ? "配置 Vidu Key" : editing.id.startsWith("new-") ? "新增模型配置" : "编辑模型配置"} onClose={() => setEditing(null)} onSave={() => void save()} saveLabel={busyId ? "保存中…" : editing.provider === "vidu" ? "保存 Vidu Key" : "保存配置"}><div className="space-y-4">{editing.provider === "vidu" ? <><p className="rounded-xl border border-cyan-100 bg-cyan-50 px-3 py-2 text-xs leading-5 text-cyan-800">内部已按 Vidu Live 原始协议配置服务地址、会话与 RTC 参数，这里只需填写 Vidu API Key。</p><label className="block text-xs font-semibold text-slate-600">Vidu API Key<input type="password" autoComplete="new-password" value={editing.apiKey} onChange={(event) => setEditing({ ...editing, apiKey: event.target.value })} placeholder={editing.apiKeyConfigured ? "已配置；留空表示保持不变" : "请输入 vda_..."} className="mt-2 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm font-normal text-slate-800 outline-none focus:border-cyan-400" /></label><div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-xs leading-5 text-slate-600"><p>图片不在此处重复配置。请在数字人形象中选择 Vidu 模型并上传一张图片，启动会话时系统会自动传给 Vidu。</p>{onNavigate ? <button type="button" className="mt-2 font-semibold text-cyan-700 hover:text-cyan-800" onClick={() => { setEditing(null); onNavigate("/asset/avatar"); }}>前往数字人形象 →</button> : null}</div><p className="text-[11px] leading-5 text-slate-500">Vidu 只是新增的可选外部驱动，不会替换或占用 Mock、Wav2Lip、QuickTalk 等原有驱动。</p></> : <><Field label="配置名称" value={editing.name} onChange={(value) => setEditing({ ...editing, name: value })} placeholder="例如：百炼 Qwen 生产环境" /><Select label="服务商" value={editing.provider} onChange={(value) => { const provider = value as LlmConfig["provider"]; const preset = LLM_PROVIDER_OPTIONS.find((option) => option.value === provider); setEditing({ ...editing, provider, baseUrl: preset?.baseUrl || editing.baseUrl, model: preset?.model || editing.model, usage: "conversation" }); }}>{LLM_PROVIDER_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</Select><Field label="Base URL（填写到 /v1）" value={editing.baseUrl} onChange={(value) => setEditing({ ...editing, baseUrl: value })} placeholder="https://example.com/v1" /><Field label="模型名称" value={editing.model} onChange={(value) => setEditing({ ...editing, model: value })} placeholder="qwen-flash" /><label className="block text-xs font-semibold text-slate-600">API Key<input type="password" autoComplete="new-password" value={editing.apiKey} onChange={(event) => setEditing({ ...editing, apiKey: event.target.value })} placeholder={editing.apiKeyConfigured ? "已配置；留空表示保持不变" : "请输入 API Key"} className="mt-2 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm font-normal text-slate-800 outline-none focus:border-cyan-400" /></label><Field label="系统提示词" value={editing.systemPrompt} onChange={(value) => setEditing({ ...editing, systemPrompt: value })} textarea /></>}</div></Modal> : null}
   </div>;
 }
 

@@ -53,7 +53,13 @@ import {
   type SessionKnowledgeBasesResponse,
   type VoiceCatalogItem,
 } from "./lib/api";
-import { modelConnectionBadge, type ModelStatus } from "./lib/modelStatus";
+import {
+  ensureSelectableModelIds,
+  ensureSelectableModelStatuses,
+  modelConnectionBadge,
+  VIDEO_MODEL_ID,
+  type ModelStatus,
+} from "./lib/modelStatus";
 import { modelLabel } from "./lib/modelLabels";
 import { connectSse } from "./lib/sse";
 import {
@@ -777,7 +783,7 @@ function pickInitialModel(
   return firstConnected ?? registeredModels[0] ?? avatarModel ?? currentModel;
 }
 
-const VIDEO_MODEL = "video";
+const VIDEO_MODEL = VIDEO_MODEL_ID;
 const VIDEO_SESSION_MODEL = "mock";
 const SERVER_AUDIO_RENDERERS = new Set(["flashtalk", "flashhead", "fasterliveportrait", "quicktalk", "musetalk", "wav2lip"]);
 
@@ -1993,7 +1999,7 @@ export default function App() {
         setAvatars(av);
         // `video` is a browser renderer, so it is intentionally advertised
         // independently of the backend synthesis workers.
-        const registeredModels = Array.from(new Set([...mo.models, VIDEO_MODEL]));
+        const registeredModels = ensureSelectableModelIds(mo.models, true);
         setModels(registeredModels);
         if (initialRuntimeConfig) {
           setRuntimeConfig(initialRuntimeConfig);
@@ -2005,12 +2011,11 @@ export default function App() {
             return next;
           });
         }
-        const statuses = [
-          ...(mo.statuses ?? mo.models.map((id) => ({ id, connected: true }))).filter(
-            (status) => status.id !== VIDEO_MODEL,
-          ),
-          { id: VIDEO_MODEL, connected: true, backend: "browser" },
-        ];
+        const statuses = ensureSelectableModelStatuses(
+          mo.statuses ?? mo.models.map((id) => ({ id, connected: true })),
+          mo.models,
+          true,
+        );
         setModelStatuses(statuses);
         const storedAvatarSelection = readStoredAvatarSelection();
         const initialAvatar = pickInitialAvatar(av, registeredModels, storedAvatarSelection, mo.default_model);

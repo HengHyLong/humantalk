@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import inspect
 import json
@@ -13,6 +14,7 @@ import uuid
 from collections.abc import Awaitable
 from pathlib import Path
 from typing import Any, AsyncIterator
+from urllib.parse import quote
 
 import httpx
 import redis.asyncio as redis
@@ -32,6 +34,7 @@ from apps.api.schemas.session import (
     WebRTCOfferRequest,
 )
 from apps.api.services import session_service
+from apps.api.services.vidu_service import ViduServiceError, ViduSessionManager
 from apps.api.services.worker_service import forward_webrtc_offer, forward_worker_post_empty
 from apps.api.core.config import get_settings
 from opentalking.core.queue_status import get_flashtalk_queue_status
@@ -67,6 +70,7 @@ from opentalking.pipeline.recording.recording import (
 )
 from opentalking.persona.session import build_session_defaults
 from opentalking.persona.store import PersonaStore
+from opentalking.runtime.bus import publish_event
 
 
 def _effective_tts_provider(requested: str | None) -> str:
@@ -423,6 +427,80 @@ def _resolve_avatar_dir(settings: object, avatar_id: str) -> tuple[Path, Path]:
     return avatars_root, avatar_dir
 
 
+def _vidu_manager(request: Request) -> ViduSessionManager:
+    manager = getattr(request.app.state, "vidu_sessions", None)
+    if not isinstance(manager, ViduSessionManager):
+        manager = ViduSessionManager(request.app.state.settings)
+        request.app.state.vidu_sessions = manager
+    return manager
+
+
+def _vidu_avatar_payload(
+    request: Request,
+    *,
+    avatar_id: str,
+    avatar_dir: Path,
+    fallback_persona: str | None,
+) -> dict[str, str]:
+    try:
+        manifest = json.loads((avatar_dir / "manifest.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=400, detail="invalid avatar manifest") from exc
+    metadata = manifest.get("metadata") if isinstance(manifest.get("metadata"), dict) else {}
+    configured_base = (
+        _settings_value(request.app.state.settings, "vidu_public_base_url")
+        or _settings_value(request.app.state.settings, "public_base_url")
+    )
+    image_uri = str(metadata.get("vidu_image_uri") or "").strip()
+    if not image_uri:
+        if configured_base:
+            image_uri = f"{configured_base.rstrip('/')}/avatars/{quote(avatar_id, safe='')}/preview"
+        else:
+            # Vidu cannot fetch a 127.0.0.1/private-network URL. In local
+            # development, send the uploaded image inline so admins still only
+            # need to configure the API key and one avatar image.
+            preview_path = avatar_dir / "preview.png"
+            try:
+                image_bytes = preview_path.read_bytes()
+            except OSError as exc:
+                raise HTTPException(status_code=400, detail="avatar preview image is unavailable") from exc
+            if not image_bytes:
+                raise HTTPException(status_code=400, detail="avatar preview image is unavailable")
+            # Base64 expands by about one third. Keep the complete JSON request
+            # below Vidu's documented 20 MB request-body limit.
+            if len(image_bytes) > 14 * 1024 * 1024:
+                raise HTTPException(status_code=400, detail="avatar image is too large for Vidu")
+            encoded = base64.b64encode(image_bytes).decode("ascii")
+            image_uri = f"data:image/png;base64,{encoded}"
+    return {
+        "image_uri": image_uri,
+        "persona": str(
+            metadata.get("vidu_persona")
+            or fallback_persona
+            or "你是专业、友好的数字人讲解员。"
+        ).strip(),
+        "name": str(manifest.get("name") or avatar_id).strip(),
+        "voice": str(
+            metadata.get("vidu_voice")
+            or _settings_value(request.app.state.settings, "vidu_voice")
+            or "Tina"
+        ).strip(),
+    }
+
+
+async def _finish_vidu_speech(r: redis.Redis, session_id: str, text: str) -> None:
+    # Vidu's sample protocol does not expose a stable speech-ended signal.
+    # Keep subtitles visible for a conservative reading duration and then
+    # restore the normal input state.
+    duration = min(30.0, max(2.5, len(text.strip()) / 5.5 + 1.2))
+    await asyncio.sleep(duration)
+    record = await session_service.get_session(r, session_id)
+    if not record or record.get("state") in {"closed", "closing", "error"}:
+        return
+    await session_service.update_session_state(r, session_id, "ready")
+    await publish_event(r, session_id, "speech.ended", {"text": text})
+
+
 def _local_wav2lip_uses_frame_references(
     model: str,
     backend_name: str,
@@ -566,7 +644,7 @@ async def _preload_selected_wav2lip_avatar(
             tasks.pop(key, None)
 
 
-@router.post("", response_model=CreateSessionResponse)
+@router.post("", response_model=CreateSessionResponse, response_model_exclude_none=True)
 async def create_session(body: CreateSessionRequest, request: Request) -> CreateSessionResponse:
     r: redis.Redis = request.app.state.redis
     settings = request.app.state.settings
@@ -621,6 +699,14 @@ async def create_session(body: CreateSessionRequest, request: Request) -> Create
 
     available_models = await connected_model_ids(settings)
     if model not in available_models:
+        if model == "vidu":
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "VIDU_NOT_READY",
+                    "message": "Vidu 数字人驱动尚未配置或服务不可用，请在管理后台完成配置后重试",
+                },
+            )
         raise HTTPException(
             status_code=400,
             detail=(
@@ -643,7 +729,9 @@ async def create_session(body: CreateSessionRequest, request: Request) -> Create
     )
     _require_audio_provider_config(
         stt_provider=stt_provider,
-        tts_provider=tts_provider,
+        # Vidu owns voice synthesis and lip driving. Keep STT validation for
+        # OpenTalking's microphone input, but do not require a second TTS.
+        tts_provider="edge" if model == "vidu" else tts_provider,
         settings=settings,
     )
     try:
@@ -721,7 +809,48 @@ async def create_session(body: CreateSessionRequest, request: Request) -> Create
         knowledge_enabled=knowledge_enabled,
         knowledge_base_id=knowledge_base_id,
         knowledge_base_ids=knowledge_base_ids,
+        enqueue_init=model != "vidu",
     )
+    if model == "vidu":
+        avatar_payload = _vidu_avatar_payload(
+            request,
+            avatar_id=avatar_id,
+            avatar_dir=avatar_dir,
+            fallback_persona=llm_system_prompt,
+        )
+        try:
+            vidu_live = await _vidu_manager(request).create(
+                sid,
+                image_uri=avatar_payload["image_uri"],
+                persona=avatar_payload["persona"],
+                name=avatar_payload["name"],
+                voice=avatar_payload["voice"],
+                # This product is a visual digital-human experience. Vidu's
+                # audio mode is explicitly audio-only and cannot produce the
+                # remote picture expected by the Web client.
+                call_mode="video",
+                character_id=_settings_value(settings, "vidu_character_id") or "1",
+            )
+        except ViduServiceError as exc:
+            await session_service.update_session_state(r, sid, "error")
+            log.exception("Vidu session initialization failed: session=%s", sid)
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        await _await_result(
+            r.hset(
+                f"opentalking:session:{sid}",
+                mapping={
+                    "state": "worker_ready",
+                    "transport": "vidu_alirtc",
+                    "vidu_live_id": vidu_live["live_id"],
+                },
+            )
+        )
+        return CreateSessionResponse(
+            session_id=sid,
+            status="created",
+            transport="vidu_alirtc",
+            rtc=vidu_live["rtc"],
+        )
     # Single-process mode: WebRTC offer runs immediately after; wait until init task
     # has created the SessionRunner (avoids 404 "session not loaded").
     uses_flashtalk_slot = _uses_flashtalk_slot_model(model)
@@ -1000,6 +1129,26 @@ async def speak(session_id: str, body: SpeakRequest, request: Request) -> dict[s
     s = await session_service.get_session(r, session_id)
     if not s:
         raise HTTPException(status_code=404, detail="session not found")
+    if (s.get("model") or "").strip().lower() == "vidu":
+        text = body.text.strip()
+        if not text:
+            raise HTTPException(status_code=400, detail="text is required")
+        await session_service.update_session_state(r, session_id, "speaking")
+        await publish_event(r, session_id, "speech.started", {"text": text, "direct": True})
+        await publish_event(r, session_id, "subtitle.chunk", {"text": text})
+        try:
+            await _vidu_manager(request).send_text(session_id, text)
+        except ViduServiceError as exc:
+            await session_service.update_session_state(r, session_id, "error")
+            await publish_event(
+                r,
+                session_id,
+                "error",
+                {"code": "VIDU_SEND_FAILED", "message": "数字人播报暂时不可用"},
+            )
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        asyncio.create_task(_finish_vidu_speech(r, session_id, text))
+        return {"session_id": session_id, "status": "queued"}
     voice, eff_prov, tm = _normalize_voice_for_speak(
         voice=body.voice,
         tts_provider=body.tts_provider,
@@ -1367,6 +1516,10 @@ async def interrupt(session_id: str, request: Request) -> dict[str, str]:
     s = await session_service.get_session(r, session_id)
     if not s:
         raise HTTPException(status_code=404, detail="session not found")
+    if (s.get("model") or "").strip().lower() == "vidu":
+        await session_service.update_session_state(r, session_id, "ready")
+        await publish_event(r, session_id, "speech.ended", {})
+        return {"session_id": session_id, "status": "interrupted"}
     await session_service.interrupt(r, session_id)
     return {"session_id": session_id, "status": "interrupted"}
 
@@ -1584,6 +1737,27 @@ async def delete_session(session_id: str, request: Request) -> dict[str, str]:
     s = await session_service.get_session(r, session_id)
     if not s:
         raise HTTPException(status_code=404, detail="session not found")
+    if (s.get("model") or "").strip().lower() == "vidu":
+        await _vidu_manager(request).close(session_id)
+        await session_service.update_session_state(r, session_id, "closed")
+        return {"session_id": session_id, "status": "closed"}
+    await session_service.close_session(r, session_id)
+    return {"session_id": session_id, "status": "closed"}
+
+
+@router.post("/{session_id}/release")
+async def release_session(session_id: str, request: Request) -> dict[str, str]:
+    """Unload-safe session release target used by navigator.sendBeacon()."""
+    r: redis.Redis = request.app.state.redis
+    s = await session_service.get_session(r, session_id)
+    if not s:
+        # Browser unload notifications may be duplicated. Treat a repeated
+        # release as successful so cleanup remains idempotent.
+        return {"session_id": session_id, "status": "closed"}
+    if (s.get("model") or "").strip().lower() == "vidu":
+        await _vidu_manager(request).close(session_id)
+        await session_service.update_session_state(r, session_id, "closed")
+        return {"session_id": session_id, "status": "closed"}
     await session_service.close_session(r, session_id)
     return {"session_id": session_id, "status": "closed"}
 
@@ -1598,6 +1772,8 @@ async def webrtc_offer(
     s = await session_service.get_session(r, session_id)
     if not s:
         raise HTTPException(status_code=404, detail="session not found")
+    if (s.get("model") or "").strip().lower() == "vidu":
+        raise HTTPException(status_code=400, detail="Vidu sessions use the AliRTC transport")
     runners = getattr(request.app.state, "session_runners", None)
     if runners is not None:
         runner = runners.get(session_id)

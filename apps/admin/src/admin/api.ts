@@ -673,7 +673,7 @@ export class MockAdminApiClient implements AdminApiClient {
   async listLlmConfigs() { return readStore<LlmConfig[]>("llm-configs", []); }
   async saveLlmConfig(item: LlmConfig) { const saved = { ...item, id: item.id || `llm-${Date.now()}`, updatedAt: now(), createdAt: item.createdAt || now(), apiKeyConfigured: item.apiKeyConfigured || Boolean(item.apiKey) }; writeStore("llm-configs", [saved, ...(await this.listLlmConfigs()).filter((candidate) => candidate.id !== saved.id)]); return { ...saved, apiKey: "" }; }
   async deleteLlmConfig(id: string) { writeStore("llm-configs", (await this.listLlmConfigs()).filter((item) => item.id !== id)); }
-  async activateLlmConfig(id: string) { const items = await this.listLlmConfigs(); const saved = items.find((item) => item.id === id); if (!saved) throw new Error("大模型配置不存在"); writeStore("llm-configs", items.map((item) => ({ ...item, isActive: item.id === id }))); return { ...saved, isActive: true }; }
+  async activateLlmConfig(id: string) { const items = await this.listLlmConfigs(); const saved = items.find((item) => item.id === id); if (!saved) throw new Error("大模型配置不存在"); const usage = saved.usage || "conversation"; writeStore("llm-configs", items.map((item) => (item.usage || "conversation") === usage ? { ...item, isActive: item.id === id } : item)); return { ...saved, isActive: true }; }
   async testLlmConfig(_id: string) { return { success: true, latencyMs: 1, message: "连接成功" }; }
 }
 
@@ -1292,7 +1292,19 @@ export class FetchAdminApiClient implements AdminApiClient {
     const existing = Boolean(item.id) && !isClientDraftId(item.id);
     return this.request<LlmConfig>(existing ? `/admin/llm-configs/${encodeURIComponent(item.id)}` : "/admin/llm-configs", {
       method: existing ? "PATCH" : "POST",
-      body: JSON.stringify({ name: item.name, provider: item.provider, baseUrl: item.baseUrl, model: item.model, apiKey: item.apiKey || undefined, systemPrompt: item.systemPrompt }),
+      body: JSON.stringify({
+        name: item.name,
+        provider: item.provider,
+        baseUrl: item.baseUrl,
+        model: item.model,
+        apiKey: item.apiKey || undefined,
+        systemPrompt: item.systemPrompt,
+        usage: item.usage,
+        publicBaseUrl: item.publicBaseUrl,
+        callMode: item.callMode,
+        characterId: item.characterId,
+        voice: item.voice,
+      }),
     });
   }
   async deleteLlmConfig(id: string) { await this.request(`/admin/llm-configs/${encodeURIComponent(id)}`, { method: "DELETE" }); }

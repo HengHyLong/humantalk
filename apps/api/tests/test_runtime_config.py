@@ -34,6 +34,9 @@ async def test_runtime_config_get_masks_secret_values(monkeypatch, tmp_path) -> 
                 "OPENTALKING_LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1",
                 "OPENTALKING_LLM_MODEL=qwen-turbo",
                 "OPENTALKING_LLM_API_KEY=llm-secret",
+                "OPENTALKING_VIDU_SERVICE_URL=http://127.0.0.1:18088/proxy/cn",
+                "OPENTALKING_VIDU_API_KEY=vidu-secret",
+                "OPENTALKING_VIDU_PUBLIC_BASE_URL=https://public.example.test/api",
                 "OPENTALKING_STT_DEFAULT_PROVIDER=openai_compatible",
                 "OPENTALKING_STT_OPENAI_BASE_URL=https://asr.example.test/v1",
                 "OPENTALKING_STT_OPENAI_MODEL=whisper-1",
@@ -59,6 +62,9 @@ async def test_runtime_config_get_masks_secret_values(monkeypatch, tmp_path) -> 
     payload = await runtime_config.get_runtime_config(_request(monkeypatch, tmp_path))
 
     assert payload["llm"]["api_key_set"] is True
+    assert payload["vidu"]["service_url"] == "http://127.0.0.1:18088/proxy/cn"
+    assert payload["vidu"]["public_base_url"] == "https://public.example.test/api"
+    assert payload["vidu"]["api_key_set"] is True
     assert payload["stt"]["provider"] == "openai_compatible"
     assert payload["stt"]["base_url"] == "https://asr.example.test/v1"
     assert payload["stt"]["model"] == "whisper-1"
@@ -76,6 +82,7 @@ async def test_runtime_config_get_masks_secret_values(monkeypatch, tmp_path) -> 
     assert payload["mem0"]["embedder"]["model"] == "text-embedding-v4"
     assert payload["mem0"]["embedder"]["api_key_set"] is True
     assert "llm-secret" not in str(payload)
+    assert "vidu-secret" not in str(payload)
     assert "stt-secret" not in str(payload)
     assert "tts-secret" not in str(payload)
     assert "mem0-llm-secret" not in str(payload)
@@ -224,6 +231,51 @@ async def test_runtime_config_apply_discards_stale_wechat_memory_registry(monkey
     )
 
     assert not hasattr(request.app.state, "wechat_import_registry")
+
+
+async def test_runtime_config_apply_refreshes_vidu_settings_and_manager(monkeypatch, tmp_path) -> None:
+    class Manager:
+        closed = False
+
+        async def close_all(self) -> None:
+            self.closed = True
+
+    (tmp_path / ".env").write_text(
+        "OPENTALKING_LLM_PROVIDER=dashscope\nOPENTALKING_LLM_MODEL=qwen-plus\n",
+        encoding="utf-8",
+    )
+    request = _request(monkeypatch, tmp_path)
+    manager = Manager()
+    request.app.state.vidu_sessions = manager
+
+    payload = await runtime_config.apply_runtime_config(
+        runtime_config.RuntimeConfigPayload(
+            vidu_service_url="http://127.0.0.1:18088/proxy/cn/",
+            vidu_api_key="new-vidu-key",
+            vidu_public_base_url="https://public.example.test/api/",
+            vidu_call_mode="video",
+            vidu_character_id="character-2",
+            vidu_voice="Tina",
+            sync_dashscope_api_key=False,
+        ),
+        request,
+    )
+
+    assert manager.closed is True
+    assert not hasattr(request.app.state, "vidu_sessions")
+    assert request.app.state.settings.vidu_api_key == "new-vidu-key"
+    assert request.app.state.settings.llm_provider == "dashscope"
+    assert request.app.state.settings.llm_model == "qwen-plus"
+    assert os.environ["OPENTALKING_LLM_PROVIDER"] == "dashscope"
+    assert payload["vidu"] == {
+        "service_url": "http://127.0.0.1:18088/proxy/cn",
+        "public_base_url": "https://public.example.test/api",
+        "call_mode": "video",
+        "character_id": "character-2",
+        "voice": "Tina",
+        "api_key_set": True,
+    }
+    assert "new-vidu-key" not in str(payload)
 
 
 async def test_runtime_config_apply_rejects_unknown_provider(monkeypatch, tmp_path) -> None:

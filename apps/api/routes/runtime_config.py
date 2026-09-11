@@ -35,6 +35,12 @@ _RUNTIME_ENV_KEYS = {
     "OPENTALKING_LLM_API_KEY",
     "OPENTALKING_LLM_MODEL",
     "OPENTALKING_LLM_SYSTEM_PROMPT",
+    "OPENTALKING_VIDU_SERVICE_URL",
+    "OPENTALKING_VIDU_API_KEY",
+    "OPENTALKING_VIDU_PUBLIC_BASE_URL",
+    "OPENTALKING_VIDU_CALL_MODE",
+    "OPENTALKING_VIDU_CHARACTER_ID",
+    "OPENTALKING_VIDU_VOICE",
     "OPENTALKING_STT_DEFAULT_PROVIDER",
     "OPENTALKING_STT_ENABLED_PROVIDERS",
     "OPENTALKING_STT_MODEL",
@@ -107,6 +113,12 @@ class RuntimeConfigPayload(BaseModel):
     llm_model: Optional[str] = Field(default=None, max_length=256)
     llm_api_key: Optional[str] = Field(default=None, max_length=4096)
     llm_system_prompt: Optional[str] = Field(default=None, max_length=12000)
+    vidu_service_url: Optional[str] = Field(default=None, max_length=2048)
+    vidu_api_key: Optional[str] = Field(default=None, max_length=4096)
+    vidu_public_base_url: Optional[str] = Field(default=None, max_length=2048)
+    vidu_call_mode: Optional[str] = Field(default=None, max_length=16)
+    vidu_character_id: Optional[str] = Field(default=None, max_length=128)
+    vidu_voice: Optional[str] = Field(default=None, max_length=256)
     stt_provider: Optional[str] = Field(default=None, max_length=64)
     stt_base_url: Optional[str] = Field(default=None, max_length=2048)
     stt_model: Optional[str] = Field(default=None, max_length=256)
@@ -507,6 +519,14 @@ def _current_payload(settings: Any | None = None) -> dict[str, Any]:
             "system_prompt": _env_value(values, "OPENTALKING_LLM_SYSTEM_PROMPT", _settings_value(settings, "llm_system_prompt")),
             "api_key_set": bool(llm_key),
         },
+        "vidu": {
+            "service_url": _env_value(values, "OPENTALKING_VIDU_SERVICE_URL", _settings_value(settings, "vidu_service_url")).rstrip("/"),
+            "public_base_url": _env_value(values, "OPENTALKING_VIDU_PUBLIC_BASE_URL", _settings_value(settings, "vidu_public_base_url")).rstrip("/"),
+            "call_mode": _env_value(values, "OPENTALKING_VIDU_CALL_MODE", _settings_value(settings, "vidu_call_mode", "video")),
+            "character_id": _env_value(values, "OPENTALKING_VIDU_CHARACTER_ID", _settings_value(settings, "vidu_character_id", "1")),
+            "voice": _env_value(values, "OPENTALKING_VIDU_VOICE", _settings_value(settings, "vidu_voice", "Tina")),
+            "api_key_set": bool(_env_value(values, "OPENTALKING_VIDU_API_KEY", _settings_value(settings, "vidu_api_key"))),
+        },
         "stt": _current_stt_payload(stt_provider, settings, values),
         "tts": _current_tts_payload(tts_provider, settings, values),
         "mem0": _current_mem0_payload(settings, values),
@@ -514,9 +534,19 @@ def _current_payload(settings: Any | None = None) -> dict[str, Any]:
 
 
 def _build_updates(payload: RuntimeConfigPayload) -> dict[str, str]:
-    updates: dict[str, str] = {"OPENTALKING_LLM_PROVIDER": "openai_compatible"}
+    updates: dict[str, str] = {}
     sync_key = ""
 
+    if any(
+        value is not None
+        for value in (
+            payload.llm_base_url,
+            payload.llm_model,
+            payload.llm_api_key,
+            payload.llm_system_prompt,
+        )
+    ):
+        updates["OPENTALKING_LLM_PROVIDER"] = "openai_compatible"
     if value := _strip(payload.llm_base_url):
         updates["OPENTALKING_LLM_BASE_URL"] = value.rstrip("/")
     if value := _strip(payload.llm_model):
@@ -526,6 +556,21 @@ def _build_updates(payload: RuntimeConfigPayload) -> dict[str, str]:
         sync_key = value
     if payload.llm_system_prompt is not None:
         updates["OPENTALKING_LLM_SYSTEM_PROMPT"] = _strip(payload.llm_system_prompt)
+
+    if value := _strip(payload.vidu_service_url):
+        updates["OPENTALKING_VIDU_SERVICE_URL"] = value.rstrip("/")
+    if value := _strip(payload.vidu_api_key):
+        updates["OPENTALKING_VIDU_API_KEY"] = value
+    if payload.vidu_public_base_url is not None:
+        updates["OPENTALKING_VIDU_PUBLIC_BASE_URL"] = _strip(payload.vidu_public_base_url).rstrip("/")
+    if value := _strip(payload.vidu_call_mode):
+        if value not in {"audio", "video"}:
+            raise HTTPException(status_code=400, detail="Vidu call_mode 仅支持 audio 或 video")
+        updates["OPENTALKING_VIDU_CALL_MODE"] = value
+    if value := _strip(payload.vidu_character_id):
+        updates["OPENTALKING_VIDU_CHARACTER_ID"] = value
+    if value := _strip(payload.vidu_voice):
+        updates["OPENTALKING_VIDU_VOICE"] = value
 
     stt_provider = ""
     if raw := _strip(payload.stt_provider):
@@ -645,6 +690,10 @@ def _build_updates(payload: RuntimeConfigPayload) -> dict[str, str]:
 
 
 async def _refresh_settings(request: Request) -> Any:
+    vidu_manager = getattr(request.app.state, "vidu_sessions", None)
+    if vidu_manager is not None:
+        await vidu_manager.close_all()
+        delattr(request.app.state, "vidu_sessions")
     get_settings.cache_clear()
     settings = get_settings()
     request.app.state.settings = settings

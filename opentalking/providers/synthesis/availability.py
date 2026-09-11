@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import socket
 from dataclasses import dataclass
@@ -123,6 +124,16 @@ async def _is_direct_ws_reachable(url: str) -> bool:
             return False
 
 
+async def _is_tcp_reachable(host: str, port: int) -> bool:
+    try:
+        _reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=1.0)
+        writer.close()
+        await writer.wait_closed()
+        return True
+    except (OSError, asyncio.TimeoutError):
+        return False
+
+
 async def resolve_model_statuses(settings) -> list[ModelStatus]:
     omnirt_models = await _fetch_omnirt_audio2video_models(settings)
     has_omnirt = bool((getattr(settings, "omnirt_endpoint", "") or "").strip())
@@ -164,6 +175,29 @@ async def resolve_model_statuses(settings) -> list[ModelStatus]:
                 reason=reason,
             )
         )
+    vidu_service_url = str(getattr(settings, "vidu_service_url", "") or "").strip()
+    vidu_api_key = str(getattr(settings, "vidu_api_key", "") or "").strip()
+    vidu_connected = False
+    vidu_reason = "not_configured"
+    if vidu_service_url and vidu_api_key:
+        parts = urlsplit(vidu_service_url)
+        if parts.scheme.lower() in {"http", "https"} and parts.hostname:
+            port = parts.port or (443 if parts.scheme.lower() == "https" else 80)
+            if await _is_tcp_reachable(parts.hostname, port):
+                vidu_connected = True
+                vidu_reason = "vidu_live"
+            else:
+                vidu_reason = "vidu_service_unavailable"
+        else:
+            vidu_reason = "vidu_service_url_invalid"
+    statuses.append(
+        ModelStatus(
+            id="vidu",
+            backend="vidu_live",
+            connected=vidu_connected,
+            reason=vidu_reason,
+        )
+    )
     return statuses
 
 

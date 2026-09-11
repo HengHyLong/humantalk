@@ -38,6 +38,11 @@ from opentalking.scene_assets import SceneAssetStore
 router = APIRouter(prefix="/api/v1", tags=["admin"])
 public_router = APIRouter(tags=["exhibition-public"])
 
+VIDU_PROVIDER = "vidu"
+VIDU_MANAGED_NAME = "Vidu 外部数字人驱动"
+VIDU_INTERNAL_SERVICE_URL = "http://127.0.0.1:18088/proxy/cn"
+VIDU_INTERNAL_MODEL = "vidu-live"
+
 
 class LoginRequest(BaseModel):
     username: str = Field(min_length=1, max_length=100)
@@ -110,14 +115,26 @@ class ExhibitSurveySubmissionBody(BaseModel):
 
 
 class LlmConfigBody(BaseModel):
-    name: str = Field(min_length=1, max_length=120)
+    name: str = Field(default="", max_length=120)
     provider: str = Field(default="openai_compatible", min_length=1, max_length=64)
-    base_url: str = Field(min_length=1, max_length=2048, alias="baseUrl")
-    model: str = Field(min_length=1, max_length=256)
+    base_url: str = Field(default="", max_length=2048, alias="baseUrl")
+    model: str = Field(default="", max_length=256)
     api_key: str | None = Field(default=None, max_length=4096, alias="apiKey")
     system_prompt: str = Field(default="", max_length=12000, alias="systemPrompt")
+    usage: Literal["conversation", "knowledge", "memory", "digital_human"] = "conversation"
+    public_base_url: str = Field(default="", max_length=2048, alias="publicBaseUrl")
+    call_mode: Literal["audio", "video"] = Field(default="video", alias="callMode")
+    character_id: str = Field(default="1", max_length=128, alias="characterId")
+    voice: str = Field(default="Tina", max_length=256)
 
     model_config = {"populate_by_name": True}
+
+    @model_validator(mode="after")
+    def validate_provider_fields(self) -> "LlmConfigBody":
+        if self.provider.strip().lower() != VIDU_PROVIDER:
+            if not self.name.strip() or not self.base_url.strip() or not self.model.strip():
+                raise ValueError("对话大模型需要配置名称、Base URL 和模型名称")
+        return self
 
 
 def _public_user(store: AdminStore, user: dict[str, Any]) -> dict[str, Any]:
@@ -255,6 +272,10 @@ def _public_llm_config(item: dict[str, Any]) -> dict[str, Any]:
         "apiKey": "",
         "apiKeyConfigured": bool(secret),
         "systemPrompt": str(item.get("systemPrompt") or ""),
+        "publicBaseUrl": str(item.get("publicBaseUrl") or ""),
+        "callMode": str(item.get("callMode") or "video"),
+        "characterId": str(item.get("characterId") or "1"),
+        "voice": str(item.get("voice") or "Tina"),
         "isActive": bool(item.get("isActive")),
         "usage": str(item.get("usage") or "conversation"),
         "source": str(item.get("source") or "managed"),
@@ -342,6 +363,31 @@ def _configured_llm_configs(request: Request) -> list[dict[str, Any]]:
             "updatedAt": "",
         })
 
+    vidu_base_url = _setting_text(settings, "vidu_service_url").rstrip("/")
+    vidu_api_key = _setting_text(settings, "vidu_api_key")
+    # The default URL alone is not a configured adapter. Do not render a
+    # read-only phantom row that prevents admins from entering the first key.
+    if vidu_api_key:
+        items.append({
+            "id": "configured-vidu",
+            "name": VIDU_MANAGED_NAME,
+            "provider": VIDU_PROVIDER,
+            "baseUrl": vidu_base_url,
+            "model": VIDU_INTERNAL_MODEL,
+            "apiKey": vidu_api_key,
+            "systemPrompt": "",
+            "publicBaseUrl": _setting_text(settings, "vidu_public_base_url"),
+            "callMode": "video",
+            "characterId": _setting_text(settings, "vidu_character_id", "1"),
+            "voice": _setting_text(settings, "vidu_voice", "Tina"),
+            "isActive": bool(vidu_base_url and vidu_api_key),
+            "usage": "digital_human",
+            "source": "config",
+            "readOnly": True,
+            "createdAt": "",
+            "updatedAt": "",
+        })
+
     return items
 
 
@@ -367,14 +413,38 @@ def _resolve_llm_config(request: Request, record_id: str) -> dict[str, Any] | No
 def _normalized_llm_config(body: LlmConfigBody, *, existing: dict[str, Any] | None = None) -> dict[str, Any]:
     current = existing or {}
     provided_key = (body.api_key or "").strip()
+    provider = body.provider.strip().lower()
+    if provider == VIDU_PROVIDER:
+        # Vidu is an external digital-human driver, not a conversational LLM.
+        # Keep its protocol details deployment-owned: admins only provide the
+        # secret while the uploaded avatar supplies image_uri/name/persona.
+        return {
+            **current,
+            "name": VIDU_MANAGED_NAME,
+            "provider": VIDU_PROVIDER,
+            "baseUrl": VIDU_INTERNAL_SERVICE_URL,
+            "model": VIDU_INTERNAL_MODEL,
+            "apiKey": provided_key or str(current.get("apiKey") or ""),
+            "systemPrompt": "",
+            "usage": "digital_human",
+            "publicBaseUrl": "",
+            "callMode": "video",
+            "characterId": "1",
+            "voice": "Tina",
+        }
     return {
         **current,
         "name": body.name.strip(),
-        "provider": body.provider.strip().lower(),
+        "provider": provider,
         "baseUrl": body.base_url.strip().rstrip("/"),
         "model": body.model.strip(),
         "apiKey": provided_key or str(current.get("apiKey") or ""),
         "systemPrompt": body.system_prompt.strip(),
+        "usage": body.usage,
+        "publicBaseUrl": body.public_base_url.strip().rstrip("/"),
+        "callMode": body.call_mode,
+        "characterId": body.character_id.strip() or "1",
+        "voice": body.voice.strip() or "Tina",
     }
 
 
@@ -382,6 +452,14 @@ async def _apply_llm_config(request: Request, item: dict[str, Any]) -> dict[str,
     api_key = str(item.get("apiKey") or "").strip()
     if not api_key:
         raise HTTPException(status_code=400, detail={"code": "LLM_API_KEY_REQUIRED", "detail": "启用前必须配置 API Key"})
+    if str(item.get("provider") or "").strip().lower() == VIDU_PROVIDER:
+        return await apply_runtime_config(
+            RuntimeConfigPayload(
+                vidu_api_key=api_key,
+                sync_dashscope_api_key=False,
+            ),
+            request,
+        )
     return await apply_runtime_config(
         RuntimeConfigPayload(
             llm_base_url=str(item.get("baseUrl") or ""),
@@ -399,26 +477,41 @@ def list_llm_configs(request: Request, auth: dict[str, Any] = Depends(current_us
     store = get_store(request)
     _require(store, auth, "system:llm")
     configured = _configured_llm_configs(request)
-    configured_conversation = next((item for item in configured if _llm_usage(item) == "conversation"), None)
     managed = store.list_records("llm_configs")
-    if configured_conversation is not None:
-        current_signature = _llm_signature(configured_conversation)
+    for configured_item in list(configured):
+        usage = _llm_usage(configured_item)
+        current_signature = _llm_signature(configured_item)
+        configured_provider = str(configured_item.get("provider") or "").strip().lower()
         matching_managed = next(
             (
                 item
                 for item in managed
-                if _llm_usage(item) == "conversation" and _llm_signature(item) == current_signature
+                if _llm_usage(item) == usage
+                and (
+                    configured_provider == VIDU_PROVIDER
+                    and str(item.get("provider") or "").strip().lower() == VIDU_PROVIDER
+                    or _llm_signature(item) == current_signature
+                )
             ),
             None,
         )
-        if matching_managed is not None:
-            configured = [item for item in configured if _llm_usage(item) != "conversation"]
+        if matching_managed is None:
             managed = [
-                {**item, "isActive": str(item.get("id")) == str(matching_managed.get("id"))}
+                {**item, "isActive": False} if _llm_usage(item) == usage else item
                 for item in managed
             ]
-        else:
-            managed = [{**item, "isActive": False} for item in managed]
+            continue
+        configured.remove(configured_item)
+        runtime_active = bool(configured_item.get("isActive"))
+        managed = [
+            {
+                **item,
+                "isActive": runtime_active
+                and str(item.get("id")) == str(matching_managed.get("id")),
+            }
+            if _llm_usage(item) == usage else item
+            for item in managed
+        ]
     managed = sorted(managed, key=lambda item: (not bool(item.get("isActive")), str(item.get("updatedAt") or "")), reverse=False)
     # A managed record can itself have been saved more than once with the same
     # provider/base URL/model. Keep the active/newest record and never expose
@@ -478,7 +571,10 @@ async def activate_llm_config(record_id: str, request: Request, auth: dict[str, 
     target = _record(store, "llm_configs", record_id) or {}
     runtime = await _apply_llm_config(request, target)
     now = utc_now()
+    target_usage = _llm_usage(target)
     for item in store.list_records("llm_configs"):
+        if _llm_usage(item) != target_usage:
+            continue
         is_active = str(item.get("id")) == record_id
         if bool(item.get("isActive")) != is_active:
             store.save_record("llm_configs", {**item, "isActive": is_active, "updatedAt": now})
@@ -497,23 +593,31 @@ async def test_llm_config(record_id: str, request: Request, auth: dict[str, Any]
     api_key = str(item.get("apiKey") or "").strip()
     if not api_key:
         raise HTTPException(status_code=400, detail={"code": "LLM_API_KEY_REQUIRED", "detail": "请先保存 API Key"})
-    url = f"{str(item.get('baseUrl') or '').rstrip('/')}/chat/completions"
+    provider = str(item.get("provider") or "").strip().lower()
+    base_url = str(item.get("baseUrl") or "").rstrip("/")
+    url = f"{base_url}/live/v1/lives" if provider == "vidu" else f"{base_url}/chat/completions"
     started = time.perf_counter()
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(12.0, connect=5.0)) as client:
-            response = await client.post(
-                url,
-                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-                json={"model": item.get("model"), "messages": [{"role": "user", "content": "请只回复 OK"}], "max_tokens": 4, "temperature": 0},
-            )
-            response.raise_for_status()
+            if provider == "vidu":
+                response = await client.get(url, headers={"Authorization": f"Token {api_key}", "Accept": "*/*"})
+                if response.status_code in {401, 403} or response.status_code >= 500:
+                    response.raise_for_status()
+            else:
+                response = await client.post(
+                    url,
+                    headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                    json={"model": item.get("model"), "messages": [{"role": "user", "content": "请只回复 OK"}], "max_tokens": 4, "temperature": 0},
+                )
+                response.raise_for_status()
     except httpx.HTTPStatusError as exc:
         raise HTTPException(status_code=502, detail={"code": "LLM_TEST_FAILED", "detail": "模型服务暂时不可用，请稍后重试"}) from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail={"code": "LLM_TEST_FAILED", "detail": "模型服务暂时不可用，请稍后重试"}) from exc
     latency_ms = round((time.perf_counter() - started) * 1000)
     _audit(request, auth, action="test", resource_type="llm_config", resource_id=record_id, before=None, after={"success": True, "latencyMs": latency_ms})
-    return {"success": True, "latencyMs": latency_ms, "message": "连接成功"}
+    message = "Vidu 服务地址可达，完整鉴权将在启动会话时验证" if provider == "vidu" else "连接成功"
+    return {"success": True, "latencyMs": latency_ms, "message": message}
 
 EVENT_IMAGE_RESOURCES = {"exhibitors", "exhibits", "venues", "points", "routes"}
 

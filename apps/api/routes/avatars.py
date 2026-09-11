@@ -464,7 +464,7 @@ async def _read_upload_video(upload: UploadFile) -> tuple[Image.Image, bytes, st
 
 def _normalize_custom_avatar_model(model: str | None, fallback: str) -> str:
     value = (model or "").strip().lower()
-    if value in {"fasterliveportrait", "flashhead", "flashtalk", "mock", "musetalk", "quicktalk", "wav2lip", "video"}:
+    if value in {"fasterliveportrait", "flashhead", "flashtalk", "mock", "musetalk", "quicktalk", "vidu", "wav2lip", "video"}:
         return value
     return fallback
 
@@ -1324,9 +1324,13 @@ async def create_custom_avatar(
     target_dir = root / avatar_id
     requested_model = (model or "").strip().lower()
     is_video_driver = requested_model == "video"
+    is_vidu_image = requested_model == "vidu"
     if is_video_driver:
         if image is not None or video is not None or listen_video is None or think_video is None or talk_video is None:
             raise HTTPException(status_code=400, detail="video model requires listen_video, think_video and talk_video")
+    elif is_vidu_image:
+        if image is None or video is not None or listen_video is not None or think_video is not None or talk_video is not None:
+            raise HTTPException(status_code=400, detail="vidu model requires exactly one image")
     elif listen_video is not None or think_video is not None or talk_video is not None:
         raise HTTPException(status_code=400, detail="listen_video and talk_video require model=video")
     elif (image is None and video is None) or (image is not None and video is not None):

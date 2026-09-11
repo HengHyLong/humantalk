@@ -27,6 +27,15 @@ def _flatten_config(raw: dict[str, Any] | None) -> dict[str, Any]:
             "models_dir": "models_dir",
             "worker_url": "worker_url",
         },
+        "vidu": {
+            "service_url": "vidu_service_url",
+            "api_key": "vidu_api_key",
+            "public_base_url": "vidu_public_base_url",
+            "call_mode": "vidu_call_mode",
+            "character_id": "vidu_character_id",
+            "voice": "vidu_voice",
+            "connect_timeout_sec": "vidu_connect_timeout_sec",
+        },
         "avatar": {
             "matting_provider": "avatar_matting_provider",
             "matting_device": "avatar_matting_device",
@@ -371,6 +380,15 @@ class Settings(BaseSettings):
     avatars_dir: str = "./examples/avatars"
     models_dir: str = Field(default_factory=lambda: str(model_root()))
     worker_url: str = "http://127.0.0.1:9001"
+    # Project-owned Vidu Live proxy. The unified startup script starts it on
+    # port 18088; the provider key remains server-side.
+    vidu_service_url: str = "http://127.0.0.1:18088/proxy/cn"
+    vidu_api_key: str = ""
+    vidu_public_base_url: str = ""
+    vidu_call_mode: str = "video"
+    vidu_character_id: str = "1"
+    vidu_voice: str = "Tina"
+    vidu_connect_timeout_sec: float = 60.0
     exports_dir: str = "./data/exports"
     scene_assets_dir: str = "./data/scene-assets"
     scene_asset_max_bytes: int = 200 * 1024 * 1024

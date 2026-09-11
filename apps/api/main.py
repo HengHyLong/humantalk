@@ -18,6 +18,7 @@ from apps.api.admin.middleware import AdminTraceMiddleware
 from apps.api.admin.routes import public_router as admin_public_router
 from apps.api.admin.routes import router as admin_router
 from apps.api.routes import agent, avatars, events, exports, health, knowledge_proxy, memory, models, personas, qa, runtime_config, scene_assets, sessions, tts_preview, video_clone, video_creation, voices
+from apps.api.services.vidu_service import ViduSessionManager
 from opentalking.voice.store import init_voice_store
 
 
@@ -100,8 +101,12 @@ async def lifespan(app: FastAPI):
         app.state.admin_store = AdminStore(settings.admin_sqlite_path, settings.admin_initialize_defaults)
     r = redis.from_url(settings.redis_url, decode_responses=True)
     app.state.redis = r
-    yield
-    await r.aclose()
+    app.state.vidu_sessions = ViduSessionManager(settings)
+    try:
+        yield
+    finally:
+        await app.state.vidu_sessions.close_all()
+        await r.aclose()
 
 
 def create_app() -> FastAPI:

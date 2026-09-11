@@ -84,6 +84,7 @@ import {
 } from "./lib/ttsPreview";
 import type { VoiceCloneApplication } from "./lib/voiceCloneApply";
 import { startPlayback } from "./lib/webrtc";
+import { startViduPlayback, type ViduPlaybackHandle } from "./lib/vidu";
 import {
   DEFAULT_EDGE_VOICE_ID,
   EDGE_VOICE_STORAGE_KEY,
@@ -977,6 +978,7 @@ export default function App() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const pcRef = useRef<RTCPeerConnection | null>(null);
+  const viduPlaybackRef = useRef<ViduPlaybackHandle | null>(null);
   const remoteStreamRef = useRef<MediaStream | null>(null);
   const realtimeRecorderRef = useRef<MediaRecorder | null>(null);
   const realtimeRecordChunksRef = useRef<Blob[]>([]);
@@ -2061,6 +2063,12 @@ export default function App() {
   }, [messages]);
 
   const closePeerConnection = useCallback(() => {
+    if (viduPlaybackRef.current) {
+      void viduPlaybackRef.current.close().catch((error) => {
+        console.warn("Failed to close Vidu playback", error);
+      });
+      viduPlaybackRef.current = null;
+    }
     if (pcRef.current) {
       pcRef.current.close();
       pcRef.current = null;
@@ -2078,6 +2086,16 @@ export default function App() {
     } catch (error) {
       console.warn("Failed to release session", sid, error);
     }
+  }, []);
+
+  const releaseSessionOnPageHide = useCallback((sid: string) => {
+    const url = buildApiUrl(`/sessions/${sid}/release`);
+    // sendBeacon is specifically designed to survive page teardown. Unlike a
+    // cross-origin DELETE it does not depend on an unload-time CORS preflight.
+    if (typeof navigator.sendBeacon === "function" && navigator.sendBeacon(url)) return;
+    void fetch(url, { method: "POST", keepalive: true }).catch((error) => {
+      console.warn("Failed to release session during page hide", sid, error);
+    });
   }, []);
 
   const resetLiveState = useCallback(
@@ -2540,7 +2558,7 @@ export default function App() {
 
     const startBlockReason = validateAudioProviderConfigBeforeStart({
       sttProvider: lockedAsrProvider,
-      ttsProvider,
+      ttsProvider: model === "vidu" ? "edge" : ttsProvider,
       runtimeStatus: latestRuntimeStatus,
     });
     if (startBlockReason) {
@@ -2638,15 +2656,29 @@ export default function App() {
       }
 
       closePeerConnection();
-      const playback = await startPlayback(created.session_id, videoRef.current!, {
-        onRemoteStream: (remoteStream) => {
-          remoteStreamRef.current = remoteStream;
-          setRemoteStream(remoteStream);
-        },
-      });
-      pcRef.current = playback.pc;
-      remoteStreamRef.current = playback.remoteStream;
-      setRemoteStream(playback.remoteStream);
+      if (created.transport === "vidu_alirtc" || model === "vidu") {
+        if (!created.rtc) throw new Error("Vidu RTC 会话信息缺失");
+        // Let React detach a previous renderer before AliRTC binds the same
+        // video element. The SDK-provided MediaStream is fed back into the
+        // normal stage/recording path once the remote user is subscribed.
+        await wait(0);
+        viduPlaybackRef.current = await startViduPlayback(created.rtc, videoRef.current!, {
+          onRemoteStream: (remoteStream) => {
+            remoteStreamRef.current = remoteStream;
+            setRemoteStream(remoteStream);
+          },
+        });
+      } else {
+        const playback = await startPlayback(created.session_id, videoRef.current!, {
+          onRemoteStream: (remoteStream) => {
+            remoteStreamRef.current = remoteStream;
+            setRemoteStream(remoteStream);
+          },
+        });
+        pcRef.current = playback.pc;
+        remoteStreamRef.current = playback.remoteStream;
+        setRemoteStream(playback.remoteStream);
+      }
       setActiveAsrProvider(lockedAsrProvider);
       videoRef.current!.muted = false;
       setConnection("live");
@@ -2662,9 +2694,7 @@ export default function App() {
       const detail = error instanceof ApiError ? error.detail : null;
       const msg = detail
         ? `启动会话失败：${detail}`
-        : error instanceof Error && error.message
-          ? `启动会话失败：${error.message}`
-          : "启动会话失败，请稍后重试或查看后端日志。";
+        : "启动会话失败，请稍后重试。";
       notify(msg, "error");
     }
   }, [
@@ -3980,14 +4010,14 @@ export default function App() {
       }
       cleanupRealtimeRecordStreams();
       if (sid) {
-        void releaseSession(sid, true);
+        releaseSessionOnPageHide(sid);
       }
       closePeerConnection();
     };
 
     window.addEventListener("pagehide", handlePageHide);
     return () => window.removeEventListener("pagehide", handlePageHide);
-  }, [cleanupRealtimeRecordStreams, closePeerConnection, releaseSession]);
+  }, [cleanupRealtimeRecordStreams, closePeerConnection, releaseSessionOnPageHide]);
 
   useEffect(() => {
     return () => {

@@ -25,6 +25,7 @@ from apps.api.admin.routes import public_router as admin_public_router
 from apps.api.admin.routes import router as admin_router
 from apps.api.routes.avatars import _call_adapter_warmup
 from apps.api.routes import agent, avatars, events, exports, health, memory, models, personas, qa, runtime_config, scene_assets, sessions, tts_preview, video_clone, video_creation, voices
+from apps.api.services.vidu_service import ViduSessionManager
 from opentalking.voice.store import init_voice_store
 from opentalking.core.in_memory_redis import InMemoryRedis
 from opentalking.pipeline.session.runner import SessionRunner
@@ -133,6 +134,10 @@ async def unified_lifespan(app: FastAPI):
     init_voice_store()
     settings = get_settings()
     app.state.settings = settings
+    # The unified process owns Vidu App WebSockets just like the split API.
+    # Keep the manager on app.state so every session is explicitly hung up
+    # during graceful shutdown instead of continuing to consume Vidu quota.
+    app.state.vidu_sessions = ViduSessionManager(settings)
     if settings.admin_api_enabled:
         app.state.admin_store = AdminStore(settings.admin_sqlite_path, settings.admin_initialize_defaults)
     log.info(
@@ -224,6 +229,7 @@ async def unified_lifespan(app: FastAPI):
         asyncio.create_task(_prewarm())
 
     yield
+    await app.state.vidu_sessions.close_all()
     consumer.cancel()
     try:
         await consumer

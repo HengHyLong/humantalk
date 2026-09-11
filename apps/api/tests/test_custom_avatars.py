@@ -85,6 +85,50 @@ def test_create_custom_avatar_adds_listed_asset_with_preview(tmp_path):
     assert preview.headers["content-type"] == "image/png"
 
 
+def test_create_vidu_avatar_requires_one_image(tmp_path):
+    base = tmp_path / "base-avatar"
+    base.mkdir()
+    (base / "preview.png").write_bytes(_png_bytes())
+    (base / "reference.png").write_bytes(_png_bytes())
+    (base / "manifest.json").write_text(
+        json.dumps(
+            {
+                "id": "base-avatar",
+                "name": "Base Avatar",
+                "model_type": "flashtalk",
+                "fps": 25,
+                "sample_rate": 16000,
+                "width": 416,
+                "height": 704,
+                "version": "1.0",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    app = FastAPI()
+    app.state.settings = SimpleNamespace(avatars_dir=str(tmp_path))
+    app.include_router(avatars.router)
+    client = TestClient(app)
+
+    response = client.post(
+        "/avatars/custom",
+        data={"base_avatar_id": "base-avatar", "name": "Vidu 形象", "model": "vidu"},
+        files={"image": ("avatar.png", _png_bytes(), "image/png")},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["model_type"] == "vidu"
+
+    rejected = client.post(
+        "/avatars/custom",
+        data={"base_avatar_id": "base-avatar", "name": "Vidu 视频", "model": "vidu"},
+        files={"video": ("avatar.mp4", b"not-a-video", "video/mp4")},
+    )
+    assert rejected.status_code == 400
+    assert rejected.json()["detail"] == "vidu model requires exactly one image"
+
+
 def test_create_custom_video_avatar_persists_listen_and_talk_assets(tmp_path, monkeypatch):
     base = tmp_path / "base-avatar"
     base.mkdir()

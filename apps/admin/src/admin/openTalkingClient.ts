@@ -11,6 +11,7 @@ import {
   type VoiceCatalogItem,
 } from "../lib/api";
 import { buildTTSPreviewPayload, requestTTSPreview } from "../lib/ttsPreview";
+import { ensureSelectableModelIds } from "../lib/modelStatus";
 import type { TtsProviderExtended } from "../constants/ttsBailian";
 import { beginAdminProgress, finishAdminProgress, notifyAdmin, updateAdminProgress } from "./feedback";
 
@@ -66,9 +67,9 @@ export const openTalkingClient: OpenTalkingClient = {
     return response.items ?? response.avatars ?? [];
   }),
   listModels: () => apiGet<{ models?: string[]; default_model?: string | null }>("/models").then((response) => ({
-    // video is a browser-side driver and therefore is intentionally not part of
-    // the backend synthesis-model list.
-    models: Array.from(new Set([...(response.models ?? []), "video"])),
+    // Keep Vidu visible when the API process is temporarily older than the UI.
+    // video is a browser-side driver and is intentionally not advertised by the backend.
+    models: ensureSelectableModelIds(response.models ?? [], true),
     defaultModel: response.default_model ?? null,
   })),
   listVoices: () =>

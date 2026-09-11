@@ -815,6 +815,64 @@ def test_llm_config_crud_masks_secret_and_activation_updates_runtime(tmp_path, m
         assert client.delete(f"/api/v1/admin/llm-configs/{record_id}", headers=headers).status_code == 409
 
 
+def test_vidu_config_activation_uses_digital_human_runtime_without_disabling_chat(tmp_path, monkeypatch) -> None:
+    applied: list[admin_routes.RuntimeConfigPayload] = []
+
+    async def fake_apply_runtime_config(payload, _request):
+        applied.append(payload)
+        return {"live_runners_refreshed": 0}
+
+    monkeypatch.setattr(admin_routes, "apply_runtime_config", fake_apply_runtime_config)
+    with _client(tmp_path) as client:
+        headers = _login(client)
+        store = client.app.state.admin_store
+        store.save_record(
+            "llm_configs",
+            {
+                "id": "llm-chat-active",
+                "name": "当前对话模型",
+                "provider": "dashscope",
+                "baseUrl": "https://chat.example.test/v1",
+                "model": "qwen-plus",
+                "apiKey": "chat-secret",
+                "systemPrompt": "",
+                "usage": "conversation",
+                "isActive": True,
+            },
+        )
+        created = client.post(
+            "/api/v1/admin/llm-configs",
+            headers=headers,
+            json={
+                "provider": "vidu",
+                "apiKey": "vda-test-secret",
+            },
+        )
+        assert created.status_code == 200, created.text
+        vidu = created.json()
+        assert vidu["apiKey"] == ""
+        assert vidu["apiKeyConfigured"] is True
+        assert vidu["usage"] == "digital_human"
+        assert vidu["name"] == "Vidu 外部数字人驱动"
+        assert vidu["baseUrl"] == "http://127.0.0.1:18088/proxy/cn"
+        assert vidu["model"] == "vidu-live"
+        assert vidu["publicBaseUrl"] == ""
+        assert vidu["callMode"] == "video"
+        assert vidu["characterId"] == "1"
+
+        activated = client.post(f"/api/v1/admin/llm-configs/{vidu['id']}/activate", headers=headers)
+        assert activated.status_code == 200, activated.text
+        assert applied
+        payload = applied[0]
+        assert payload.vidu_api_key == "vda-test-secret"
+        assert payload.vidu_service_url is None
+        assert payload.vidu_public_base_url is None
+        assert payload.vidu_call_mode is None
+        assert payload.vidu_character_id is None
+        assert payload.vidu_voice is None
+        assert store.get_record("llm_configs", "llm-chat-active")["isActive"] is True
+
+
 def test_llm_config_list_includes_effective_file_configuration_and_masks_keys(tmp_path) -> None:
     with _client(tmp_path) as client:
         settings = client.app.state.settings

@@ -55,6 +55,7 @@ def test_models_route_lists_all_models_with_connection_status_without_omnirt(mon
         "fasterliveportrait",
         "flashhead",
         "quicktalk",
+        "vidu",
     ]
     statuses = {item["id"]: item for item in payload["statuses"]}
     assert statuses["mock"]["backend"] == "mock"
@@ -74,6 +75,9 @@ def test_models_route_lists_all_models_with_connection_status_without_omnirt(mon
     assert statuses["quicktalk"]["backend"] == "omnirt"
     assert statuses["quicktalk"]["connected"] is False
     assert statuses["quicktalk"]["reason"] == "not_configured"
+    assert statuses["vidu"]["backend"] == "vidu_live"
+    assert statuses["vidu"]["connected"] is False
+    assert statuses["vidu"]["reason"] == "not_configured"
 
 
 def test_models_route_exposes_valid_default_model_from_settings(monkeypatch) -> None:
@@ -106,6 +110,23 @@ def test_settings_loads_default_model_from_environment(monkeypatch, tmp_path) ->
     settings = Settings(_env_file=None)
 
     assert settings.default_model == "quicktalk"
+
+
+def test_settings_loads_vidu_fields_from_environment(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("OPENTALKING_VIDU_SERVICE_URL", "http://127.0.0.1:18088/proxy/cn")
+    monkeypatch.setenv("OPENTALKING_VIDU_API_KEY", "vda_test")
+    monkeypatch.setenv("OPENTALKING_VIDU_PUBLIC_BASE_URL", "https://demo.example/api")
+    monkeypatch.setenv("OPENTALKING_VIDU_CALL_MODE", "audio")
+    monkeypatch.delenv("OPENTALKING_CONFIG_FILE", raising=False)
+    monkeypatch.delenv("CONFIG_FILE", raising=False)
+    monkeypatch.chdir(tmp_path)
+
+    settings = Settings(_env_file=None)
+
+    assert settings.vidu_service_url == "http://127.0.0.1:18088/proxy/cn"
+    assert settings.vidu_api_key == "vda_test"
+    assert settings.vidu_public_base_url == "https://demo.example/api"
+    assert settings.vidu_call_mode == "audio"
 
 
 def test_settings_loads_quicktalk_local_fields_from_environment(monkeypatch, tmp_path) -> None:

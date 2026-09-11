@@ -506,8 +506,12 @@ export type LlmConfig = {
   apiKey: string;
   apiKeyConfigured: boolean;
   systemPrompt: string;
+  publicBaseUrl: string;
+  callMode: "audio" | "video";
+  characterId: string;
+  voice: string;
   isActive: boolean;
-  usage: "conversation" | "knowledge" | "memory";
+  usage: "conversation" | "knowledge" | "memory" | "digital_human";
   source: "managed" | "config";
   readOnly: boolean;
   createdAt: string;

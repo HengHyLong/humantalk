@@ -1,5 +1,6 @@
 import type { ExhibitionEntityCard, MemoryItem, MemoryLibrary, MemoryTurn, WeChatImportCommitResult, WeChatImportJob } from "../types";
 import type { ConversationLanguage } from "./conversationLanguage";
+import { toSafeApiMessage } from "./apiError";
 
 export const API_BASE = import.meta.env.VITE_API_BASE ?? "/api";
 
@@ -52,7 +53,7 @@ function normalizedApiBase(): URL {
   return new URL(rootRelativeBase, origin);
 }
 
-/** Rich error type so callers can show the FastAPI {"detail": "..."} message. */
+/** Safe request error; raw backend bodies are never used as user-facing text. */
 export class ApiError extends Error {
   status: number;
   detail: string | null;
@@ -69,23 +70,14 @@ export class ApiError extends Error {
 async function throwIfNotOk(r: Response): Promise<void> {
   if (r.ok) return;
   const body = await r.text();
-  let detail: string | null = null;
+  let payload: unknown = null;
   try {
-    const parsed = JSON.parse(body);
-    if (typeof parsed?.detail === "string") {
-      detail = parsed.detail;
-    } else if (Array.isArray(parsed?.detail)) {
-      // FastAPI validation errors arrive as a list of {loc, msg, ...}
-      detail = parsed.detail
-        .map((d: { msg?: string }) => d?.msg ?? JSON.stringify(d))
-        .join("; ");
-    } else if (parsed?.detail != null) {
-      detail = JSON.stringify(parsed.detail);
-    }
+    payload = JSON.parse(body);
   } catch {
-    // body wasn't JSON; leave detail null
+    // Non-JSON upstream responses are intentionally not exposed.
   }
-  throw new ApiError(r.status, detail, body);
+  const detail = toSafeApiMessage(r.status, payload);
+  throw new ApiError(r.status, detail, detail);
 }
 
 export async function apiGet<T>(path: string): Promise<T> {
@@ -149,6 +141,15 @@ export type RuntimeConfigLlm = {
   api_key_set: boolean;
 };
 
+export type RuntimeConfigVidu = {
+  service_url: string;
+  public_base_url: string;
+  call_mode: "audio" | "video";
+  character_id: string;
+  voice: string;
+  api_key_set: boolean;
+};
+
 export type RuntimeConfigStt = {
   provider: string;
   enabled_providers: string[];
@@ -182,6 +183,7 @@ export type RuntimeConfigMem0 = {
 
 export type RuntimeConfigResponse = {
   llm: RuntimeConfigLlm;
+  vidu: RuntimeConfigVidu;
   stt: RuntimeConfigStt;
   tts: RuntimeConfigTts;
   mem0: RuntimeConfigMem0;
@@ -194,6 +196,12 @@ export type RuntimeConfigApplyInput = {
   llm_base_url?: string;
   llm_model?: string;
   llm_api_key?: string;
+  vidu_service_url?: string;
+  vidu_api_key?: string;
+  vidu_public_base_url?: string;
+  vidu_call_mode?: "audio" | "video";
+  vidu_character_id?: string;
+  vidu_voice?: string;
   stt_provider?: string;
   stt_base_url?: string;
   stt_model?: string;
@@ -851,7 +859,12 @@ export type AvatarSummary = {
   } | null;
 };
 
-export type CreateSessionResponse = { session_id: string; status: string };
+export type CreateSessionResponse = {
+  session_id: string;
+  status: string;
+  transport?: "webrtc" | "vidu_alirtc";
+  rtc?: import("./vidu").ViduRtcConfig | null;
+};
 
 function memoryQuery(profileId: string, characterId: string): string {
   const qs = new URLSearchParams({ profile_id: profileId, character_id: characterId });

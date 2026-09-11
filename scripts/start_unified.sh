@@ -2,6 +2,7 @@
 set -euo pipefail
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd -- "$script_dir/.." && pwd)"
 quickstart_dir="$script_dir/quickstart"
 # shellcheck disable=SC1091
 source "$quickstart_dir/_helpers.sh"
@@ -407,6 +408,15 @@ start_admin() {
   tail -80 "$log_file" >&2 || true
   return 1
 }
+
+# The Vidu adapter is part of this project and starts with the unified stack.
+# Set OPENTALKING_VIDU_AUTO_START=0 only when an external endpoint is managed
+# independently.
+if [[ "${OPENTALKING_VIDU_AUTO_START:-1}" == "1" && -f "$repo_root/apps/vidu_proxy/main.py" ]]; then
+  if ! bash "$quickstart_dir/start_vidu.sh"; then
+    echo "Vidu Live proxy did not start; Vidu will remain marked as disconnected." >&2
+  fi
+fi
 
 if [[ "$backend" == "mock" ]]; then
   if ((${#start_args[@]})); then

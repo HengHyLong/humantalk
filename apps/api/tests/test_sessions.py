@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import time
 from pathlib import Path
@@ -407,6 +408,114 @@ def test_create_session_rejects_unconnected_model() -> None:
             detail = response.json()["detail"]
             assert unsupported in detail
             assert "not yet supported" in detail
+
+
+def test_create_vidu_session_uses_vidu_transport_without_worker_task(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    avatar_dir = tmp_path / "vidu-avatar"
+    avatar_dir.mkdir()
+    (avatar_dir / "preview.png").write_bytes(b"preview")
+    (avatar_dir / "reference.png").write_bytes(b"reference")
+    (avatar_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "id": "vidu-avatar",
+                "name": "Vidu 测试形象",
+                "model_type": "vidu",
+                "fps": 25,
+                "sample_rate": 16000,
+                "width": 416,
+                "height": 704,
+                "version": "1.0",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeViduManager:
+        async def create(self, session_id: str, **kwargs: object) -> dict[str, object]:
+            assert session_id.startswith("sess_")
+            assert kwargs["image_uri"] == "https://public.example/api/avatars/vidu-avatar/preview"
+            assert kwargs["call_mode"] == "video"
+            return {
+                "live_id": "live-1",
+                "rtc": {
+                    "app_id": "app-1",
+                    "channel_id": "channel-1",
+                    "user_id": "user-1",
+                    "token": "temporary-rtc-token",
+                },
+            }
+
+    async def fake_connected_models(_settings: object) -> list[str]:
+        return ["vidu"]
+
+    monkeypatch.setattr(
+        "opentalking.providers.synthesis.availability.connected_model_ids",
+        fake_connected_models,
+    )
+    monkeypatch.setattr(sessions_routes, "_require_audio_provider_config", lambda **_kwargs: None)
+    monkeypatch.setattr(sessions_routes, "_vidu_manager", lambda _request: FakeViduManager())
+
+    app = FastAPI()
+    app.state.redis = InMemoryRedis()
+    app.state.settings = SimpleNamespace(
+        avatars_dir=str(tmp_path),
+        persona_root=str(tmp_path / "personas"),
+        vidu_public_base_url="https://public.example/api",
+        public_base_url="",
+        vidu_voice="Tina",
+        vidu_call_mode="audio",
+        vidu_character_id="1",
+        normalized_stt_default_provider="dashscope",
+        normalized_tts_default_provider="edge",
+    )
+    app.include_router(sessions_routes.router)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/sessions",
+            json={"avatar_id": "vidu-avatar", "model": "vidu", "knowledge_enabled": False},
+        )
+
+    assert response.status_code == 200, response.json()
+    payload = response.json()
+    assert payload["transport"] == "vidu_alirtc"
+    assert payload["rtc"]["token"] == "temporary-rtc-token"
+    assert app.state.redis.task_queue.qsize() == 0
+
+
+def test_vidu_avatar_payload_embeds_local_image_without_public_base_url(tmp_path: Path) -> None:
+    avatar_dir = tmp_path / "local-vidu-avatar"
+    avatar_dir.mkdir()
+    image_bytes = b"local-avatar-image"
+    (avatar_dir / "preview.png").write_bytes(image_bytes)
+    (avatar_dir / "manifest.json").write_text(
+        json.dumps({"id": "local-vidu-avatar", "name": "本地 Vidu 形象", "model_type": "vidu"}),
+        encoding="utf-8",
+    )
+    request = SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                settings=SimpleNamespace(vidu_public_base_url="", public_base_url="", vidu_voice="Tina")
+            )
+        ),
+        base_url="http://127.0.0.1:8000/",
+    )
+
+    payload = sessions_routes._vidu_avatar_payload(
+        request,
+        avatar_id="local-vidu-avatar",
+        avatar_dir=avatar_dir,
+        fallback_persona=None,
+    )
+
+    prefix, encoded = payload["image_uri"].split(",", 1)
+    assert prefix == "data:image/png;base64"
+    assert base64.b64decode(encoded) == image_bytes
 
 
 def test_create_session_accepts_local_wav2lip_adapter(

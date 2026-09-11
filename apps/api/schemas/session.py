@@ -61,6 +61,8 @@ class SessionKnowledgeBasesResponse(BaseModel):
 class CreateSessionResponse(BaseModel):
     session_id: str
     status: str = "created"
+    transport: str | None = None
+    rtc: dict[str, Any] | None = None
 
 
 class SpeakRequest(BaseModel):

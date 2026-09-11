@@ -14,7 +14,7 @@ async def list_registered_models(
 ) -> dict[str, list[dict[str, str | bool]] | list[str] | str | None]:
     statuses = await resolve_model_statuses(request.app.state.settings)
     default_model = (getattr(request.app.state.settings, "default_model", "") or "").strip().lower()
-    if default_model not in SYNTHESIS_PROVIDERS:
+    if default_model not in {*SYNTHESIS_PROVIDERS, "vidu"}:
         default_model = None
     return {
         "models": [status.id for status in statuses],

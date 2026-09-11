@@ -287,9 +287,6 @@ export function ExhibitionDetailPage({ exhibitionId, canWrite = true, canImport 
     setRolePrompt(exhibition?.boundRolePrompt ?? "");
   }, [exhibition]);
   useEffect(() => {
-    if (!loading) setModels((current) => Array.from(new Set([...current, "video"])));
-  }, [loading]);
-  useEffect(() => {
     if (!exhibition) return;
     const configuredProvider = exhibition.boundSttProvider || "dashscope";
     const provider = EVENT_STT_PROVIDERS.find((item) => item.id === configuredProvider) ?? EVENT_STT_PROVIDERS.find((item) => item.id === "dashscope")!;

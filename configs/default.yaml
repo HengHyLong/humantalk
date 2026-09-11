@@ -9,6 +9,14 @@ infrastructure:
   redis_url: redis://localhost:6379/0
   avatars_dir: ./examples/avatars
   worker_url: http://127.0.0.1:9001
+vidu:
+  service_url: http://127.0.0.1:18088/proxy/cn
+  api_key: ""
+  public_base_url: ""
+  call_mode: video
+  character_id: "1"
+  voice: Tina
+  connect_timeout_sec: 60
 flashtalk:
   mode: off
   ws_url: ""

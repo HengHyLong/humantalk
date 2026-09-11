@@ -74,6 +74,7 @@ async def create_session(
     knowledge_enabled: bool = False,
     knowledge_base_id: str | None = None,
     knowledge_base_ids: list[str] | None = None,
+    enqueue_init: bool = True,
 ) -> str:
     sid = f"sess_{uuid.uuid4().hex[:12]}"
     selected_knowledge_base_ids = _normalize_knowledge_base_ids(
@@ -162,10 +163,11 @@ async def create_session(
         if legacy_knowledge_base_id:
             init_task["knowledge_base_id"] = legacy_knowledge_base_id
         init_task["knowledge_base_ids"] = selected_knowledge_base_ids
-    await _push_task(
-        r,
-        init_task,
-    )
+    if enqueue_init:
+        await _push_task(
+            r,
+            init_task,
+        )
     return sid
 
 

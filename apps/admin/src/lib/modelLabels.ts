@@ -6,6 +6,7 @@ const MODEL_LABELS: Record<string, string> = {
   mock: "轻量模式",
   musetalk: "MuseTalk",
   quicktalk: "QuickTalk",
+  vidu: "Vidu（图片驱动）",
   wav2lip: "Wav2Lip",
 };
 
