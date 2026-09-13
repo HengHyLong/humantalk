@@ -397,7 +397,7 @@ def test_create_session_avatar_model_decoupled_within_supported(
 
 
 def test_create_session_rejects_unconnected_model() -> None:
-    """Picking a model not connected on this deployment yields 400 with a clear hint."""
+    """Unsupported models use the safe client-facing error contract."""
     with TestClient(unified_main.create_app()) as client:
         for unsupported in ("musetalk",):
             response = client.post(
@@ -405,9 +405,11 @@ def test_create_session_rejects_unconnected_model() -> None:
                 json={"avatar_id": "anchor", "model": unsupported},
             )
             assert response.status_code == 400, response.json()
-            detail = response.json()["detail"]
-            assert unsupported in detail
-            assert "not yet supported" in detail
+            payload = response.json()
+            assert payload["code"] == "REQUEST_ERROR"
+            assert payload["message"] == "请求未完成，请稍后重试"
+            assert payload["request_id"].startswith("trace-")
+            assert unsupported not in response.text
 
 
 def test_create_vidu_session_uses_vidu_transport_without_worker_task(
@@ -1609,7 +1611,8 @@ def test_api_mode_worker_recording_404_is_returned_before_streaming(
         response = client.get(f"/sessions/{session_id}/flashtalk-recording")
 
     assert response.status_code == 404
-    assert response.json()["detail"] == "recording not ready"
+    assert response.json()["code"] == "NOT_FOUND"
+    assert response.json()["message"] == "数据不存在或已被删除"
 
 
 def test_worker_flashtalk_recording_endpoint_exports_mp4(

@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from apps.api.core.config import get_settings
+from apps.api.services.vidu_service import ViduSessionManager
 from opentalking.providers.memory.factory import close_cached_memory_provider
 from opentalking.providers.stt.factory import (
     clear_stt_adapter_cache,
@@ -693,10 +694,13 @@ async def _refresh_settings(request: Request) -> Any:
     vidu_manager = getattr(request.app.state, "vidu_sessions", None)
     if vidu_manager is not None:
         await vidu_manager.close_all()
-        delattr(request.app.state, "vidu_sessions")
     get_settings.cache_clear()
     settings = get_settings()
     request.app.state.settings = settings
+    # Recreate eagerly so shutdown cleanup and the next Vidu session always
+    # use the freshly applied endpoint/key. Leaving the attribute deleted made
+    # lifespan shutdown unsafe when no later Vidu request recreated it.
+    request.app.state.vidu_sessions = ViduSessionManager(settings)
     clear_stt_adapter_cache()
     await close_cached_memory_provider()
     if hasattr(request.app.state, "wechat_import_registry"):

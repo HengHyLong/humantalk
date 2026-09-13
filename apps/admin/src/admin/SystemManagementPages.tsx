@@ -45,7 +45,7 @@ function editableViduConfig(item?: LlmConfig): LlmConfig {
     id: item && !readOnly ? item.id : `new-${Date.now()}`,
     name: item?.name || "Vidu 外部数字人驱动",
     provider: "vidu",
-    baseUrl: item?.baseUrl || "http://127.0.0.1:18088/proxy/cn",
+    baseUrl: item?.baseUrl || "https://api.vidu.cn",
     model: "vidu-live",
     apiKey: "",
     apiKeyConfigured: readOnly ? false : Boolean(item?.apiKeyConfigured),

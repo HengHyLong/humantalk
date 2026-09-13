@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 from types import SimpleNamespace
 
@@ -233,7 +234,7 @@ async def test_runtime_config_apply_discards_stale_wechat_memory_registry(monkey
     assert not hasattr(request.app.state, "wechat_import_registry")
 
 
-async def test_runtime_config_apply_refreshes_vidu_settings_and_manager(monkeypatch, tmp_path) -> None:
+def test_runtime_config_apply_refreshes_vidu_settings_and_manager(monkeypatch, tmp_path) -> None:
     class Manager:
         closed = False
 
@@ -248,27 +249,31 @@ async def test_runtime_config_apply_refreshes_vidu_settings_and_manager(monkeypa
     manager = Manager()
     request.app.state.vidu_sessions = manager
 
-    payload = await runtime_config.apply_runtime_config(
-        runtime_config.RuntimeConfigPayload(
-            vidu_service_url="http://127.0.0.1:18088/proxy/cn/",
-            vidu_api_key="new-vidu-key",
-            vidu_public_base_url="https://public.example.test/api/",
-            vidu_call_mode="video",
-            vidu_character_id="character-2",
-            vidu_voice="Tina",
-            sync_dashscope_api_key=False,
-        ),
-        request,
-    )
+    async def apply() -> dict[str, object]:
+        return await runtime_config.apply_runtime_config(
+            runtime_config.RuntimeConfigPayload(
+                vidu_service_url="https://api.vidu.cn/",
+                vidu_api_key="new-vidu-key",
+                vidu_public_base_url="https://public.example.test/api/",
+                vidu_call_mode="video",
+                vidu_character_id="character-2",
+                vidu_voice="Tina",
+                sync_dashscope_api_key=False,
+            ),
+            request,
+        )
+
+    payload = asyncio.run(apply())
 
     assert manager.closed is True
-    assert not hasattr(request.app.state, "vidu_sessions")
+    assert isinstance(request.app.state.vidu_sessions, runtime_config.ViduSessionManager)
+    assert request.app.state.vidu_sessions.settings is request.app.state.settings
     assert request.app.state.settings.vidu_api_key == "new-vidu-key"
     assert request.app.state.settings.llm_provider == "dashscope"
     assert request.app.state.settings.llm_model == "qwen-plus"
     assert os.environ["OPENTALKING_LLM_PROVIDER"] == "dashscope"
     assert payload["vidu"] == {
-        "service_url": "http://127.0.0.1:18088/proxy/cn",
+        "service_url": "https://api.vidu.cn",
         "public_base_url": "https://public.example.test/api",
         "call_mode": "video",
         "character_id": "character-2",

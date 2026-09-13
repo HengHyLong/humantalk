@@ -380,9 +380,10 @@ class Settings(BaseSettings):
     avatars_dir: str = "./examples/avatars"
     models_dir: str = Field(default_factory=lambda: str(model_root()))
     worker_url: str = "http://127.0.0.1:9001"
-    # Project-owned Vidu Live proxy. The unified startup script starts it on
-    # port 18088; the provider key remains server-side.
-    vidu_service_url: str = "http://127.0.0.1:18088/proxy/cn"
+    # The API server connects directly to Vidu; the provider key never enters
+    # the browser. A project-owned loopback proxy remains available for local
+    # protocol debugging when explicitly selected.
+    vidu_service_url: str = "https://api.vidu.cn"
     vidu_api_key: str = ""
     vidu_public_base_url: str = ""
     vidu_call_mode: str = "video"

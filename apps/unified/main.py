@@ -16,13 +16,22 @@ from pathlib import Path
 # legacy registry import removed
 import uvicorn
 import redis.asyncio as redis
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from apps.api.core.config import get_settings
 from apps.api.admin import AdminStore
 from apps.api.admin.middleware import AdminTraceMiddleware
 from apps.api.admin.routes import public_router as admin_public_router
 from apps.api.admin.routes import router as admin_router
+from apps.api.main import (
+    AppError,
+    _app_error_handler,
+    _http_error_handler,
+    _unhandled_error_handler,
+    _validation_error_handler,
+)
 from apps.api.routes.avatars import _call_adapter_warmup
 from apps.api.routes import agent, avatars, events, exports, health, memory, models, personas, qa, runtime_config, scene_assets, sessions, tts_preview, video_clone, video_creation, voices
 from apps.api.services.vidu_service import ViduSessionManager
@@ -251,6 +260,14 @@ def create_app() -> FastAPI:
         description="API + worker in one process (no Redis)",
         lifespan=unified_lifespan,
     )
+    # Production commonly uses this single-process entrypoint. Keep its error
+    # contract identical to the split API so provider, ffmpeg, database and
+    # validation details never leak to browser clients.
+    app.add_exception_handler(AppError, _app_error_handler)
+    app.add_exception_handler(HTTPException, _http_error_handler)
+    app.add_exception_handler(StarletteHTTPException, _http_error_handler)
+    app.add_exception_handler(RequestValidationError, _validation_error_handler)
+    app.add_exception_handler(Exception, _unhandled_error_handler)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origin_list,

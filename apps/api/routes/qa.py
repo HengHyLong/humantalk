@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 from pathlib import Path
 import uuid
 from typing import Literal
@@ -10,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from apps.api.admin.security import get_store
 from apps.api.services import session_service
+from apps.api.services.vidu_service import ViduServiceError, ViduSessionManager
 from apps.api.services.exhibition_qa import (
     DifyKnowledgeRetriever,
     AdminKnowledgeRetriever,
@@ -22,9 +25,16 @@ from apps.api.services.exhibition_qa import (
     parse_dataset_ids_map,
 )
 from opentalking.agent.context_builder import default_knowledge_store
+from opentalking.pipeline.speak.text_sanitize import sanitize_tts_text
+from opentalking.providers.llm.openai_compatible.adapter import OpenAICompatibleLLMClient
+from opentalking.runtime.bus import publish_event
 
 
 router = APIRouter(prefix="/exhibitions", tags=["exhibition-qa"])
+log = logging.getLogger(__name__)
+
+_VIDU_HISTORY_TTL_SEC = 24 * 60 * 60
+_VIDU_HISTORY_MAX_MESSAGES = 12
 
 
 class _MisconfiguredRetriever:
@@ -74,6 +84,154 @@ class QaQueryResponse(BaseModel):
 
 def _setting(settings: object, name: str, default: object) -> object:
     return getattr(settings, name, default)
+
+
+def _vidu_history_key(session_id: str) -> str:
+    return f"opentalking:vidu:dialogue:{session_id}"
+
+
+async def _load_vidu_history(redis_client: object, session_id: str) -> list[dict[str, str]]:
+    getter = getattr(redis_client, "get", None)
+    if not callable(getter):
+        return []
+    try:
+        raw = await getter(_vidu_history_key(session_id))
+        if isinstance(raw, bytes):
+            raw = raw.decode("utf-8", errors="replace")
+        payload = json.loads(str(raw)) if raw else []
+    except Exception:  # noqa: BLE001
+        log.warning("Failed to load Vidu dialogue history: session=%s", session_id, exc_info=True)
+        return []
+    if not isinstance(payload, list):
+        return []
+    history: list[dict[str, str]] = []
+    for item in payload[-_VIDU_HISTORY_MAX_MESSAGES:]:
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role") or "").strip()
+        content = str(item.get("content") or "").strip()
+        if role in {"user", "assistant"} and content:
+            history.append({"role": role, "content": content})
+    return history
+
+
+async def _save_vidu_history(
+    redis_client: object,
+    session_id: str,
+    history: list[dict[str, str]],
+) -> None:
+    setter = getattr(redis_client, "set", None)
+    if not callable(setter):
+        return
+    try:
+        await setter(
+            _vidu_history_key(session_id),
+            json.dumps(history[-_VIDU_HISTORY_MAX_MESSAGES:], ensure_ascii=False),
+            ex=_VIDU_HISTORY_TTL_SEC,
+        )
+    except Exception:  # noqa: BLE001
+        log.warning("Failed to save Vidu dialogue history: session=%s", session_id, exc_info=True)
+
+
+async def _generate_vidu_answer(
+    *,
+    settings: object,
+    redis_client: object,
+    session_id: str,
+    question: str,
+    locale: str,
+    knowledge_context: str | None,
+) -> str:
+    base_url = str(_setting(settings, "llm_base_url", "") or "").strip()
+    api_key = str(_setting(settings, "llm_api_key", "") or "").strip()
+    model = str(_setting(settings, "llm_model", "") or "qwen-turbo").strip()
+    if not base_url:
+        raise RuntimeError("LLM is not configured")
+
+    system_prompt = str(
+        _setting(
+            settings,
+            "llm_system_prompt",
+            "你是专业、友好的会展数字人助手。",
+        )
+        or "你是专业、友好的会展数字人助手。"
+    ).strip()
+    language_prompt = (
+        "Please answer in concise, natural English."
+        if locale == "en-US"
+        else "请使用简洁、自然的中文回答。"
+    )
+    messages: list[dict[str, str]] = [
+        {
+            "role": "system",
+            "content": f"{system_prompt}\n{language_prompt}\n只输出适合语音播报的纯文本，不要使用 Markdown、链接或表情符号。",
+        }
+    ]
+    if knowledge_context:
+        messages.append({"role": "system", "content": knowledge_context.strip()})
+    history = await _load_vidu_history(redis_client, session_id)
+    messages.extend(history)
+    messages.append({"role": "user", "content": question.strip()})
+
+    client = OpenAICompatibleLLMClient(base_url=base_url, api_key=api_key, model=model)
+    parts: list[str] = []
+    async for delta in client.chat_stream(messages):
+        parts.append(delta)
+    answer = sanitize_tts_text("".join(parts)).strip()
+    if not answer:
+        raise RuntimeError("LLM returned an empty answer")
+    await _save_vidu_history(
+        redis_client,
+        session_id,
+        [
+            *history,
+            {"role": "user", "content": question.strip()},
+            {"role": "assistant", "content": answer},
+        ],
+    )
+    return answer
+
+
+def _get_vidu_manager(request: Request) -> ViduSessionManager:
+    manager = getattr(request.app.state, "vidu_sessions", None)
+    if not isinstance(manager, ViduSessionManager):
+        manager = ViduSessionManager(request.app.state.settings)
+        request.app.state.vidu_sessions = manager
+    return manager
+
+
+async def _finish_vidu_answer(redis_client: object, session_id: str, text: str) -> None:
+    duration = min(30.0, max(2.5, len(text.strip()) / 5.5 + 1.2))
+    await asyncio.sleep(duration)
+    record = await session_service.get_session(redis_client, session_id)
+    if not record or str(record.get("state") or "") in {"closed", "closing", "error"}:
+        return
+    await session_service.update_session_state(redis_client, session_id, "ready")
+    await publish_event(redis_client, session_id, "speech.ended", {"text": text})
+
+
+async def _speak_vidu_answer(
+    *,
+    request: Request,
+    redis_client: object,
+    session_id: str,
+    text: str,
+) -> None:
+    await session_service.update_session_state(redis_client, session_id, "speaking")
+    await publish_event(redis_client, session_id, "speech.started", {"text": text, "direct": True})
+    await publish_event(redis_client, session_id, "subtitle.chunk", {"text": text})
+    try:
+        await _get_vidu_manager(request).send_text(session_id, text)
+    except ViduServiceError:
+        await session_service.update_session_state(redis_client, session_id, "error")
+        await publish_event(
+            redis_client,
+            session_id,
+            "error",
+            {"code": "VIDU_SEND_FAILED", "message": "数字人播报暂时不可用"},
+        )
+        raise
+    asyncio.create_task(_finish_vidu_answer(redis_client, session_id, text))
 
 
 def _resolve_dify_connection(settings: object) -> tuple[str, str]:
@@ -422,20 +580,79 @@ async def query_exhibition_qa(
         trace_id=trace_id,
     )
 
+    response_answer = decision.answer
     speech_text = decision.answer if decision.speak_mode == "direct" else body.question
     if redis_client is not None and speech_text:
-        await session_service.speak(
-            redis_client,
-            body.session_id,
-            speech_text,
-            voice=body.voice,
-            tts_provider=body.tts_provider,
-            tts_model=body.tts_model,
-            direct=decision.speak_mode == "direct",
-            knowledge_context=decision.knowledge_context,
-            turn_id=body.turn_id,
-            trace_id=trace_id,
-        )
+        is_vidu = str((session or {}).get("model") or "").strip().lower() == "vidu"
+        if is_vidu:
+            try:
+                if decision.speak_mode == "agent":
+                    response_answer = await _generate_vidu_answer(
+                        settings=settings,
+                        redis_client=redis_client,
+                        session_id=body.session_id,
+                        question=body.question,
+                        locale=body.locale,
+                        knowledge_context=decision.knowledge_context,
+                    )
+                elif response_answer:
+                    history = await _load_vidu_history(redis_client, body.session_id)
+                    await _save_vidu_history(
+                        redis_client,
+                        body.session_id,
+                        [
+                            *history,
+                            {"role": "user", "content": body.question.strip()},
+                            {"role": "assistant", "content": response_answer},
+                        ],
+                    )
+                if response_answer:
+                    await _speak_vidu_answer(
+                        request=request,
+                        redis_client=redis_client,
+                        session_id=body.session_id,
+                        text=response_answer,
+                    )
+            except ViduServiceError as exc:
+                log.exception(
+                    "Vidu Q&A delivery failed: session=%s trace_id=%s",
+                    body.session_id,
+                    trace_id,
+                )
+                raise HTTPException(
+                    status_code=502,
+                    detail={"code": "VIDU_QA_DELIVERY_FAILED"},
+                ) from exc
+            except Exception as exc:  # noqa: BLE001
+                log.exception(
+                    "Vidu Q&A generation failed: session=%s trace_id=%s",
+                    body.session_id,
+                    trace_id,
+                )
+                await session_service.update_session_state(redis_client, body.session_id, "ready")
+                await publish_event(
+                    redis_client,
+                    body.session_id,
+                    "error",
+                    {"code": "QA_GENERATION_FAILED", "message": "问答服务暂时不可用，请稍后重试"},
+                )
+                raise HTTPException(
+                    status_code=502,
+                    detail={"code": "QA_GENERATION_FAILED"},
+                ) from exc
+        else:
+            await session_service.speak(
+                redis_client,
+                body.session_id,
+                speech_text,
+                voice=body.voice,
+                tts_provider=body.tts_provider,
+                tts_model=body.tts_model,
+                direct=decision.speak_mode == "direct",
+                knowledge_context=decision.knowledge_context,
+                turn_id=body.turn_id,
+                trace_id=trace_id,
+            )
 
     return QaQueryResponse(
         session_id=body.session_id,
@@ -444,7 +661,7 @@ async def query_exhibition_qa(
         trace_id=trace_id,
         match_type=decision.match_type,  # type: ignore[arg-type]
         speak_mode=decision.speak_mode,  # type: ignore[arg-type]
-        answer=decision.answer,
+        answer=response_answer,
         need_clarification=decision.need_clarification,
         clarification_question=decision.clarification_question,
         sources=[

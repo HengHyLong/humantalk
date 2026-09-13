@@ -53,6 +53,18 @@ def test_login_failure_message_does_not_expose_request_parameters() -> None:
     assert "10.0.0.8" not in message
 
 
+def test_unified_app_registers_the_safe_error_contract() -> None:
+    from fastapi import HTTPException
+    from fastapi.exceptions import RequestValidationError
+
+    app = unified_main.create_app()
+
+    assert app.exception_handlers[api_main.AppError] is api_main._app_error_handler
+    assert app.exception_handlers[HTTPException] is api_main._http_error_handler
+    assert app.exception_handlers[RequestValidationError] is api_main._validation_error_handler
+    assert app.exception_handlers[Exception] is api_main._unhandled_error_handler
+
+
 def test_unified_entrypoint_registers_admin_and_exhibition_routes(monkeypatch: pytest.MonkeyPatch) -> None:
     settings = Settings(admin_initialize_defaults=False)
     monkeypatch.setattr(unified_main, "get_settings", lambda: settings)

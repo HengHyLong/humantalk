@@ -16,6 +16,8 @@ import websockets
 
 log = logging.getLogger("opentalking.vidu")
 
+VIDU_CN_SERVICE_URL = "https://api.vidu.cn"
+
 
 class ViduServiceError(RuntimeError):
     """A safe, provider-neutral Vidu integration failure."""
@@ -28,14 +30,6 @@ def _auth_header(api_key: str) -> str:
     return f"Token {value}"
 
 
-def _raw_api_key(api_key: str) -> str:
-    value = api_key.strip()
-    for prefix in ("Token ", "Bearer "):
-        if value.startswith(prefix):
-            return value[len(prefix) :].strip()
-    return value
-
-
 def _join_service_url(base_url: str, path: str) -> str:
     return f"{base_url.rstrip('/')}/{path.lstrip('/')}"
 
@@ -44,6 +38,15 @@ def _websocket_url(http_url: str, query: dict[str, str]) -> str:
     parts = urlsplit(http_url)
     scheme = "wss" if parts.scheme.lower() == "https" else "ws"
     return urlunsplit((scheme, parts.netloc, parts.path, urlencode(query), ""))
+
+
+def _service_url_candidates(configured_url: str) -> tuple[str, ...]:
+    """Keep local proxy support while recovering stale production loopback config."""
+    configured = configured_url.strip().rstrip("/") or VIDU_CN_SERVICE_URL
+    hostname = (urlsplit(configured).hostname or "").lower()
+    if hostname in {"127.0.0.1", "localhost", "::1"} and configured != VIDU_CN_SERVICE_URL:
+        return configured, VIDU_CN_SERVICE_URL
+    return (configured,)
 
 
 @dataclass
@@ -76,7 +79,7 @@ class ViduSessionManager:
 
     @property
     def service_url(self) -> str:
-        return str(getattr(self.settings, "vidu_service_url", "") or "").strip()
+        return str(getattr(self.settings, "vidu_service_url", "") or VIDU_CN_SERVICE_URL).strip()
 
     @property
     def api_key(self) -> str:
@@ -112,21 +115,36 @@ class ViduSessionManager:
                 "voice": voice,
             },
         }
+        selected_service_url = self.service_url
+        payload: Any = None
         try:
             async with httpx.AsyncClient(
                 timeout=float(getattr(self.settings, "vidu_connect_timeout_sec", 60.0) or 60.0)
             ) as client:
-                response = await client.post(
-                    _join_service_url(self.service_url, "/live/v1/lives"),
-                    headers={
-                        "Authorization": _auth_header(self.api_key),
-                        "Content-Type": "application/json",
-                        "Accept": "*/*",
-                    },
-                    json=body,
-                )
-                response.raise_for_status()
-                payload = response.json()
+                candidates = _service_url_candidates(self.service_url)
+                for index, candidate in enumerate(candidates):
+                    try:
+                        response = await client.post(
+                            _join_service_url(candidate, "/live/v1/lives"),
+                            headers={
+                                "Authorization": _auth_header(self.api_key),
+                                "Content-Type": "application/json",
+                                "Accept": "*/*",
+                            },
+                            json=body,
+                        )
+                        response.raise_for_status()
+                        payload = response.json()
+                        selected_service_url = candidate
+                        break
+                    except httpx.RequestError:
+                        if index >= len(candidates) - 1:
+                            raise
+                        log.warning(
+                            "Configured Vidu loopback endpoint is unavailable; falling back to official service: session=%s",
+                            session_id,
+                            exc_info=True,
+                        )
         except Exception as exc:  # noqa: BLE001
             log.exception("Vidu live creation failed: session=%s", session_id)
             raise ViduServiceError("Vidu 会话创建失败") from exc
@@ -140,7 +158,10 @@ class ViduSessionManager:
             raise ViduServiceError("Vidu 服务返回了不完整的 RTC 信息")
 
         await self.close(session_id)
-        connection = await self._connect_app_socket(str(live["id"]))
+        connection = await self._connect_app_socket(
+            str(live["id"]),
+            service_url=selected_service_url,
+        )
         async with self._lock:
             self._connections[session_id] = connection
         return {
@@ -154,19 +175,35 @@ class ViduSessionManager:
             },
         }
 
-    async def _connect_app_socket(self, live_id: str) -> ViduLiveConnection:
+    async def _connect_app_socket(
+        self,
+        live_id: str,
+        *,
+        service_url: str | None = None,
+    ) -> ViduLiveConnection:
         conn_id = str(uuid.uuid4())
         ws_url = _websocket_url(
-            _join_service_url(self.service_url, "/live/ws/live/connect"),
+            _join_service_url(service_url or self.service_url, "/live/ws/live/connect"),
             {
                 "live_id": live_id,
                 "conn_id": conn_id,
-                "authorization": _raw_api_key(self.api_key),
             },
         )
         socket = None
         try:
-            socket = await websockets.connect(ws_url, open_timeout=20, close_timeout=5)
+            # Vidu's upstream WebSocket authenticates through the HTTP
+            # Authorization header. The standalone browser demo puts the key
+            # in a query parameter only because browser WebSocket APIs cannot
+            # set custom headers; its local proxy then converts that query
+            # value back into this header. Our server can and should send the
+            # header directly, which works for both the proxy and official API
+            # and keeps credentials out of URLs and access logs.
+            socket = await websockets.connect(
+                ws_url,
+                additional_headers={"Authorization": _auth_header(self.api_key)},
+                open_timeout=20,
+                close_timeout=5,
+            )
             connection = ViduLiveConnection(live_id=live_id, socket=socket, conn_id=conn_id)
             timeout = float(getattr(self.settings, "vidu_connect_timeout_sec", 60.0) or 60.0)
             deadline = asyncio.get_running_loop().time() + max(5.0, timeout)

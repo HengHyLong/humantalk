@@ -243,20 +243,25 @@ class EdgeTTSAdapter:
     ) -> AsyncIterator[AudioChunk]:
         v = voice or self.default_voice
         if _env_bool("OPENTALKING_TTS_STREAMING_DECODE", True):
+            streamed_audio = False
             try:
                 async for chunk in _stream_decode_mp3_to_pcm_chunks(
                     _edge_audio_stream(text, v),
                     self.sample_rate,
                     self.chunk_ms,
                 ):
+                    streamed_audio = True
                     yield chunk
                 return
-            except FileNotFoundError:
-                raise RuntimeError(
-                    "ffmpeg is required for streaming Edge TTS decode. "
-                    "Install ffmpeg or set OPENTALKING_TTS_STREAMING_DECODE=0 "
-                    "to use the legacy full-buffer fallback."
-                ) from None
+            except Exception:
+                if streamed_audio:
+                    raise
+                # Different Linux ffmpeg builds handle a short, incrementally
+                # arriving Edge MP3 differently. If streaming decode fails
+                # before producing audio, make one clean provider request and
+                # decode the complete MP3 through PyAV instead of breaking all
+                # non-Vidu digital humans.
+                log.warning("Edge TTS streaming decode failed before first audio; using buffered fallback", exc_info=True)
 
         parts: list[bytes] = []
         async for data in _edge_audio_stream(text, v):

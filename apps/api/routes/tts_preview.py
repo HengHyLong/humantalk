@@ -357,13 +357,13 @@ async def preview_tts(request: Request) -> Response:
             if "CosyVoice returned no audio" in error_text or "本地 CosyVoice 返回空音频" in error_text:
                 raise HTTPException(
                     status_code=502,
-                    detail=f"TTS preview failed: {error_text}",
+                    detail={"code": "TTS_PREVIEW_FAILED"},
                 ) from exc
             raise HTTPException(
                 status_code=502,
-                detail=f"TTS preview failed: 本地 CosyVoice 服务不可用（可能已退出/内存不足）；前端可回退 Edge 试听。{exc}",
+                detail={"code": "TTS_PREVIEW_FAILED"},
             ) from exc
-        raise HTTPException(status_code=502, detail=f"TTS preview failed: {exc}") from exc
+        raise HTTPException(status_code=502, detail={"code": "TTS_PREVIEW_FAILED"}) from exc
     finally:
         close = getattr(tts, "aclose", None)
         if close is not None:
@@ -372,7 +372,7 @@ async def preview_tts(request: Request) -> Response:
             emotion_audio_path.unlink(missing_ok=True)
 
     if not chunks:
-        raise HTTPException(status_code=502, detail="TTS preview returned no audio")
+        raise HTTPException(status_code=502, detail={"code": "TTS_PREVIEW_FAILED"})
 
     return Response(
         content=_wav_bytes(chunks, effective_sample_rate),
@@ -426,9 +426,9 @@ async def preview_duo_dialog_tts(body: DuoDialogPreviewRequest) -> Response:
                 model or "default",
                 exc,
             )
-            raise HTTPException(status_code=502, detail=f"TTS preview failed: {exc}") from exc
+            raise HTTPException(status_code=502, detail={"code": "TTS_PREVIEW_FAILED"}) from exc
         if not chunks:
-            raise HTTPException(status_code=502, detail="TTS preview returned no audio")
+            raise HTTPException(status_code=502, detail={"code": "TTS_PREVIEW_FAILED"})
         sample_rate = effective_sample_rate
         all_chunks.extend(chunks)
         if index < len(body.lines) - 1 and gap_ms > 0:

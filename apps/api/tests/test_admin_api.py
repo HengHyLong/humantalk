@@ -854,7 +854,7 @@ def test_vidu_config_activation_uses_digital_human_runtime_without_disabling_cha
         assert vidu["apiKeyConfigured"] is True
         assert vidu["usage"] == "digital_human"
         assert vidu["name"] == "Vidu 外部数字人驱动"
-        assert vidu["baseUrl"] == "http://127.0.0.1:18088/proxy/cn"
+        assert vidu["baseUrl"] == "https://api.vidu.cn"
         assert vidu["model"] == "vidu-live"
         assert vidu["publicBaseUrl"] == ""
         assert vidu["callMode"] == "video"
@@ -865,11 +865,13 @@ def test_vidu_config_activation_uses_digital_human_runtime_without_disabling_cha
         assert applied
         payload = applied[0]
         assert payload.vidu_api_key == "vda-test-secret"
-        assert payload.vidu_service_url is None
-        assert payload.vidu_public_base_url is None
-        assert payload.vidu_call_mode is None
-        assert payload.vidu_character_id is None
-        assert payload.vidu_voice is None
+        assert payload.vidu_service_url == "https://api.vidu.cn"
+        assert payload.vidu_public_base_url == ""
+        assert payload.vidu_call_mode == "video"
+        assert payload.vidu_character_id == "1"
+        assert payload.vidu_voice == "Tina"
+        assert payload.tts_provider is None
+        assert payload.tts_api_key is None
         assert store.get_record("llm_configs", "llm-chat-active")["isActive"] is True
 
 

@@ -58,6 +58,33 @@ def test_tts_preview_returns_wav_with_request_overrides(monkeypatch):
     assert calls[-1] == {"closed": True}
 
 
+def test_tts_preview_does_not_expose_decoder_error(monkeypatch):
+    from apps.api.routes import tts_preview
+
+    class FailingTTS:
+        async def synthesize_stream(self, text: str, voice: str | None = None):
+            if False:
+                yield
+            raise RuntimeError("ffmpeg failed at /srv/private/path with token secret-value")
+
+        async def aclose(self) -> None:
+            return None
+
+    monkeypatch.setattr(tts_preview, "build_tts_adapter", lambda **_kwargs: FailingTTS())
+
+    app = FastAPI()
+    app.include_router(tts_preview.router)
+    response = TestClient(app).post(
+        "/tts/preview",
+        json={"text": "语音合成测试", "tts_provider": "edge"},
+    )
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == {"code": "TTS_PREVIEW_FAILED"}
+    assert "ffmpeg" not in response.text
+    assert "secret-value" not in response.text
+
+
 def test_tts_preview_duo_dialog_uses_per_role_tts_settings(monkeypatch):
     from apps.api.routes import tts_preview
 

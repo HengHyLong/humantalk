@@ -684,3 +684,80 @@ def test_public_qa_route_returns_turn_trace_and_enqueues_grounded_agent(tmp_path
     assert body["trace_id"].startswith("trace-")
     assert queued[0]["direct"] is False
     assert "服务中心" in str(queued[0]["knowledge_context"])
+
+
+def test_public_qa_route_generates_and_delivers_vidu_answer_without_worker(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    store = _store(tmp_path)
+    settings = SimpleNamespace(
+        admin_sqlite_path=str(tmp_path / "admin.sqlite3"),
+        admin_initialize_defaults=False,
+        dify_api_key="",
+        dify_default_dataset_id="",
+        dify_dataset_map="{}",
+        qa_fuzzy_threshold=0.74,
+        qa_human_channel="请咨询服务台。",
+        llm_base_url="https://llm.example/v1",
+        llm_api_key="llm-secret",
+        llm_model="test-model",
+        llm_system_prompt="你是会展助手。",
+    )
+    app = FastAPI()
+    app.state.settings = settings
+    app.state.admin_store = store
+    app.state.redis = object()
+    app.include_router(qa_routes.router)
+
+    async def fake_get_session(redis, session_id):
+        del redis
+        return {"session_id": session_id, "model": "vidu", "state": "ready"}
+
+    generated: list[dict[str, object]] = []
+    delivered: list[dict[str, object]] = []
+
+    async def fake_generate(**kwargs):
+        generated.append(kwargs)
+        return "服务中心位于 A4 馆一楼。"
+
+    async def fake_deliver(**kwargs):
+        delivered.append(kwargs)
+
+    async def unexpected_worker_speak(*_args, **_kwargs):
+        raise AssertionError("Vidu Q&A must not enqueue the regular synthesis worker")
+
+    monkeypatch.setattr(qa_routes.session_service, "get_session", fake_get_session)
+    monkeypatch.setattr(qa_routes.session_service, "speak", unexpected_worker_speak)
+    monkeypatch.setattr(qa_routes, "_generate_vidu_answer", fake_generate)
+    monkeypatch.setattr(qa_routes, "_speak_vidu_answer", fake_deliver)
+    monkeypatch.setattr(
+        qa_routes,
+        "LocalKnowledgeRetriever",
+        lambda store, ids: FakeRetriever(
+            RetrievalResult(
+                provider="local",
+                sources=[KnowledgeSource("s1", "指南", "服务中心位于 A4 馆一楼。", 0.9)],
+            )
+        ),
+    )
+
+    response = TestClient(app).post(
+        "/exhibitions/expo-2026/qa/query",
+        json={
+            "session_id": "sess-vidu",
+            "turn_id": "turn-vidu",
+            "question": "服务中心在哪里？",
+            "locale": "zh-CN",
+        },
+    )
+
+    assert response.status_code == 200, response.json()
+    payload = response.json()
+    assert payload["match_type"] == "rag"
+    assert payload["speak_mode"] == "agent"
+    assert payload["answer"] == "服务中心位于 A4 馆一楼。"
+    assert generated[0]["session_id"] == "sess-vidu"
+    assert "服务中心" in str(generated[0]["knowledge_context"])
+    assert delivered[0]["session_id"] == "sess-vidu"
+    assert delivered[0]["text"] == "服务中心位于 A4 馆一楼。"

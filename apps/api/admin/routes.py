@@ -40,7 +40,7 @@ public_router = APIRouter(tags=["exhibition-public"])
 
 VIDU_PROVIDER = "vidu"
 VIDU_MANAGED_NAME = "Vidu 外部数字人驱动"
-VIDU_INTERNAL_SERVICE_URL = "http://127.0.0.1:18088/proxy/cn"
+VIDU_INTERNAL_SERVICE_URL = "https://api.vidu.cn"
 VIDU_INTERNAL_MODEL = "vidu-live"
 
 
@@ -455,7 +455,14 @@ async def _apply_llm_config(request: Request, item: dict[str, Any]) -> dict[str,
     if str(item.get("provider") or "").strip().lower() == VIDU_PROVIDER:
         return await apply_runtime_config(
             RuntimeConfigPayload(
+                # The API process talks to Vidu directly. A loopback proxy is
+                # not present inside the production container deployment.
+                vidu_service_url=VIDU_INTERNAL_SERVICE_URL,
                 vidu_api_key=api_key,
+                vidu_public_base_url="",
+                vidu_call_mode="video",
+                vidu_character_id="1",
+                vidu_voice="Tina",
                 sync_dashscope_api_key=False,
             ),
             request,

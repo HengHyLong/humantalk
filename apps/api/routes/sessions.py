@@ -1739,6 +1739,7 @@ async def delete_session(session_id: str, request: Request) -> dict[str, str]:
         raise HTTPException(status_code=404, detail="session not found")
     if (s.get("model") or "").strip().lower() == "vidu":
         await _vidu_manager(request).close(session_id)
+        await _await_result(r.delete(f"opentalking:vidu:dialogue:{session_id}"))
         await session_service.update_session_state(r, session_id, "closed")
         return {"session_id": session_id, "status": "closed"}
     await session_service.close_session(r, session_id)
@@ -1756,6 +1757,7 @@ async def release_session(session_id: str, request: Request) -> dict[str, str]:
         return {"session_id": session_id, "status": "closed"}
     if (s.get("model") or "").strip().lower() == "vidu":
         await _vidu_manager(request).close(session_id)
+        await _await_result(r.delete(f"opentalking:vidu:dialogue:{session_id}"))
         await session_service.update_session_state(r, session_id, "closed")
         return {"session_id": session_id, "status": "closed"}
     await session_service.close_session(r, session_id)
