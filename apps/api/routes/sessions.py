@@ -830,6 +830,7 @@ async def create_session(body: CreateSessionRequest, request: Request) -> Create
                 # remote picture expected by the Web client.
                 call_mode="video",
                 character_id=_settings_value(settings, "vidu_character_id") or "1",
+                owner_key=str(agent_user_id or body.user_id or ""),
             )
         except ViduServiceError as exc:
             await session_service.update_session_state(r, sid, "error")

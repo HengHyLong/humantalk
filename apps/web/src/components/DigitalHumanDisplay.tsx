@@ -41,6 +41,7 @@ type DigitalHumanDisplayProps = {
   motionDriverAssets?: { states: Partial<Record<VideoDriverState, Array<{ url: string }>>> } | null;
   connection: ConnectionStatus;
   isSpeaking: boolean;
+  suspendVoiceWhileSpeaking?: boolean;
   avatar: AvatarSummary | null;
   modelLabel: string;
   messages: Message[];
@@ -96,6 +97,7 @@ export function DigitalHumanDisplay({
                                       motionDriverAssets = null,
                                       connection,
                                       isSpeaking,
+                                      suspendVoiceWhileSpeaking = false,
                                       avatar,
                                       modelLabel,
                                       messages,
@@ -531,6 +533,7 @@ export function DigitalHumanDisplay({
                             }}
                             onInterrupt={onInterrupt}
                             isSpeaking={isSpeaking}
+                            suspendBargeInWhileSpeaking={suspendVoiceWhileSpeaking}
                             disabled={!live}
                             onNotify={onNotify}
                             ttsProvider={ttsProvider}

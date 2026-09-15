@@ -979,6 +979,8 @@ export default function App() {
   const audioRef = useRef<HTMLAudioElement>(null);
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const viduPlaybackRef = useRef<ViduPlaybackHandle | null>(null);
+  const peerCloseChainRef = useRef<Promise<void>>(Promise.resolve());
+  const startInFlightRef = useRef(false);
   const remoteStreamRef = useRef<MediaStream | null>(null);
   const realtimeRecorderRef = useRef<MediaRecorder | null>(null);
   const realtimeRecordChunksRef = useRef<Blob[]>([]);
@@ -2062,13 +2064,9 @@ export default function App() {
     }
   }, [messages]);
 
-  const closePeerConnection = useCallback(() => {
-    if (viduPlaybackRef.current) {
-      void viduPlaybackRef.current.close().catch((error) => {
-        console.warn("Failed to close Vidu playback", error);
-      });
-      viduPlaybackRef.current = null;
-    }
+  const closePeerConnection = useCallback((): Promise<void> => {
+    const viduPlayback = viduPlaybackRef.current;
+    viduPlaybackRef.current = null;
     if (pcRef.current) {
       pcRef.current.close();
       pcRef.current = null;
@@ -2078,6 +2076,18 @@ export default function App() {
       remoteStreamRef.current = null;
     }
     setRemoteStream(null);
+    const closeTask = peerCloseChainRef.current
+      .catch(() => undefined)
+      .then(async () => {
+        if (!viduPlayback) return;
+        try {
+          await viduPlayback.close();
+        } catch (error) {
+          console.warn("Failed to close Vidu playback", error);
+        }
+      });
+    peerCloseChainRef.current = closeTask;
+    return closeTask;
   }, []);
 
   const releaseSession = useCallback(async (sid: string, keepalive = false) => {
@@ -2100,7 +2110,7 @@ export default function App() {
 
   const resetLiveState = useCallback(
     (clearMessages = false) => {
-      closePeerConnection();
+      void closePeerConnection();
       setSessionId(null);
       setActiveAsrProvider("");
       setQueueInfo(null);
@@ -2517,6 +2527,9 @@ export default function App() {
   // ---------- Actions ----------
   const handleStart = useCallback(async () => {
     if (!videoRef.current) return;
+    if (startInFlightRef.current) return;
+    startInFlightRef.current = true;
+    try {
     const selectedExhibition = exhibitions.find((item) => item.id === selectedExhibitionId) ?? null;
     if (!selectedExhibitionId || !selectedExhibition) {
       notify("请先选择会展，再启动 WebRTC。", "error");
@@ -2655,7 +2668,7 @@ export default function App() {
         setQueueInfo(null);
       }
 
-      closePeerConnection();
+      await closePeerConnection();
       if (created.transport === "vidu_alirtc" || model === "vidu") {
         if (!created.rtc) throw new Error("Vidu RTC 会话信息缺失");
         // Let React detach a previous renderer before AliRTC binds the same
@@ -2696,6 +2709,9 @@ export default function App() {
         ? `启动会话失败：${detail}`
         : "启动会话失败，请稍后重试。";
       notify(msg, "error");
+    }
+    } finally {
+      startInFlightRef.current = false;
     }
   }, [
     agentConfig,
@@ -2742,6 +2758,15 @@ export default function App() {
     autoStartTriggeredRef.current = true;
     void handleStart();
   }, [avatarId, connection, exhibitionBindingsReady, exhibitionConfirmed, handleStart, model, selectedExhibition]);
+
+  useEffect(() => {
+    if (model !== "vidu") return;
+    const playback = viduPlaybackRef.current;
+    if (!playback) return;
+    void playback.setMicrophoneEnabled(!isSpeaking).catch((error) => {
+      console.warn("Failed to update Vidu microphone state", error);
+    });
+  }, [isSpeaking, model]);
 
   const handleFasterLivePortraitConfigChange = useCallback((config: FasterLivePortraitConfig) => {
     setFasterliveportraitConfig(sanitizeFasterLivePortraitConfig(config));
@@ -4228,6 +4253,7 @@ export default function App() {
           motionDriverAssets={currentAvatar?.motion_driver ?? null}
           connection={connection}
           isSpeaking={isSpeaking}
+          suspendVoiceWhileSpeaking={model === "vidu"}
           avatar={currentAvatar}
           modelLabel={selectedModelLabel}
           messages={messages}
@@ -4530,6 +4556,7 @@ export default function App() {
                 onSpeakAudioStreamError={handleSpeakAudioStreamError}
                 onInterrupt={handleInterrupt}
                 isSpeaking={isSpeaking}
+                suspendBargeInWhileSpeaking={model === "vidu"}
                 disabled={connection !== "live" && connection !== "expiring"}
                 onNotify={notify}
                 onOpenSettings={() => setSettingsExpanded(true)}

@@ -141,6 +141,8 @@ interface ChatInputProps {
   autoStartVoice?: boolean;
   /** 用户主动结束监听时通知外层恢复键盘输入。系统错误不应切回键盘面板。 */
   onVoiceModeChange?: (active: boolean) => void;
+  /** 禁止数字人播报期间抢话，避免扬声器回声被再次送入 STT。 */
+  suspendBargeInWhileSpeaking?: boolean;
 }
 
 export type ListeningState = "off" | "listening" | "recording" | "transcribing" | "processing" | "error";
@@ -206,6 +208,7 @@ export function ChatInput({
   language = "zh-CN",
   autoStartVoice = false,
   onVoiceModeChange,
+  suspendBargeInWhileSpeaking = false,
 }: ChatInputProps) {
   const voiceCaptureEnabled = !!(
     onSpeakAudio ||
@@ -260,8 +263,8 @@ export function ChatInput({
   /** 用户点「打断」时递增，用于丢弃 VAD 已触发的断句上传 */
   const voiceBreakGenRef = useRef(0);
 
-  const uiRef = useRef({ disabled, voiceBusy, isSpeaking });
-  uiRef.current = { disabled, voiceBusy, isSpeaking };
+  const uiRef = useRef({ disabled, voiceBusy, isSpeaking, suspendBargeInWhileSpeaking });
+  uiRef.current = { disabled, voiceBusy, isSpeaking, suspendBargeInWhileSpeaking };
 
   const onSpeakAudioRef = useRef(onSpeakAudio);
   onSpeakAudioRef.current = onSpeakAudio;
@@ -534,10 +537,21 @@ export function ChatInput({
     const cfg = vadCfg.current;
     const rms = computeRms(analyser);
     const now = performance.now();
-    const { disabled: d, voiceBusy: vb, isSpeaking: spk } = uiRef.current;
+    const {
+      disabled: d,
+      voiceBusy: vb,
+      isSpeaking: spk,
+      suspendBargeInWhileSpeaking: suspendDuringPlayback,
+    } = uiRef.current;
 
-    /** 上传中 / 禁用 时整段暂停；播报中不整段暂停，改用更高阈值的抢话检测 */
-    const hardPaused = d || vb || uploadLockRef.current;
+    /** Vidu 的 RTC 会播放远端语音，播报时必须彻底停收，不能仅依赖能量阈值过滤回声。 */
+    const hardPaused = d || vb || uploadLockRef.current || (spk && suspendDuringPlayback);
+    if (spk && suspendDuringPlayback) {
+      loudFramesRef.current = 0;
+      softFramesRef.current = 0;
+      silenceStartRef.current = null;
+      pcmPrerollRef.current = new Int16Array(0);
+    }
     if (!hardPaused) {
       /** 数字人正在出声时，用更高能量 + 更长连帧判定抢话，减轻扬声器回声误触 */
       const bargeMode = spk;

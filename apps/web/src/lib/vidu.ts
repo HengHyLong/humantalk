@@ -40,6 +40,7 @@ declare global {
 
 export type ViduPlaybackHandle = {
   close: () => Promise<void>;
+  setMicrophoneEnabled: (enabled: boolean) => Promise<void>;
 };
 
 export type StartViduPlaybackOptions = {
@@ -131,6 +132,7 @@ export async function startViduPlayback(
   let remoteStreamType = 1;
   let settled = false;
   let closed = false;
+  let microphoneEnabled = false;
   let resolveRemote: (() => void) | null = null;
   let rejectRemote: ((reason?: unknown) => void) | null = null;
   const remoteReady = new Promise<void>((resolve, reject) => {
@@ -215,6 +217,12 @@ export async function startViduPlayback(
     }
     videoEl.pause();
     try {
+      await callOptional(engine, "publishLocalAudioStream", false);
+      microphoneEnabled = false;
+    } catch {
+      // Continue leaving the channel even if the microphone is already gone.
+    }
+    try {
       await callOptional(engine, "stopPreview");
     } catch {
       // Continue leaving the channel even if camera preview cleanup fails.
@@ -243,6 +251,7 @@ export async function startViduPlayback(
     await callOptional(engine, "startPreview", 1);
     await callOptional(engine, "publishLocalVideoStream", true);
     await callOptional(engine, "publishLocalAudioStream", true);
+    microphoneEnabled = true;
     await Promise.race([
       remoteReady,
       new Promise<never>((_, reject) => {
@@ -255,6 +264,11 @@ export async function startViduPlayback(
   }
 
   return {
+    setMicrophoneEnabled: async (enabled: boolean) => {
+      if (closed || microphoneEnabled === enabled) return;
+      await callOptional(engine, "publishLocalAudioStream", enabled);
+      microphoneEnabled = enabled;
+    },
     close: async () => {
       await cleanupEngine();
     },

@@ -207,6 +207,92 @@ def test_vidu_close_sends_hangup_before_socket_close() -> None:
     assert events[1] == "closed"
 
 
+def test_vidu_create_replaces_previous_live_for_same_owner(monkeypatch) -> None:
+    create_count = 0
+    sockets: list[FakeSocket] = []
+
+    class FakeResponse:
+        def __init__(self, index: int) -> None:
+            self.index = index
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return {
+                "live": {"id": f"live-{self.index}"},
+                "rtc": {
+                    "app_id": "app-1",
+                    "channel_id": f"channel-{self.index}",
+                    "user_id": f"rtc-user-{self.index}",
+                    "token": f"rtc-token-{self.index}",
+                },
+            }
+
+    class FakeClient:
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        async def __aenter__(self) -> "FakeClient":
+            return self
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+        async def post(self, _url: str, **_kwargs: object) -> FakeResponse:
+            nonlocal create_count
+            create_count += 1
+            return FakeResponse(create_count)
+
+    class FakeSocket:
+        closed = False
+
+        async def send(self, _raw: str) -> None:
+            return None
+
+        async def close(self) -> None:
+            self.closed = True
+
+    manager = vidu_service.ViduSessionManager(
+        SimpleNamespace(vidu_service_url="https://api.vidu.cn", vidu_api_key="secret")
+    )
+
+    async def fake_connect(
+        live_id: str,
+        *,
+        service_url: str | None = None,
+    ) -> vidu_service.ViduLiveConnection:
+        assert service_url == "https://api.vidu.cn"
+        socket = FakeSocket()
+        sockets.append(socket)
+        return vidu_service.ViduLiveConnection(live_id=live_id, socket=socket, conn_id=f"conn-{live_id}")
+
+    monkeypatch.setattr(vidu_service.httpx, "AsyncClient", FakeClient)
+    monkeypatch.setattr(manager, "_connect_app_socket", fake_connect)
+
+    async def scenario() -> None:
+        common = {
+            "image_uri": "https://example.test/avatar.png",
+            "persona": "会展讲解员",
+            "name": "会展数字人",
+            "voice": "Tina",
+            "call_mode": "video",
+            "character_id": "1",
+            "owner_key": "browser-1",
+        }
+        await manager.create("session-1", **common)
+        await manager.create("session-2", **common)
+
+    asyncio.run(scenario())
+
+    assert create_count == 2
+    assert sockets[0].closed is True
+    assert sockets[1].closed is False
+    assert manager.active_count == 1
+    assert set(manager._connections) == {"session-2"}
+    assert manager._owner_sessions == {"browser-1": "session-2"}
+
+
 def test_vidu_app_socket_uses_authorization_header_without_key_in_url(monkeypatch) -> None:
     captured: dict[str, object] = {}
 

@@ -54,6 +54,7 @@ class ViduLiveConnection:
     live_id: str
     socket: Any
     conn_id: str
+    owner_key: str = ""
     seq_id: int = 1
     receiver_task: asyncio.Task[None] | None = None
 
@@ -75,7 +76,9 @@ class ViduSessionManager:
     def __init__(self, settings: object) -> None:
         self.settings = settings
         self._connections: dict[str, ViduLiveConnection] = {}
+        self._owner_sessions: dict[str, str] = {}
         self._lock = asyncio.Lock()
+        self._create_lock = asyncio.Lock()
 
     @property
     def service_url(self) -> str:
@@ -103,8 +106,48 @@ class ViduSessionManager:
         voice: str,
         call_mode: str,
         character_id: str,
+        owner_key: str = "",
+    ) -> dict[str, Any]:
+        # Vidu bills live sessions by elapsed connection time. Serialize
+        # creation and replace an earlier live owned by the same browser/user
+        # before creating the next one, so refresh/retry cannot overlap billing.
+        async with self._create_lock:
+            return await self._create_serialized(
+                session_id,
+                image_uri=image_uri,
+                persona=persona,
+                name=name,
+                voice=voice,
+                call_mode=call_mode,
+                character_id=character_id,
+                owner_key=owner_key,
+            )
+
+    async def _create_serialized(
+        self,
+        session_id: str,
+        *,
+        image_uri: str,
+        persona: str,
+        name: str,
+        voice: str,
+        call_mode: str,
+        character_id: str,
+        owner_key: str,
     ) -> dict[str, Any]:
         self.ensure_configured()
+        normalized_owner = owner_key.strip()
+        if normalized_owner:
+            async with self._lock:
+                previous_session_id = self._owner_sessions.get(normalized_owner)
+            if previous_session_id and previous_session_id != session_id:
+                log.info(
+                    "Replacing prior Vidu live before create: owner=%s previous_session=%s new_session=%s",
+                    normalized_owner,
+                    previous_session_id,
+                    session_id,
+                )
+                await self.close(previous_session_id)
         body = {
             "call_mode": call_mode if call_mode in {"audio", "video"} else "video",
             "character_id": str(character_id or "1"),
@@ -162,8 +205,17 @@ class ViduSessionManager:
             str(live["id"]),
             service_url=selected_service_url,
         )
+        connection.owner_key = normalized_owner
         async with self._lock:
             self._connections[session_id] = connection
+            if normalized_owner:
+                self._owner_sessions[normalized_owner] = session_id
+        log.info(
+            "Vidu live connected: session=%s live_id=%s active=%d",
+            session_id,
+            connection.live_id,
+            self.active_count,
+        )
         return {
             "live_id": str(live["id"]),
             "rtc": {
@@ -305,6 +357,9 @@ class ViduSessionManager:
     async def close(self, session_id: str) -> None:
         async with self._lock:
             connection = self._connections.pop(session_id, None)
+            if connection is not None and connection.owner_key:
+                if self._owner_sessions.get(connection.owner_key) == session_id:
+                    self._owner_sessions.pop(connection.owner_key, None)
         if connection is None:
             return
         try:
@@ -324,6 +379,12 @@ class ViduSessionManager:
                 connection.receiver_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await connection.receiver_task
+            log.info(
+                "Vidu live closed: session=%s live_id=%s active=%d",
+                session_id,
+                connection.live_id,
+                self.active_count,
+            )
 
     async def close_all(self) -> None:
         async with self._lock:
