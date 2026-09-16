@@ -40,6 +40,7 @@ export function VideoAvatar({
     return configured.length ? configured : fallbackToDefault ? [fallbackSource] : [];
   }, [fallbackSource, fallbackToDefault, state, videoDriver]);
   const sourcePoolKey = sourcePool.join("\n");
+  const nativeLoop = sourcePool.length === 1;
   const initialSource = sourcePool[0] ?? fallbackSource;
   const videoRef0 = useRef<HTMLVideoElement>(null);
   const videoRef1 = useRef<HTMLVideoElement>(null);
@@ -47,7 +48,7 @@ export function VideoAvatar({
   const [activeSlot, setActiveSlot] = useState<VideoSlot>(0);
   const [slotSources, setSlotSources] = useState<[string, string]>(() => [
     initialSource,
-    pickNextSource(sourcePool, initialSource) || initialSource,
+    sourcePool.length > 1 ? pickNextSource(sourcePool, initialSource) || initialSource : "",
   ]);
   const activeSlotRef = useRef<VideoSlot>(0);
   const currentSourceRef = useRef(initialSource);
@@ -88,6 +89,7 @@ export function VideoAvatar({
     if (!currentVideo) return;
 
     if (nextSource === currentSourceRef.current && !forceSlot) {
+      currentVideo.loop = sourcePoolRef.current.length === 1;
       if (fallback && fallback !== nextSource) {
         const onError = () => {
           currentVideo.removeEventListener("error", onError);
@@ -128,7 +130,6 @@ export function VideoAvatar({
       if (settled || transitionId !== transitionIdRef.current) return;
       settled = true;
       cleanup();
-      currentVideo.pause();
       currentSourceRef.current = nextSource;
       activeSlotRef.current = nextSlot;
       setActiveSlot(nextSlot);
@@ -138,11 +139,14 @@ export function VideoAvatar({
         onReady?.();
       }
       if (preloadTimerRef.current !== null) window.clearTimeout(preloadTimerRef.current);
-      // Wait until the opacity crossfade has completed before repurposing the
-      // old slot as the decoder buffer for the following clip.
+      // Keep the outgoing video moving throughout the crossfade. Pausing it at
+      // commit time creates a visible freeze that reads as a flash. Only after
+      // the fade is complete do we repurpose the old decoder slot.
       preloadTimerRef.current = window.setTimeout(() => {
         preloadTimerRef.current = null;
         if (activeSlotRef.current !== nextSlot) return;
+        currentVideo.pause();
+        if (sourcePoolRef.current.length === 1) return;
         const followingSource = pickNextSource(sourcePoolRef.current, nextSource) || nextSource;
         setSlotSources((sources) => {
           const prepared = [...sources] as [string, string];
@@ -154,7 +158,7 @@ export function VideoAvatar({
         currentVideo.currentTime = 0;
         currentVideo.src = followingSource;
         currentVideo.load();
-      }, 180);
+      }, 520);
     };
     const onCanPlay = () => {
       if (playbackRequested || settled || transitionId !== transitionIdRef.current) return;
@@ -186,7 +190,7 @@ export function VideoAvatar({
     nextVideo.addEventListener("error", onError);
     nextVideo.pause();
     nextVideo.preload = "auto";
-    nextVideo.loop = false;
+    nextVideo.loop = sourcePoolRef.current.length === 1;
     nextVideo.currentTime = 0;
     const resolvedNextSource = new URL(nextSource, window.location.href).href;
     const sourceAlreadyAssigned = nextVideo.currentSrc === resolvedNextSource;
@@ -207,11 +211,12 @@ export function VideoAvatar({
 
   const handleVideoTimeUpdate = useCallback((slot: VideoSlot) => {
     if (slot !== activeSlotRef.current || rolloverPendingRef.current) return;
+    if (sourcePoolRef.current.length === 1) return;
     const video = videoRefs[slot].current;
     if (!video || !Number.isFinite(video.duration) || video.duration <= 0) return;
     // Begin decoding / crossfading just before the final frame. This prevents
     // an ended-frame or black-frame gap at both playlist and loop boundaries.
-    if (video.duration - video.currentTime > 0.2) return;
+    if (video.duration - video.currentTime > 0.6) return;
     rolloverPendingRef.current = true;
     const nextSource = pickNextSource(sourcePoolRef.current, currentSourceRef.current);
     startTransition(nextSource, fallbackToDefault ? fallbackSource : undefined, true);
@@ -250,13 +255,13 @@ export function VideoAvatar({
           muted
           playsInline
           preload="auto"
-          loop={false}
+          loop={nativeLoop}
           onPlaying={() => reportReadyAfterFrame(videoRefs[slot].current!, slot)}
           onTimeUpdate={() => handleVideoTimeUpdate(slot)}
           onEnded={() => handleVideoEnded(slot)}
           aria-hidden={slot !== activeSlot}
           aria-label={slot === activeSlot ? (state === "talk" || state === "emphasis" ? "数字人讲话" : state === "think" ? "数字人思考" : state === "welcome" ? "数字人欢迎" : "数字人聆听") : undefined}
-          className={`${resolvedClassName} transition-opacity duration-150 ${slot === activeSlot ? "opacity-100" : "pointer-events-none opacity-0"}`}
+          className={`${resolvedClassName} transition-opacity duration-500 ${slot === activeSlot ? "opacity-100" : "pointer-events-none opacity-0"}`}
         />
       ))}
     </>

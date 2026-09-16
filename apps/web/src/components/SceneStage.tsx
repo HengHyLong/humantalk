@@ -45,7 +45,7 @@ function MotionVideoOverlay({
   const [ready, setReady] = useState(false);
   const handleReady = useCallback(() => setReady(true), []);
   return (
-    <div className={`absolute inset-0 transition-opacity duration-200 ${ready && visible ? "opacity-100" : "pointer-events-none opacity-0"}`}>
+    <div className={`absolute inset-0 transition-opacity duration-500 ${ready && visible ? "opacity-100" : "pointer-events-none opacity-0"}`}>
       <VideoAvatar
         state={state}
         videoDriver={{ states: stateUrls }}
