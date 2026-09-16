@@ -6,25 +6,47 @@ from typing import TypeVar
 T = TypeVar("T")
 
 
+def ping_pong_frame_index(*, frame_index: int, frame_count: int) -> int:
+    """Map a monotonic cursor onto a seamless forward/backward frame cycle.
+
+    The turning frames are emitted once instead of twice.  For four source
+    frames the resulting sequence is ``0, 1, 2, 3, 2, 1, 0, 1, ...``.  This
+    avoids both the end-to-start visual jump and the small freeze caused by
+    repeating the first/last frame at a direction change.
+    """
+    count = int(frame_count)
+    if count <= 0:
+        raise ValueError("QuickTalk motion frame count must be positive")
+    if count == 1:
+        return 0
+    period = 2 * (count - 1)
+    phase = max(0, int(frame_index)) % period
+    return phase if phase < count else period - phase
+
+
 def next_motion_context(
     groups: list[list[T]],
     *,
     group_index: int,
     frame_index: int,
 ) -> tuple[T, int, int]:
-    """Return the next context and cursor for forward, non-repeating clip playback."""
+    """Return a frame from one stable motion clip using seamless ping-pong playback.
+
+    A speaking turn deliberately stays on one motion group.  Switching between
+    unrelated uploaded clips inside the same WebRTC stream creates a large pose
+    discontinuity which remains visible even when crossfaded.  The next group
+    is selected by :func:`reset_motion_cursor` between utterances instead.
+    """
     if not groups or any(not group for group in groups):
         raise ValueError("QuickTalk motion context groups must be non-empty")
     selected_group = group_index % len(groups)
     contexts = groups[selected_group]
-    selected_frame = frame_index % len(contexts)
+    selected_frame = ping_pong_frame_index(
+        frame_index=frame_index,
+        frame_count=len(contexts),
+    )
     context = contexts[selected_frame]
-    next_frame = selected_frame + 1
-    next_group = selected_group
-    if next_frame >= len(contexts):
-        next_frame = 0
-        next_group = (selected_group + 1) % len(groups)
-    return context, next_group, next_frame
+    return context, selected_group, max(0, int(frame_index)) + 1
 
 
 def reset_motion_cursor(

@@ -161,11 +161,18 @@ export function SceneStage({
         : [];
   const motionOverlayActive = !videoDriver
     && !clientRenderer
+    && !videoStream
     && videoState !== "talk"
     && videoState !== "emphasis"
     && motionOverlaySources.length > 0;
   const motionOverlayAvailable = !videoDriver
     && !clientRenderer
+    // QuickTalk already composites idle/action/mouth frames into one continuous
+    // WebRTC track. Putting a local idle <video> above that track forces an
+    // unavoidable dissolve whenever speech starts or stops. Use the overlay
+    // only as a pre-stream placeholder; once media arrives, one video element
+    // remains visible for the entire session.
+    && !videoStream
     && ["idle", "welcome", "listen", "think"].some(
       (state) => (motionStateUrls[state as VideoDriverState] ?? []).length > 0,
     );

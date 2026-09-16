@@ -5,6 +5,7 @@ import numpy as np
 from opentalking.models.quicktalk.motion_cycle import (
     motion_crossfade_alpha,
     next_motion_context,
+    ping_pong_frame_index,
     reset_motion_cursor,
 )
 from opentalking.pipeline.speak.idle_frames import loop_crossfade_alpha
@@ -35,7 +36,7 @@ def test_dynamic_idle_frames_are_configured_for_forward_looping() -> None:
     assert runner._idle_playback_indices == [0, 1, 2]
 
 
-def test_quicktalk_multi_motion_templates_play_forward_and_advance_without_repeat() -> None:
+def test_quicktalk_multi_motion_templates_stay_on_one_clip_during_an_utterance() -> None:
     groups = [["talk-a-0", "talk-a-1"], ["talk-b-0", "talk-b-1"]]
     group_index = 0
     frame_index = 0
@@ -51,11 +52,18 @@ def test_quicktalk_multi_motion_templates_play_forward_and_advance_without_repea
     assert sequence == [
         "talk-a-0",
         "talk-a-1",
-        "talk-b-0",
-        "talk-b-1",
+        "talk-a-0",
+        "talk-a-1",
         "talk-a-0",
         "talk-a-1",
     ]
+
+
+def test_quicktalk_ping_pong_does_not_duplicate_turnaround_frames() -> None:
+    assert [
+        ping_pong_frame_index(frame_index=index, frame_count=4)
+        for index in range(10)
+    ] == [0, 1, 2, 3, 2, 1, 0, 1, 2, 3]
 
 
 def test_quicktalk_idle_video_fades_the_tail_exactly_into_the_first_frame() -> None:

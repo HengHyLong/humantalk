@@ -28,7 +28,12 @@ from kornia.filters import gaussian_blur2d
 from kornia.geometry.transform import invert_affine_transform, warp_affine
 
 from .runtime_v2 import FaceDetection, QuickTalkRebuild, ensure_ffmpeg, maybe_mkdir, run_cmd
-from .motion_cycle import motion_crossfade_alpha, next_motion_context, reset_motion_cursor
+from .motion_cycle import (
+    motion_crossfade_alpha,
+    next_motion_context,
+    ping_pong_frame_index,
+    reset_motion_cursor,
+)
 from .face_super_resolution import create_face_super_resolution, face_sr_parameters
 
 
@@ -615,14 +620,16 @@ class RealtimeV3Worker:
         contexts = groups[0]
         n = len(contexts)
         if state is not None:
-            cycle = state.frame_index // n
-            offset = state.frame_index % n
-            idx = offset if cycle % 2 == 0 else n - 1 - offset
+            idx = ping_pong_frame_index(
+                frame_index=state.frame_index,
+                frame_count=n,
+            )
             state.frame_index += 1
         else:
-            cycle = self.frame_index // n
-            offset = self.frame_index % n
-            idx = offset if cycle % 2 == 0 else n - 1 - offset
+            idx = ping_pong_frame_index(
+                frame_index=self.frame_index,
+                frame_count=n,
+            )
             self.frame_index += 1
         return contexts[idx]
 
