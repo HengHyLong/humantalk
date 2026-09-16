@@ -36,12 +36,12 @@ def test_dynamic_idle_frames_are_configured_for_forward_looping() -> None:
     assert runner._idle_playback_indices == [0, 1, 2]
 
 
-def test_quicktalk_multi_motion_templates_stay_on_one_clip_during_an_utterance() -> None:
+def test_quicktalk_multi_motion_templates_return_to_anchor_then_advance() -> None:
     groups = [["talk-a-0", "talk-a-1"], ["talk-b-0", "talk-b-1"]]
     group_index = 0
     frame_index = 0
     sequence = []
-    for _ in range(6):
+    for _ in range(8):
         context, group_index, frame_index = next_motion_context(
             groups,
             group_index=group_index,
@@ -53,7 +53,9 @@ def test_quicktalk_multi_motion_templates_stay_on_one_clip_during_an_utterance()
         "talk-a-0",
         "talk-a-1",
         "talk-a-0",
-        "talk-a-1",
+        "talk-b-0",
+        "talk-b-1",
+        "talk-b-0",
         "talk-a-0",
         "talk-a-1",
     ]

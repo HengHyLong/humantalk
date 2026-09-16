@@ -52,6 +52,10 @@ export OPENTALKING_TORCH_DEVICE=cuda:0
 export OPENTALKING_MODEL_ROOT="${OPENTALKING_MODEL_ROOT:-$DIGITAL_HUMAN_HOME/models}"
 export OPENTALKING_QUICKTALK_ASSET_ROOT="${OPENTALKING_QUICKTALK_ASSET_ROOT:-$OPENTALKING_MODEL_ROOT/quicktalk}"
 export OPENTALKING_QUICKTALK_WORKER_CACHE=1
+export OPENTALKING_QUICKTALK_MOTION_TRANSITION_FRAMES=10
+export OPENTALKING_QUICKTALK_MOTION_FLOW_MAX_EDGE=384
+export OPENTALKING_QUICKTALK_MOTION_SPATIAL_ALIGN=1
+export OPENTALKING_QUICKTALK_IDLE_CACHE_FRAMES=0
 
 bash scripts/start_unified.sh --backend local --model quicktalk --api-port 8210 --web-port 5280
 ```
@@ -59,6 +63,15 @@ bash scripts/start_unified.sh --backend local --model quicktalk --api-port 8210 
 Open `http://localhost:5280`, select a shared avatar, and choose the `quicktalk`
 model. If a fixed template video is required, confirm the template asset is reachable
 from the session or deployment configuration.
+
+QuickTalk sends the uploaded idle clip, multiple speaking actions, and lip-synced
+frames through one continuous WebRTC timeline. Detected face geometry first
+scales and translates differently framed action clips into the idle framing.
+Each action then returns to its idle-nearest endpoint and uses motion-compensated
+interpolation before the next action; the web client no longer layers a second
+idle video over the stream.
+Restart the API/worker after changing motion assets or these settings so the
+resident worker and motion contexts are rebuilt.
 
 ## Verification
 
@@ -86,6 +99,7 @@ opentalking-prepare-cache \
 | `connected=false` | Check `OPENTALKING_QUICKTALK_ASSET_ROOT`, the CUDA device, and `$DIGITAL_HUMAN_HOME/models/quicktalk/checkpoints`. |
 | Long first turn | Enable `OPENTALKING_QUICKTALK_WORKER_CACHE=1` or run `opentalking-prepare-cache` in advance. |
 | Avatar load failure | Check that the avatar is readable; if a fixed template video is configured, confirm that path is reachable. |
+| Idle/action boundary flashes | Confirm the web client and worker run the same version, keep `OPENTALKING_QUICKTALK_IDLE_CACHE_FRAMES=0`, and restart the services. |
 | Hugging Face download fails | Configure `HF_ENDPOINT`, or download offline and sync into the same directory. |
 
 ## Stop Services

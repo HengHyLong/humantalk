@@ -331,6 +331,7 @@ class SessionRunner:
         self._speaking = False
         self._speech_started = False
         self._speech_media_started = False
+        self._video_write_lock = asyncio.Lock()
         self._closed = False
         self._idle_task: asyncio.Task[None] | None = None
         self._rtc_sample_rate = int(os.environ.get("OPENTALKING_RTC_SAMPLE_RATE") or "0")
@@ -493,7 +494,9 @@ class SessionRunner:
         if generic >= 0:
             return generic
         if self.model_type == "quicktalk":
-            return max(1, self._read_quicktalk_int_env("IDLE_CACHE_FRAMES", 1))
+            # QuickTalk owns a stateful visual timeline. Caching its idle frame
+            # bypasses the speech -> idle transition and reintroduces a hard cut.
+            return max(0, self._read_quicktalk_int_env("IDLE_CACHE_FRAMES", 0))
         return 0
 
     def _build_idle_frame_cache(self) -> None:
@@ -630,7 +633,11 @@ class SessionRunner:
             await asyncio.sleep(interval)
             if self._closed:
                 break
-            if self._speaking or not self.webrtc or not self.avatar_state:
+            if (
+                (self._speaking and (self.model_type != "quicktalk" or self._speech_media_started))
+                or not self.webrtc
+                or not self.avatar_state
+            ):
                 continue
             try:
                 await self.idle_tick()
@@ -762,9 +769,14 @@ class SessionRunner:
 
     async def _video_sink(self, frame: VideoFrameData) -> None:
         if self.webrtc:
-            self._last_speech_frame = frame
-            await self.webrtc.video.put(frame)
-            await self._publish_speech_media_started()
+            video_write_lock = getattr(self, "_video_write_lock", None)
+            if video_write_lock is None:
+                video_write_lock = asyncio.Lock()
+                self._video_write_lock = video_write_lock
+            async with video_write_lock:
+                self._last_speech_frame = frame
+                await self.webrtc.video.put(frame)
+                await self._publish_speech_media_started()
 
     async def _audio_sink(self, pcm: Any, sample_rate: int) -> None:
         if not self.webrtc:
@@ -1519,8 +1531,13 @@ class SessionRunner:
                 self._quicktalk_video_ts_ms = 0.0
                 self._speech_frame_idx = 0
                 if self.webrtc:
-                    self.webrtc.clear_media_queues()
-                    self.webrtc.reset_clocks()
+                    if self.model_type == "quicktalk":
+                        # Keep the video track and its pacing clock continuous;
+                        # the idle loop remains live until the first speech frame.
+                        self.webrtc.clear_audio_queue()
+                    else:
+                        self.webrtc.clear_media_queues()
+                        self.webrtc.reset_clocks()
                 log.info(
                     "speech preroll config: session=%s model=%s preroll_chunks=%d",
                     self.session_id,
@@ -1833,8 +1850,11 @@ class SessionRunner:
                 self._quicktalk_video_ts_ms = 0.0
                 self._speech_frame_idx = 0
                 if self.webrtc:
-                    self.webrtc.clear_media_queues()
-                    self.webrtc.reset_clocks()
+                    if self.model_type == "quicktalk":
+                        self.webrtc.clear_audio_queue()
+                    else:
+                        self.webrtc.clear_media_queues()
+                        self.webrtc.reset_clocks()
 
                 await set_session_state(self.redis, self.session_id, "speaking")
                 await publish_event(
@@ -2159,7 +2179,16 @@ class SessionRunner:
         else:
             frame = self.adapter.idle_frame(self.avatar_state, self._frame_idx)
         self._frame_idx += 1
-        await self.webrtc.video.put(frame)
+        video_write_lock = getattr(self, "_video_write_lock", None)
+        if video_write_lock is None:
+            video_write_lock = asyncio.Lock()
+            self._video_write_lock = video_write_lock
+        async with video_write_lock:
+            # Speech may have published its first frame while this idle frame
+            # was being prepared. Do not put an idle frame behind speech.
+            if self._speaking and self._speech_media_started:
+                return
+            await self.webrtc.video.put(frame)
 
     async def close(self) -> None:
         self._closed = True

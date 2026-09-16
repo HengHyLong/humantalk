@@ -874,6 +874,15 @@ class WebRTCSession:
         self.video.clear_pending()
         self.audio.clear_pending()
 
+    def clear_audio_queue(self) -> None:
+        """Drop stale audio without interrupting the continuous video timeline."""
+        while True:
+            try:
+                self.audio._queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+        self.audio.clear_pending()
+
     def buffered_audio_duration_ms(self) -> float:
         """Return queued plus track-local PCM duration waiting for playback."""
         sample_rate = max(1, int(getattr(self.audio, "sample_rate", 16000) or 16000))

@@ -14,6 +14,7 @@ from opentalking.models.quicktalk.adapter import (
     _configured_quicktalk_device,
     _default_quicktalk_device,
     _filter_quicktalk_motion_templates,
+    _quicktalk_idle_template,
     _quicktalk_motion_templates,
 )
 
@@ -77,6 +78,21 @@ def test_quicktalk_motion_templates_resolve_talk_then_emphasis_and_stay_inside_a
     assert resolved == (talk_a.resolve(), talk_b.resolve())
 
 
+def test_quicktalk_idle_template_prefers_uploaded_idle_motion(tmp_path: Path) -> None:
+    avatar_dir = tmp_path / "avatar"
+    idle_dir = avatar_dir / "source" / "motions" / "idle"
+    idle_dir.mkdir(parents=True)
+    idle = idle_dir / "idle.mp4"
+    idle.write_bytes(b"video")
+
+    resolved = _quicktalk_idle_template(
+        avatar_dir,
+        {"motion_clips": {"idle": [{"path": "source/motions/idle/idle.mp4"}]}},
+    )
+
+    assert resolved == idle.resolve()
+
+
 def test_quicktalk_motion_templates_skip_clips_that_require_destructive_upscale(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -134,12 +150,15 @@ def test_quicktalk_adapter_passes_uploaded_speaking_clips_to_shared_worker(
     avatar_dir = tmp_path / "avatars" / "multi-motion"
     quicktalk_dir = avatar_dir / "quicktalk"
     motion_dir = avatar_dir / "source" / "motions" / "talk"
+    idle_dir = avatar_dir / "source" / "motions" / "idle"
     quicktalk_dir.mkdir(parents=True)
     motion_dir.mkdir(parents=True)
+    idle_dir.mkdir(parents=True)
     template = quicktalk_dir / "template_512x512.mp4"
     talk_a = motion_dir / "talk-a.mp4"
     talk_b = motion_dir / "talk-b.mp4"
-    for path in (template, talk_a, talk_b):
+    idle = idle_dir / "idle.mp4"
+    for path in (template, talk_a, talk_b, idle):
         path.write_bytes(b"video")
     (avatar_dir / "manifest.json").write_text(
         json.dumps(
@@ -153,6 +172,7 @@ def test_quicktalk_adapter_passes_uploaded_speaking_clips_to_shared_worker(
                 "version": "1.0",
                 "metadata": {
                     "motion_clips": {
+                        "idle": [{"path": "source/motions/idle/idle.mp4"}],
                         "talk": [
                             {"path": "source/motions/talk/talk-a.mp4"},
                             {"path": "source/motions/talk/talk-b.mp4"},
@@ -185,6 +205,7 @@ def test_quicktalk_adapter_passes_uploaded_speaking_clips_to_shared_worker(
 
     assert captured["template_video"] == template.resolve()
     assert captured["motion_template_videos"] == (talk_a.resolve(), talk_b.resolve())
+    assert captured["idle_template_video"] == idle.resolve()
     assert captured["max_motion_seconds"] == 8.0
     quicktalk_adapter._WORKER_CACHE.clear()
 

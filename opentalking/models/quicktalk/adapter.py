@@ -69,6 +69,7 @@ def _worker_cache_key(
     hubert_device: str | None,
     model_backend: str,
     motion_template_videos: tuple[Path, ...] = (),
+    idle_template_video: Path | None = None,
     max_motion_seconds: float | None = None,
     face_sr_signature: tuple[Any, ...] = (),
 ) -> tuple[Any, ...]:
@@ -79,6 +80,17 @@ def _worker_cache_key(
             motion_signature.append((str(path), int(stat.st_mtime_ns), int(stat.st_size)))
         except OSError:
             motion_signature.append((str(path), 0, 0))
+    idle_signature: tuple[str, int, int] = ("", 0, 0)
+    if idle_template_video is not None:
+        try:
+            stat = idle_template_video.stat()
+            idle_signature = (
+                str(idle_template_video),
+                int(stat.st_mtime_ns),
+                int(stat.st_size),
+            )
+        except OSError:
+            idle_signature = (str(idle_template_video), 0, 0)
     return (
         str(asset_root),
         str(template_video),
@@ -95,6 +107,7 @@ def _worker_cache_key(
         str(hubert_device) if hubert_device else "",
         str(model_backend),
         tuple(motion_signature),
+        idle_signature,
         float(max_motion_seconds) if max_motion_seconds is not None else None,
         face_sr_signature,
     )
@@ -370,6 +383,24 @@ def _quicktalk_motion_templates(avatar_path: Path, metadata: dict[str, Any]) -> 
             if len(resolved) >= limit:
                 return tuple(resolved)
     return tuple(resolved)
+
+
+def _quicktalk_idle_template(avatar_path: Path, metadata: dict[str, Any]) -> Path | None:
+    """Resolve the uploaded standby clip that should own the idle timeline."""
+    declared = metadata.get("motion_clips")
+    if not isinstance(declared, dict):
+        return None
+    for state in ("idle", "listen", "welcome"):
+        entries = declared.get(state)
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            path = _resolve_avatar_child(avatar_path, entry.get("path"), must_be_file=True)
+            if path is not None:
+                return path
+    return None
 
 
 def _video_dimensions(path: Path) -> tuple[int, int] | None:
@@ -714,6 +745,7 @@ class QuickTalkAdapter:
         )
         motion_template_videos = _quicktalk_motion_templates(bundle.path, metadata)
         motion_template_videos = tuple(path for path in motion_template_videos if path != template_video)
+        idle_template_video = _quicktalk_idle_template(bundle.path, metadata)
         motion_template_videos = _filter_quicktalk_motion_templates(
             motion_template_videos,
             target_size=_target_video_size(bundle.manifest),
@@ -751,6 +783,7 @@ class QuickTalkAdapter:
             hubert_device=self._hubert_device,
             model_backend=self._model_backend,
             motion_template_videos=motion_template_videos,
+            idle_template_video=idle_template_video,
             max_motion_seconds=max_motion_seconds,
             face_sr_signature=face_sr_signature,
         )
@@ -795,6 +828,7 @@ class QuickTalkAdapter:
                             hubert_device=self._hubert_device,
                             model_backend=self._model_backend,
                             motion_template_videos=motion_template_videos,
+                            idle_template_video=idle_template_video,
                             max_motion_seconds=max_motion_seconds,
                             face_sr_signature=face_sr_signature,
                         )
@@ -825,6 +859,7 @@ class QuickTalkAdapter:
                             hubert_device=self._hubert_device,
                             model_backend=self._model_backend,
                             motion_template_videos=motion_template_videos,
+                            idle_template_video=idle_template_video,
                             max_motion_seconds=max_motion_seconds,
                             face_sr_signature=face_sr_signature,
                         )
@@ -844,6 +879,7 @@ class QuickTalkAdapter:
                             hubert_device=self._hubert_device,
                             model_backend=self._model_backend,
                             motion_template_videos=motion_template_videos,
+                            idle_template_video=idle_template_video,
                             max_motion_seconds=max_motion_seconds,
                         )
                     if not cache_disabled:
@@ -898,6 +934,7 @@ class QuickTalkAdapter:
                 hubert_device=self._hubert_device,
                 model_backend=self._model_backend,
                 motion_template_videos=motion_template_videos,
+                idle_template_video=idle_template_video,
                 max_motion_seconds=max_motion_seconds,
                 face_sr_signature=face_sr_signature,
             )
@@ -917,6 +954,7 @@ class QuickTalkAdapter:
                 hubert_device=self._hubert_device,
                 model_backend=self._model_backend,
                 motion_template_videos=motion_template_videos,
+                idle_template_video=idle_template_video,
                 max_motion_seconds=max_motion_seconds,
             )
             if not cache_disabled:
@@ -999,9 +1037,16 @@ class QuickTalkAdapter:
         )
 
     def idle_frame(self, avatar_state: QuickTalkState, frame_idx: int) -> VideoFrameData:
-        context = self._idle_context_for(avatar_state, frame_idx)
+        if bool(getattr(avatar_state.worker, "has_dedicated_idle", False)):
+            frame = avatar_state.worker.next_idle_frame(avatar_state.session_state)
+        else:
+            context = self._idle_context_for(avatar_state, frame_idx)
+            frame = avatar_state.worker.render_idle_frame(
+                context,
+                avatar_state.session_state,
+            )
         return numpy_bgr_to_videoframe(
-            context.frame.copy(),
+            frame,
             frame_idx * (1000.0 / max(1.0, float(avatar_state.fps))),
         )
 

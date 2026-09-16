@@ -31,32 +31,6 @@ type SceneStageProps = {
   backgroundColorOverride?: string;
 };
 
-function MotionVideoOverlay({
-  state,
-  stateUrls,
-  className,
-  visible,
-}: {
-  state: VideoDriverState;
-  stateUrls: Partial<Record<VideoDriverState, string[]>>;
-  className: string;
-  visible: boolean;
-}) {
-  const [ready, setReady] = useState(false);
-  const handleReady = useCallback(() => setReady(true), []);
-  return (
-    <div className={`absolute inset-0 transition-opacity duration-500 ${ready && visible ? "opacity-100" : "pointer-events-none opacity-0"}`}>
-      <VideoAvatar
-        state={state}
-        videoDriver={{ states: stateUrls }}
-        fallbackToDefault={false}
-        className={className}
-        onReady={handleReady}
-      />
-    </div>
-  );
-}
-
 function backgroundUrl(background: SceneBackgroundAsset): string {
   return buildApiUrl(background.url);
 }
@@ -142,44 +116,10 @@ export function SceneStage({
         maskPosition: avatarMaskPosition,
       }
     : undefined;
-  const motionStateUrls = useMemo(() => Object.fromEntries(
-    Object.entries(motionDriverAssets?.states ?? {}).map(([state, clips]) => [
-      state,
-      (clips ?? []).map((clip) => clip.url),
-    ]),
-  ) as Partial<Record<VideoDriverState, string[]>>, [motionDriverAssets]);
   const mergedVideoDriverAssets = useMemo(
     () => mergeMotionDrivers(videoDriverAssets, motionDriverAssets),
     [motionDriverAssets, videoDriverAssets],
   );
-  const motionOverlaySources = videoState === "welcome"
-    ? [...(motionStateUrls.welcome ?? []), ...(motionStateUrls.listen ?? [])]
-    : videoState === "listen" || videoState === "idle"
-      ? [...(motionStateUrls[videoState] ?? []), ...(motionStateUrls.idle ?? []), ...(motionStateUrls.listen ?? [])]
-      : videoState === "think"
-        ? (motionStateUrls.think ?? [])
-        : [];
-  const motionOverlayActive = !videoDriver
-    && !clientRenderer
-    && !videoStream
-    && videoState !== "talk"
-    && videoState !== "emphasis"
-    && motionOverlaySources.length > 0;
-  const motionOverlayAvailable = !videoDriver
-    && !clientRenderer
-    // QuickTalk already composites idle/action/mouth frames into one continuous
-    // WebRTC track. Putting a local idle <video> above that track forces an
-    // unavoidable dissolve whenever speech starts or stops. Use the overlay
-    // only as a pre-stream placeholder; once media arrives, one video element
-    // remains visible for the entire session.
-    && !videoStream
-    && ["idle", "welcome", "listen", "think"].some(
-      (state) => (motionStateUrls[state as VideoDriverState] ?? []).length > 0,
-    );
-  const motionOverlayPlaybackState = videoState === "talk" || videoState === "emphasis"
-    ? "listen"
-    : videoState;
-
   return (
     <div className={`relative min-h-0 overflow-hidden ${hasSceneBackground ? "bg-slate-950" : "bg-white"} ${className}`}>
       <div className="scene-background-layer absolute inset-0" style={{ backgroundColor }}>
@@ -214,14 +154,6 @@ export function SceneStage({
             style={avatarMaskStyle}
           />
           {videoDriver ? <VideoAvatar state={videoState} videoDriver={mergedVideoDriverAssets} className={`absolute inset-0 h-full w-full ${avatarFit} ${avatarObjectPosition}`} /> : null}
-          {motionOverlayAvailable ? (
-            <MotionVideoOverlay
-              state={motionOverlayPlaybackState}
-              stateUrls={motionStateUrls}
-              className={`absolute inset-0 h-full w-full ${avatarFit} ${avatarObjectPosition}`}
-              visible={motionOverlayActive}
-            />
-          ) : null}
           {clientRenderer && !rendererFailed ? (
             <Light2dAvatar
               renderer={clientRenderer}

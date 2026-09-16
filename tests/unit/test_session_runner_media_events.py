@@ -25,8 +25,20 @@ class _FakeWebRTC:
         self.video = _FakeVideoTrack()
 
 
-@pytest.mark.asyncio
-async def test_video_sink_publishes_media_started_once_per_speech_turn() -> None:
+def test_quicktalk_disables_static_idle_cache_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("OPENTALKING_IDLE_CACHE_FRAMES", raising=False)
+    monkeypatch.delenv("OPENTALKING_QUICKTALK_IDLE_CACHE_FRAMES", raising=False)
+    runner = object.__new__(SessionRunner)
+    runner.model_type = "quicktalk"
+
+    assert runner._resolve_idle_cache_frames() == 0
+
+
+def test_video_sink_publishes_media_started_once_per_speech_turn() -> None:
+    asyncio.run(_video_sink_publishes_media_started_once_per_speech_turn())
+
+
+async def _video_sink_publishes_media_started_once_per_speech_turn() -> None:
     redis = InMemoryRedis()
     pubsub = redis.pubsub()
     await pubsub.subscribe(events_channel("sess_media_started"))
@@ -39,6 +51,7 @@ async def test_video_sink_publishes_media_started_once_per_speech_turn() -> None
     runner._speech_started = True
     runner._speech_media_started = False
     runner._closed = False
+    runner._video_write_lock = asyncio.Lock()
 
     frame = VideoFrameData(
         data=np.zeros((2, 2, 3), dtype=np.uint8),

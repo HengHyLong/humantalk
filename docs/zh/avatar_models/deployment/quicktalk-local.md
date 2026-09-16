@@ -49,12 +49,22 @@ export OPENTALKING_TORCH_DEVICE=cuda:0
 export OPENTALKING_MODEL_ROOT="${OPENTALKING_MODEL_ROOT:-$DIGITAL_HUMAN_HOME/models}"
 export OPENTALKING_QUICKTALK_ASSET_ROOT="${OPENTALKING_QUICKTALK_ASSET_ROOT:-$OPENTALKING_MODEL_ROOT/quicktalk}"
 export OPENTALKING_QUICKTALK_WORKER_CACHE=1
+export OPENTALKING_QUICKTALK_MOTION_TRANSITION_FRAMES=10
+export OPENTALKING_QUICKTALK_MOTION_FLOW_MAX_EDGE=384
+export OPENTALKING_QUICKTALK_MOTION_SPATIAL_ALIGN=1
+export OPENTALKING_QUICKTALK_IDLE_CACHE_FRAMES=0
 
 bash scripts/start_unified.sh --backend local --model quicktalk --api-port 8210 --web-port 5280
 ```
 
 打开 `http://localhost:5280`，选择通用 avatar 和 `quicktalk` 模型。如果需要固定模板视频，
 请在会话或部署配置中确认模板资源可访问。
+
+QuickTalk 会把上传的待机视频、多个说话动作和口型帧统一输出到同一条 WebRTC
+时间线。系统先按检测到的人脸将不同构图的动作素材自动缩放、平移到待机构图，
+每个动作再回到与待机画面最接近的端点，并通过光流运动补间进入下一动作；
+前端不再叠加第二个待机视频。修改动作素材或以上参数后需要重启 API/Worker，以重建
+常驻 worker 和动作上下文。
 
 ## 验证命令
 
@@ -82,6 +92,7 @@ opentalking-prepare-cache \
 | `connected=false` | 检查 `OPENTALKING_QUICKTALK_ASSET_ROOT`、CUDA 设备和 `$DIGITAL_HUMAN_HOME/models/quicktalk/checkpoints`。 |
 | 首轮等待很久 | 开启 `OPENTALKING_QUICKTALK_WORKER_CACHE=1` 或提前执行 `opentalking-prepare-cache`。 |
 | avatar 加载失败 | 检查 avatar 是否能被服务读取；如配置了固定模板视频，确认路径可访问。 |
+| 待机或动作切换跳闪 | 确认前端和 Worker 均为同一版本，并保持 `OPENTALKING_QUICKTALK_IDLE_CACHE_FRAMES=0`；修改后重启服务。 |
 | Hugging Face 下载失败 | 配置 `HF_ENDPOINT` 或先离线下载后同步到同样目录。 |
 
 ## 关闭服务

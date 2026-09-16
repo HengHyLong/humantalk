@@ -53,8 +53,8 @@ def test_scene_stage_accepts_immersive_avatar_adjustments() -> None:
 def test_scene_stage_does_not_layer_idle_video_over_live_webrtc() -> None:
     source = Path("apps/web/src/components/SceneStage.tsx").read_text(encoding="utf-8")
 
-    assert source.count("&& !videoStream") >= 2
-    assert "one video element" in source
+    assert "MotionVideoOverlay" not in source
+    assert "motionOverlayActive" not in source
 
 
 def test_app_uses_scene_stage_for_realtime_stage() -> None:

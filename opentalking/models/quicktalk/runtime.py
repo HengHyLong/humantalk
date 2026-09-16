@@ -29,12 +29,18 @@ from kornia.geometry.transform import invert_affine_transform, warp_affine
 
 from .runtime_v2 import FaceDetection, QuickTalkRebuild, ensure_ffmpeg, maybe_mkdir, run_cmd
 from .motion_cycle import (
-    motion_crossfade_alpha,
     next_motion_context,
     ping_pong_frame_index,
     reset_motion_cursor,
 )
 from .face_super_resolution import create_face_super_resolution, face_sr_parameters
+from .visual_transition import (
+    MotionCompensatedTransition,
+    frame_similarity_score,
+    should_reverse_for_idle_anchor,
+    source_alignment_transform,
+    warp_frame_to_reference,
+)
 
 
 @dataclass
@@ -67,23 +73,32 @@ class RealtimeV3SessionState:
     template_group_count: int = 1
     active_template_group_index: int = -1
     last_output_frame: np.ndarray | None = None
-    transition_source_frame: np.ndarray | None = None
+    last_base_frame: np.ndarray | None = None
+    visual_mode: str = ""
+    visual_transition: MotionCompensatedTransition | None = None
     transition_frame_index: int = 0
+    idle_frame_index: int = 0
     face_sr_previous_detail: torch.Tensor | None = None
     face_sr_frame_index: int = 0
     hn: np.ndarray | None = None
     cn: np.ndarray | None = None
 
     def reset(self) -> None:
+        current_group = (
+            self.active_template_group_index
+            if self.active_template_group_index >= 0
+            else self.template_group_index
+        )
         self.template_group_index, self.template_group_frame_index = reset_motion_cursor(
             emitted_frames=self.frame_index,
-            group_index=self.template_group_index,
+            group_index=current_group,
             group_count=self.template_group_count,
         )
         self.frame_index = 0
         self.active_template_group_index = -1
-        self.last_output_frame = None
-        self.transition_source_frame = None
+        # Preserve the last visible frame and its base frame.  They are the
+        # source endpoint for the idle -> speech transition of the next turn.
+        self.visual_transition = None
         self.transition_frame_index = 0
         self.face_sr_previous_detail = None
         self.face_sr_frame_index = 0
@@ -222,8 +237,11 @@ class RealtimeV3Worker:
         hubert_device: str | None = None,
         model_backend: str = "auto",
         motion_template_videos: Sequence[Path] | None = None,
+        idle_template_video: Path | None = None,
         max_motion_seconds: float | None = None,
+        face_sr_signature: tuple[Any, ...] = (),
     ) -> None:
+        del face_sr_signature  # Cache identity is handled by the adapter.
         self.template_video = template_video
         self.face_cache_file = face_cache_file
         if (neck_fade_start is None) != (neck_fade_end is None):
@@ -262,23 +280,36 @@ class RealtimeV3Worker:
             raise RuntimeError(f"No template frames read from {template_video}")
         self.face_det_results = self._load_or_build_template_cache(max_template_seconds)
         self.restore_contexts = self._build_fast_restore_contexts()
+        self.idle_frames = self._load_idle_frames(idle_template_video, max_motion_seconds)
+        self.has_dedicated_idle = self.idle_frames is not self.frames
+        self.idle_face_affine = self._detect_idle_face_affine()
         self.motion_template_videos: list[Path] = []
         self.motion_restore_context_groups: list[list[FastRestoreContext]] = []
         self._load_motion_template_contexts(
             motion_template_videos or (),
             max_motion_seconds=max_motion_seconds,
         )
+        self._orient_motion_groups_to_idle()
         # Uploaded speaking clips take precedence for speech. The original
         # template remains the stable idle source and the fallback when no
         # usable motion clip was supplied.
         self.template_context_groups = self.motion_restore_context_groups or [self.restore_contexts]
+        transition_frames_raw = (
+            os.environ.get("OPENTALKING_QUICKTALK_MOTION_TRANSITION_FRAMES", "").strip()
+            or os.environ.get("OPENTALKING_QUICKTALK_MOTION_CROSSFADE_FRAMES", "").strip()
+            or "10"
+        )
         try:
-            self.motion_crossfade_frames = max(
-                0,
-                int(os.environ.get("OPENTALKING_QUICKTALK_MOTION_CROSSFADE_FRAMES", "6")),
+            self.motion_transition_frames = max(0, int(transition_frames_raw))
+        except ValueError:
+            self.motion_transition_frames = 10
+        try:
+            self.motion_flow_max_edge = max(
+                64,
+                int(os.environ.get("OPENTALKING_QUICKTALK_MOTION_FLOW_MAX_EDGE", "384")),
             )
         except ValueError:
-            self.motion_crossfade_frames = 6
+            self.motion_flow_max_edge = 384
         self.frame_index = 0
         self.hn = np.zeros((2, 1, 576), dtype=np.float32)
         self.cn = np.zeros((2, 1, 576), dtype=np.float32)
@@ -347,6 +378,57 @@ class RealtimeV3Worker:
         ]
         run_cmd(cmd)
         return out
+
+    def _load_idle_frames(
+        self,
+        idle_template_video: Path | None,
+        max_seconds: float | None,
+    ) -> list[np.ndarray]:
+        if idle_template_video is None:
+            return self.frames
+        path = Path(idle_template_video).expanduser().resolve()
+        if not path.is_file() or path == self.template_video.resolve():
+            return self.frames
+        try:
+            frames, _fps = self._load_template_frames(path, max_seconds)
+            if not frames:
+                return self.frames
+            primary_height, primary_width = self.frames[0].shape[:2]
+            normalized: list[np.ndarray] = []
+            for frame in frames:
+                if frame.shape[:2] == (primary_height, primary_width):
+                    normalized.append(frame)
+                    continue
+                source_height, source_width = frame.shape[:2]
+                interpolation = (
+                    cv2.INTER_AREA
+                    if source_width >= primary_width and source_height >= primary_height
+                    else cv2.INTER_LANCZOS4
+                )
+                normalized.append(
+                    cv2.resize(
+                        frame,
+                        (primary_width, primary_height),
+                        interpolation=interpolation,
+                    )
+                )
+            print(f"v3_idle_template_ready path={path} frames={len(normalized)}", flush=True)
+            return normalized
+        except Exception as exc:
+            print(f"v3_idle_template_skipped path={path} error={exc}", flush=True)
+            return self.frames
+
+    def _detect_idle_face_affine(self) -> np.ndarray | None:
+        if not self.has_dedicated_idle or not self.idle_frames:
+            return None
+        if os.environ.get("OPENTALKING_QUICKTALK_MOTION_SPATIAL_ALIGN", "1") == "0":
+            return None
+        try:
+            detection = self.v2.face_detect_frames([self.idle_frames[0]])[0]
+            return np.asarray(detection[2]).copy()
+        except Exception as exc:
+            print(f"v3_idle_face_alignment_skipped error={exc}", flush=True)
+            return None
 
     def _load_or_build_template_cache(self, max_template_seconds: float | None) -> Sequence[tuple[np.ndarray, list[int], np.ndarray]]:
         return self._load_or_build_cache_for(
@@ -532,12 +614,35 @@ class RealtimeV3Worker:
                             interpolation=interpolation,
                         )
                     )
+                cache_variant = f"{primary_width}x{primary_height}"
+                if self.idle_face_affine is not None:
+                    try:
+                        source_affine = self.v2.face_detect_frames([normalized[0]])[0][2]
+                        transform = source_alignment_transform(
+                            self.idle_face_affine,
+                            source_affine,
+                        )
+                        normalized = [
+                            warp_frame_to_reference(frame, transform)
+                            for frame in normalized
+                        ]
+                        cache_variant += "_idle-aligned-v1"
+                        print(
+                            f"v3_motion_spatially_aligned path={path} "
+                            f"matrix={transform.tolist()}",
+                            flush=True,
+                        )
+                    except Exception as exc:
+                        print(
+                            f"v3_motion_spatial_alignment_skipped path={path} error={exc}",
+                            flush=True,
+                        )
                 detections = self._load_or_build_cache_for(
                     path,
                     normalized,
                     fps,
                     max_template_seconds=max_motion_seconds,
-                    cache_variant=f"{primary_width}x{primary_height}",
+                    cache_variant=cache_variant,
                 )
                 contexts = self._build_restore_contexts_for(
                     normalized,
@@ -554,6 +659,34 @@ class RealtimeV3Worker:
                 )
             except Exception as exc:
                 print(f"v3_motion_template_skipped path={path} error={exc}", flush=True)
+
+    def _orient_motion_groups_to_idle(self) -> None:
+        """Put each action's idle-nearest endpoint at its cycle boundary."""
+        if not self.motion_restore_context_groups or not self.idle_frames:
+            return
+        idle_anchor = self.idle_frames[0]
+        for index, contexts in enumerate(self.motion_restore_context_groups):
+            if len(contexts) < 2:
+                continue
+            first_score = frame_similarity_score(idle_anchor, contexts[0].frame)
+            last_score = frame_similarity_score(idle_anchor, contexts[-1].frame)
+            if should_reverse_for_idle_anchor(
+                idle_anchor,
+                contexts[0].frame,
+                contexts[-1].frame,
+            ):
+                contexts.reverse()
+                print(
+                    f"v3_motion_template_oriented path={self.motion_template_videos[index]} "
+                    f"anchor=last score={last_score:.3f}",
+                    flush=True,
+                )
+            else:
+                print(
+                    f"v3_motion_template_oriented path={self.motion_template_videos[index]} "
+                    f"anchor=first score={first_score:.3f}",
+                    flush=True,
+                )
 
     def _apply_neck_fade(self, soft_mask_roi_3d: torch.Tensor) -> torch.Tensor:
         if self.neck_fade_start is None or self.neck_fade_end is None:
@@ -758,6 +891,82 @@ class RealtimeV3Worker:
         strength = float(getattr(self, "face_sr_strength", 0.7))
         return (baseline + strength * detail).clamp(0.0, 1.0)
 
+    def _begin_visual_transition(
+        self,
+        state: RealtimeV3SessionState,
+        target_base_frame: np.ndarray,
+    ) -> None:
+        state.visual_transition = None
+        state.transition_frame_index = 0
+        if self.motion_transition_frames <= 0 or state.last_output_frame is None:
+            return
+        source_base = state.last_base_frame
+        if source_base is None or source_base.shape != target_base_frame.shape:
+            source_base = state.last_output_frame
+        try:
+            state.visual_transition = MotionCompensatedTransition.prepare(
+                source_base,
+                target_base_frame,
+                flow_max_edge=self.motion_flow_max_edge,
+            )
+            # Preserve the actually displayed pixels (including the generated
+            # mouth), while using clean base frames only to estimate motion.
+            state.visual_transition.source = state.last_output_frame.copy()
+        except Exception:
+            # A malformed frame must not stop speech.  Holding the previous
+            # frame is less distracting than exposing a raw source cut.
+            state.visual_transition = None
+
+    def _apply_visual_transition(
+        self,
+        state: RealtimeV3SessionState,
+        output: np.ndarray,
+    ) -> np.ndarray:
+        transition = state.visual_transition
+        if transition is None:
+            return output
+        state.transition_frame_index += 1
+        alpha = state.transition_frame_index / float(max(1, self.motion_transition_frames))
+        result = transition.render(output, alpha)
+        if state.transition_frame_index >= self.motion_transition_frames:
+            state.visual_transition = None
+            state.transition_frame_index = 0
+        return result
+
+    def render_idle_base_frame(
+        self,
+        base_frame: np.ndarray,
+        state: RealtimeV3SessionState | None,
+    ) -> np.ndarray:
+        """Continue the same visual timeline while the avatar is not speaking."""
+        output = base_frame.copy()
+        if state is None:
+            return output
+        if state.visual_mode != "idle":
+            self._begin_visual_transition(state, base_frame)
+        state.visual_mode = "idle"
+        output = self._apply_visual_transition(state, output)
+        state.last_output_frame = output.copy()
+        state.last_base_frame = base_frame
+        return output
+
+    def render_idle_frame(
+        self,
+        context: FastRestoreContext,
+        state: RealtimeV3SessionState | None,
+    ) -> np.ndarray:
+        return self.render_idle_base_frame(context.frame, state)
+
+    def next_idle_frame(self, state: RealtimeV3SessionState | None) -> np.ndarray:
+        if state is None:
+            return self.idle_frames[0].copy()
+        index = ping_pong_frame_index(
+            frame_index=state.idle_frame_index,
+            frame_count=len(self.idle_frames),
+        )
+        state.idle_frame_index += 1
+        return self.render_idle_base_frame(self.idle_frames[index], state)
+
     def generate_frames_from_reps(
         self,
         reps: Sequence[np.ndarray],
@@ -770,18 +979,15 @@ class RealtimeV3Worker:
                     if state is not None and len(self.template_context_groups) > 1
                     else 0
                 )
-                if (
-                    state is not None
-                    and state.active_template_group_index >= 0
-                    and selected_group != state.active_template_group_index
-                    and state.last_output_frame is not None
-                    and self.motion_crossfade_frames > 0
-                ):
-                    state.transition_source_frame = state.last_output_frame.copy()
-                    state.transition_frame_index = 0
-                if state is not None:
-                    state.active_template_group_index = selected_group
                 context = self._template_item(state)
+                if state is not None and (
+                    state.visual_mode != "speech"
+                    or state.active_template_group_index != selected_group
+                ):
+                    self._begin_visual_transition(state, context.frame)
+                if state is not None:
+                    state.visual_mode = "speech"
+                    state.active_template_group_index = selected_group
                 rep_input = rep[None, ...].astype(np.float32)
                 if state is not None:
                     hn_in, cn_in = state.hn, state.cn
@@ -825,25 +1031,10 @@ class RealtimeV3Worker:
                     antialias=True,
                 ).squeeze(0)
                 output = self.fast_restore_img(context, patch_t)
-                if state is not None and state.transition_source_frame is not None:
-                    source = state.transition_source_frame
-                    if source.shape != output.shape:
-                        source = cv2.resize(
-                            source,
-                            (output.shape[1], output.shape[0]),
-                            interpolation=cv2.INTER_LINEAR,
-                        )
-                    state.transition_frame_index += 1
-                    alpha = motion_crossfade_alpha(
-                        frame_index=state.transition_frame_index,
-                        frame_count=self.motion_crossfade_frames,
-                    )
-                    output = cv2.addWeighted(source, 1.0 - alpha, output, alpha, 0.0)
-                    if state.transition_frame_index >= self.motion_crossfade_frames:
-                        state.transition_source_frame = None
-                        state.transition_frame_index = 0
                 if state is not None:
+                    output = self._apply_visual_transition(state, output)
                     state.last_output_frame = output.copy()
+                    state.last_base_frame = context.frame
                 yield output
 
     def generate_video_from_wav(
