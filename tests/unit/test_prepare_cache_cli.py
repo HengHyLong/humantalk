@@ -29,7 +29,7 @@ def test_target_video_size_matches_quicktalk_runtime_scaling() -> None:
     assert _target_video_size(manifest, max_long_edge=900) == (674, 900)
 
 
-def test_quicktalk_template_source_prefers_quicktalk_metadata(tmp_path: Path) -> None:
+def test_quicktalk_template_source_prefers_original_metadata_over_generated_cache(tmp_path: Path) -> None:
     avatar_dir = tmp_path / "avatars" / "singer"
     preferred = avatar_dir / "quicktalk" / "template_900.mp4"
     fallback = avatar_dir / "idle.mp4"
@@ -53,7 +53,32 @@ def test_quicktalk_template_source_prefers_quicktalk_metadata(tmp_path: Path) ->
     source = _resolve_quicktalk_template_source(avatar_dir, manifest)
 
     assert source is not None
-    assert source.path == preferred.resolve()
+    assert source.path == fallback.resolve()
+    assert source.mode == "video"
+
+
+def test_quicktalk_template_source_uses_generated_cache_as_last_resort(tmp_path: Path) -> None:
+    avatar_dir = tmp_path / "avatars" / "singer"
+    generated = avatar_dir / "quicktalk" / "template_674x900.mp4"
+    generated.parent.mkdir(parents=True)
+    generated.write_bytes(b"generated")
+    manifest = _write_manifest(
+        avatar_dir,
+        {
+            "id": "singer",
+            "model_type": "quicktalk",
+            "width": 830,
+            "height": 1108,
+            "metadata": {
+                "quicktalk": {"template_video": "quicktalk/template_674x900.mp4"},
+            },
+        },
+    )
+
+    source = _resolve_quicktalk_template_source(avatar_dir, manifest)
+
+    assert source is not None
+    assert source.path == generated.resolve()
     assert source.mode == "video"
 
 

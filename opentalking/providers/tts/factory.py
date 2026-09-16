@@ -882,6 +882,9 @@ def tts_log_profile(
     except Exception:
         key_ok = bool(os.environ.get("OPENTALKING_TTS_DASHSCOPE_API_KEY", "").strip())
 
+    if p == "mock":
+        return f"TTS_API=mock | OPENTALKING_TTS_PROVIDER={raw_display} | {req_part}"
+
     if p in _QWEN_RT:
         voice = (request_voice or "").strip() or _tts_voice_for_log_dashscope()
         model = (
@@ -1212,6 +1215,14 @@ def create_tts_adapter(
             response_format=_openai_tts_response_format(),
             protocol=_openai_tts_protocol(),
             prompt=_openai_tts_prompt(),
+            sample_rate=sample_rate,
+            chunk_ms=chunk_ms,
+        )
+    if p == "mock":
+        from opentalking.providers.tts.mock.adapter import MockTTSAdapter
+
+        return MockTTSAdapter(
+            default_voice=default_voice or "mock",
             sample_rate=sample_rate,
             chunk_ms=chunk_ms,
         )

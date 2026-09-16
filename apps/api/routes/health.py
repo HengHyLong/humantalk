@@ -79,6 +79,17 @@ def _runtime_status_payload(request: Request) -> dict[str, Any]:
     ).strip()
     quicktalk_asset_root_path = resolve_quicktalk_asset_root(settings)
     quicktalk_asset_root = str(quicktalk_asset_root_path) if quicktalk_asset_root_path else ""
+    quicktalk_max_long_edge = (
+        os.environ.get("OPENTALKING_QUICKTALK_MAX_LONG_EDGE", "").strip()
+        or str(getattr(settings, "quicktalk_max_long_edge", "") or "900")
+    )
+    quicktalk_motion_min_resolution_ratio = os.environ.get(
+        "OPENTALKING_QUICKTALK_MOTION_MIN_RESOLUTION_RATIO",
+        "",
+    ).strip() or "0.8"
+    quicktalk_template_crf = (
+        os.environ.get("OPENTALKING_QUICKTALK_TEMPLATE_CRF", "").strip() or "16"
+    )
     return {
         "status": "ok",
         "llm_provider": os.environ.get("OPENTALKING_LLM_PROVIDER", "").strip()
@@ -109,6 +120,9 @@ def _runtime_status_payload(request: Request) -> dict[str, Any]:
         "quicktalk_backend": quicktalk_backend,
         "quicktalk_device": quicktalk_device,
         "quicktalk_asset_root": quicktalk_asset_root,
+        "quicktalk_max_long_edge": quicktalk_max_long_edge,
+        "quicktalk_motion_min_resolution_ratio": quicktalk_motion_min_resolution_ratio,
+        "quicktalk_template_crf": quicktalk_template_crf,
         "ignored_legacy_env": ignored_legacy_env,
     }
 

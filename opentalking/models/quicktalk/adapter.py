@@ -320,6 +320,21 @@ def _prepared_quicktalk_template_and_cache(
     manifest: AvatarManifest,
     metadata: dict[str, Any],
 ) -> tuple[Path | None, Path | None]:
+    # Prefer the cache whose dimensions match the current manifest and
+    # OPENTALKING_QUICKTALK_MAX_LONG_EDGE.  Older manifests may still point at
+    # template_900.mp4 after an HD cache has been generated; selecting that
+    # stale declaration silently downgrades every realtime frame.
+    quicktalk_dir = avatar_path / "quicktalk"
+    if quicktalk_dir.is_dir():
+        width, height = _target_video_size(manifest)
+        sized_template = quicktalk_dir / f"template_{width}x{height}.mp4"
+        sized_face_cache = quicktalk_dir / f"face_cache_v3_{width}x{height}.npz"
+        if sized_template.is_file():
+            return (
+                sized_template.resolve(),
+                sized_face_cache.resolve() if sized_face_cache.is_file() else None,
+            )
+
     quicktalk = _metadata_section(metadata, "quicktalk")
     template = _resolve_avatar_child(
         avatar_path,
@@ -329,15 +344,6 @@ def _prepared_quicktalk_template_and_cache(
     face_cache = _resolve_avatar_child(avatar_path, quicktalk.get("face_cache"), must_be_file=True)
     if template is not None:
         return template, face_cache
-
-    quicktalk_dir = avatar_path / "quicktalk"
-    if not quicktalk_dir.is_dir():
-        return None, None
-    width, height = _target_video_size(manifest)
-    template = quicktalk_dir / f"template_{width}x{height}.mp4"
-    face_cache = quicktalk_dir / f"face_cache_v3_{width}x{height}.npz"
-    if template.is_file():
-        return template.resolve(), face_cache.resolve() if face_cache.is_file() else None
     return None, None
 
 
@@ -364,6 +370,82 @@ def _quicktalk_motion_templates(avatar_path: Path, metadata: dict[str, Any]) -> 
             if len(resolved) >= limit:
                 return tuple(resolved)
     return tuple(resolved)
+
+
+def _video_dimensions(path: Path) -> tuple[int, int] | None:
+    """Read a video's coded dimensions without decoding the whole clip."""
+
+    try:
+        import cv2
+
+        capture = cv2.VideoCapture(str(path))
+        try:
+            width = int(round(float(capture.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)))
+            height = int(round(float(capture.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)))
+        finally:
+            capture.release()
+    except Exception:  # noqa: BLE001 - an unreadable clip is handled by the runtime
+        return None
+    if width <= 0 or height <= 0:
+        return None
+    return width, height
+
+
+def _quicktalk_motion_min_resolution_ratio() -> float:
+    raw = _env_value("OPENTALKING_QUICKTALK_MOTION_MIN_RESOLUTION_RATIO", "0.8")
+    try:
+        return min(1.0, max(0.0, float(raw)))
+    except ValueError:
+        return 0.8
+
+
+def _filter_quicktalk_motion_templates(
+    paths: tuple[Path, ...],
+    *,
+    target_size: tuple[int, int],
+) -> tuple[Path, ...]:
+    """Drop motion clips that would need a visibly destructive upscale.
+
+    QuickTalk composites its generated face onto the entire motion frame. A
+    low-resolution motion clip therefore makes the whole speaking image soft,
+    even when the primary/idle template and WebRTC stream are HD. Falling back
+    to the primary template preserves sharpness while keeping lip sync active.
+    """
+
+    minimum_ratio = _quicktalk_motion_min_resolution_ratio()
+    if minimum_ratio <= 0:
+        return paths
+    target_width, target_height = target_size
+    accepted: list[Path] = []
+    for path in paths:
+        dimensions = _video_dimensions(path)
+        if dimensions is None:
+            log.warning(
+                "QuickTalk motion resolution unavailable; keeping clip: path=%s",
+                path,
+            )
+            accepted.append(path)
+            continue
+        width, height = dimensions
+        resolution_ratio = min(
+            width / float(max(1, target_width)),
+            height / float(max(1, target_height)),
+        )
+        if resolution_ratio + 1e-6 < minimum_ratio:
+            log.warning(
+                "QuickTalk motion clip skipped to protect output quality: "
+                "path=%s source=%dx%d target=%dx%d ratio=%.3f minimum=%.3f",
+                path,
+                width,
+                height,
+                target_width,
+                target_height,
+                resolution_ratio,
+                minimum_ratio,
+            )
+            continue
+        accepted.append(path)
+    return tuple(accepted)
 
 
 def _optional_positive_float_env(name: str, default: float | None = None) -> float | None:
@@ -632,6 +714,10 @@ class QuickTalkAdapter:
         )
         motion_template_videos = _quicktalk_motion_templates(bundle.path, metadata)
         motion_template_videos = tuple(path for path in motion_template_videos if path != template_video)
+        motion_template_videos = _filter_quicktalk_motion_templates(
+            motion_template_videos,
+            target_size=_target_video_size(bundle.manifest),
+        )
         max_motion_seconds = _optional_positive_float_env(
             "OPENTALKING_QUICKTALK_MOTION_MAX_SECONDS",
             8.0,
@@ -763,6 +849,18 @@ class QuickTalkAdapter:
                     if not cache_disabled:
                         _WORKER_CACHE[cache_key_to_store] = worker
                         _enforce_worker_cache_limit()
+
+        worker_frames = getattr(worker, "frames", None)
+        if worker_frames:
+            frame_height, frame_width = worker_frames[0].shape[:2]
+            log.info(
+                "QuickTalk runtime output: avatar=%s template=%s resolution=%dx%d fps=%.3f",
+                bundle.manifest.id,
+                template_video,
+                frame_width,
+                frame_height,
+                float(worker.fps),
+            )
 
         try:
             session_state = worker.make_state()

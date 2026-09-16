@@ -167,10 +167,12 @@ uv run python scripts/export_realesrgan_x2_torchscript.py \
 OPENTALKING_QUICKTALK_FACE_SR_ENABLED=1
 OPENTALKING_QUICKTALK_FACE_SR_MODEL_PATH=/models/realesrgan_x2plus.torchscript.pt
 OPENTALKING_QUICKTALK_FACE_SR_FP16=1
+OPENTALKING_QUICKTALK_FACE_SR_DEVICE=cuda:1
 OPENTALKING_QUICKTALK_FACE_SR_STRENGTH=0.7
 OPENTALKING_QUICKTALK_FACE_SR_TEMPORAL_ALPHA=0.7
 OPENTALKING_QUICKTALK_FACE_SR_MIN_ROI_EDGE=320
 OPENTALKING_QUICKTALK_FACE_SR_INTERVAL=2
+OPENTALKING_QUICKTALK_FACE_SR_INPUT_EDGE=192
 ```
 
-模型在 QuickTalk worker 创建时加载和预热，每个会话独立保存高频细节的时序状态。`FACE_SR_INTERVAL=2` 表示每两帧执行一次超分；跳过的帧仍使用当前 QuickTalk 口型，只复用上一帧的高频细节，避免复用整张旧人脸造成口型滞后。默认值为 `1`（每帧超分）；若端到端生成仍达不到实时速度，可改为 `3`。小于阈值的人脸区域会跳过超分；模型缺失、格式错误或运行失败时会记录告警并自动退回原始补丁，不中断会话。TorchScript 模型必须接收并返回 `[1, 3, H, W]`、RGB、`0..1` 张量，并同时放大宽高。
+模型在 QuickTalk worker 创建时加载和预热，每个会话独立保存高频细节的时序状态。双卡部署可用 `FACE_SR_DEVICE` 把超分放到不同于 QuickTalk 主模型的 GPU；增强结果会自动传回合成设备。`FACE_SR_INPUT_EDGE=192` 会先把 256 像素补丁缩到 192，再生成 384 像素补丁，以少量清晰度换取更低延迟。`FACE_SR_INTERVAL=2` 表示每两帧执行一次超分；跳过的帧仍使用当前 QuickTalk 口型，只复用上一帧的高频细节，避免复用整张旧人脸造成口型滞后。默认值为 `1`（每帧超分）；若端到端生成仍达不到实时速度，可改为 `3`。小于阈值的人脸区域会跳过超分；模型缺失、格式错误或运行失败时会记录告警并自动退回原始补丁，不中断会话。TorchScript 模型必须接收并返回 `[1, 3, H, W]`、RGB、`0..1` 张量，并同时放大宽高。

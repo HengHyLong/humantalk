@@ -73,6 +73,17 @@ def test_create_tts_adapter_builds_elevenlabs_for_request_override(monkeypatch):
     assert adapter.default_voice == "request-voice"
 
 
+def test_create_tts_adapter_builds_mock_for_request_override():
+    adapter = create_tts_adapter(
+        sample_rate=16000,
+        chunk_ms=20.0,
+        default_voice="mock",
+        tts_provider="mock",
+    )
+
+    assert adapter.__class__.__name__ == "MockTTSAdapter"
+
+
 def test_qwen_tts_normalizes_cantonese_voice_aliases():
     assert normalize_optional_qwen_voice("kiki") == "Kiki"
     assert normalize_optional_qwen_voice("rocky") == "Rocky"

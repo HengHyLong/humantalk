@@ -45,10 +45,12 @@ def face_sr_cache_signature() -> tuple[Any, ...]:
         int(model_stat.st_mtime_ns) if model_stat else 0,
         int(model_stat.st_size) if model_stat else 0,
         _env_bool("OPENTALKING_QUICKTALK_FACE_SR_FP16", True),
+        os.environ.get("OPENTALKING_QUICKTALK_FACE_SR_DEVICE", "").strip(),
         _env_float("OPENTALKING_QUICKTALK_FACE_SR_STRENGTH", 0.7),
         _env_float("OPENTALKING_QUICKTALK_FACE_SR_TEMPORAL_ALPHA", 0.7),
         _env_int("OPENTALKING_QUICKTALK_FACE_SR_MIN_ROI_EDGE", 320),
         _env_int("OPENTALKING_QUICKTALK_FACE_SR_INTERVAL", 1),
+        _env_int("OPENTALKING_QUICKTALK_FACE_SR_INPUT_EDGE", 0),
     )
 
 
@@ -101,6 +103,7 @@ class TorchScriptFaceSuperResolution:
             return patch_bgr
         try:
             source_dtype = patch_bgr.dtype
+            source_device = patch_bgr.device
             patch_rgb = patch_bgr[[2, 1, 0]] if self.patch_color_order == "bgr" else patch_bgr
             rgb = patch_rgb.unsqueeze(0).to(
                 device=self.device,
@@ -114,7 +117,7 @@ class TorchScriptFaceSuperResolution:
                     f"got input={tuple(rgb.shape)} output={tuple(output.shape)}"
                 )
             output_patch = output[0, [2, 1, 0]] if self.patch_color_order == "bgr" else output[0]
-            return output_patch.to(dtype=source_dtype).clamp(0.0, 1.0)
+            return output_patch.to(device=source_device, dtype=source_dtype).clamp(0.0, 1.0)
         except Exception:
             # A broken optional enhancer must not terminate a live conversation.
             self._failed = True
@@ -144,10 +147,12 @@ def create_face_super_resolution(
     if normalized_color_order not in {"rgb", "bgr"}:
         log.warning("Invalid QuickTalk face SR patch color order %r; using bgr", patch_color_order)
         normalized_color_order = "bgr"
+    configured_device = os.environ.get("OPENTALKING_QUICKTALK_FACE_SR_DEVICE", "").strip()
     try:
+        sr_device = torch.device(configured_device) if configured_device else device
         enhancer = TorchScriptFaceSuperResolution(
             model_path,
-            device=device,
+            device=sr_device,
             fp16=_env_bool("OPENTALKING_QUICKTALK_FACE_SR_FP16", True),
             patch_color_order=normalized_color_order,
         )
@@ -157,13 +162,13 @@ def create_face_super_resolution(
     log.info(
         "QuickTalk face super-resolution active: model=%s device=%s fp16=%s",
         model_path,
-        device,
+        sr_device,
         enhancer.fp16,
     )
     return enhancer
 
 
-def face_sr_parameters() -> tuple[float, float, int, int]:
+def face_sr_parameters() -> tuple[float, float, int, int, int]:
     strength = min(1.0, max(0.0, _env_float("OPENTALKING_QUICKTALK_FACE_SR_STRENGTH", 0.7)))
     temporal_alpha = min(
         1.0,
@@ -171,4 +176,5 @@ def face_sr_parameters() -> tuple[float, float, int, int]:
     )
     min_roi_edge = max(1, _env_int("OPENTALKING_QUICKTALK_FACE_SR_MIN_ROI_EDGE", 320))
     interval = max(1, _env_int("OPENTALKING_QUICKTALK_FACE_SR_INTERVAL", 1))
-    return strength, temporal_alpha, min_roi_edge, interval
+    input_edge = max(0, _env_int("OPENTALKING_QUICKTALK_FACE_SR_INPUT_EDGE", 0))
+    return strength, temporal_alpha, min_roi_edge, interval, input_edge

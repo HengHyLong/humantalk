@@ -13,6 +13,7 @@ from opentalking.models.quicktalk.adapter import (
     QuickTalkAdapter,
     _configured_quicktalk_device,
     _default_quicktalk_device,
+    _filter_quicktalk_motion_templates,
     _quicktalk_motion_templates,
 )
 
@@ -76,6 +77,51 @@ def test_quicktalk_motion_templates_resolve_talk_then_emphasis_and_stay_inside_a
     assert resolved == (talk_a.resolve(), talk_b.resolve())
 
 
+def test_quicktalk_motion_templates_skip_clips_that_require_destructive_upscale(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from opentalking.models.quicktalk import adapter as quicktalk_adapter
+
+    low_resolution = tmp_path / "talk-low.mp4"
+    hd = tmp_path / "talk-hd.mp4"
+    low_resolution.write_bytes(b"video")
+    hd.write_bytes(b"video")
+    dimensions = {
+        low_resolution: (606, 1080),
+        hd: (1080, 1920),
+    }
+    monkeypatch.setattr(
+        quicktalk_adapter,
+        "_video_dimensions",
+        lambda path: dimensions[path],
+    )
+    monkeypatch.setenv("OPENTALKING_QUICKTALK_MOTION_MIN_RESOLUTION_RATIO", "0.8")
+
+    selected = _filter_quicktalk_motion_templates(
+        (low_resolution, hd),
+        target_size=(1080, 1920),
+    )
+
+    assert selected == (hd,)
+    assert "source=606x1080 target=1080x1920" in caplog.text
+
+
+def test_quicktalk_motion_resolution_filter_can_be_disabled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clip = tmp_path / "talk.mp4"
+    clip.write_bytes(b"video")
+    monkeypatch.setenv("OPENTALKING_QUICKTALK_MOTION_MIN_RESOLUTION_RATIO", "0")
+
+    assert _filter_quicktalk_motion_templates(
+        (clip,),
+        target_size=(1080, 1920),
+    ) == (clip,)
+
+
 def test_quicktalk_adapter_passes_uploaded_speaking_clips_to_shared_worker(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -133,6 +179,7 @@ def test_quicktalk_adapter_passes_uploaded_speaking_clips_to_shared_worker(
     fake_runtime.RealtimeV3Worker = FakeWorker
     monkeypatch.setitem(sys.modules, "opentalking.models.quicktalk.runtime", fake_runtime)
     monkeypatch.setenv("OPENTALKING_QUICKTALK_ASSET_ROOT", str(asset_root))
+    monkeypatch.setattr(quicktalk_adapter, "_video_dimensions", lambda _path: (512, 512))
 
     QuickTalkAdapter().load_avatar(str(avatar_dir))
 
@@ -600,6 +647,66 @@ def test_quicktalk_adapter_prefers_prepared_avatar_template_and_cache(
     assert captured["template_video"] == prepared_template.resolve()
     assert captured["face_cache_file"] == prepared_cache.resolve()
     assert captured["face_cache_dir"] == asset_root.resolve() / ".face_cache_v3"
+
+
+def test_quicktalk_adapter_prefers_current_sized_cache_over_stale_manifest_template(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    asset_root = tmp_path / "models" / "quicktalk"
+    _write_quicktalk_local_assets(asset_root)
+    avatar_dir = tmp_path / "avatars" / "presenter"
+    quicktalk_dir = avatar_dir / "quicktalk"
+    quicktalk_dir.mkdir(parents=True)
+    stale_template = quicktalk_dir / "template_506x900.mp4"
+    stale_cache = quicktalk_dir / "face_cache_v3_506x900.npz"
+    hd_template = quicktalk_dir / "template_720x1280.mp4"
+    hd_cache = quicktalk_dir / "face_cache_v3_720x1280.npz"
+    for path in (stale_template, stale_cache, hd_template, hd_cache):
+        path.write_bytes(b"asset")
+    (avatar_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "id": "presenter",
+                "model_type": "quicktalk",
+                "fps": 25,
+                "sample_rate": 16000,
+                "width": 720,
+                "height": 1280,
+                "version": "1.0",
+                "metadata": {
+                    "quicktalk": {
+                        "template_video": "quicktalk/template_506x900.mp4",
+                        "face_cache": "quicktalk/face_cache_v3_506x900.npz",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    captured: dict[str, Path | None] = {}
+
+    class FakeWorker:
+        fps = 25
+
+        def __init__(self, *, template_video: Path, face_cache_file: Path | None, **_: object) -> None:
+            captured["template_video"] = template_video
+            captured["face_cache_file"] = face_cache_file
+
+        def make_state(self) -> object:
+            return object()
+
+    fake_runtime = types.ModuleType("opentalking.models.quicktalk.runtime")
+    fake_runtime.RealtimeV3Worker = FakeWorker
+    monkeypatch.setitem(sys.modules, "opentalking.models.quicktalk.runtime", fake_runtime)
+    monkeypatch.setenv("OPENTALKING_QUICKTALK_ASSET_ROOT", str(asset_root))
+    monkeypatch.setenv("OPENTALKING_QUICKTALK_MAX_LONG_EDGE", "1920")
+
+    QuickTalkAdapter().load_avatar(str(avatar_dir))
+
+    assert captured["template_video"] == hd_template.resolve()
+    assert captured["face_cache_file"] == hd_cache.resolve()
 
 
 def test_quicktalk_adapter_uses_bundled_quicktalk_template_when_metadata_missing(

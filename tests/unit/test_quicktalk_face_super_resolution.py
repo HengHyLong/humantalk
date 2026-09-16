@@ -11,9 +11,11 @@ class _FakeEnhancer:
     def __init__(self, value: float = 1.0) -> None:
         self.value = value
         self.calls = 0
+        self.last_input_shape: tuple[int, ...] | None = None
 
     def enhance(self, patch: torch.Tensor) -> torch.Tensor:
         self.calls += 1
+        self.last_input_shape = tuple(patch.shape)
         return torch.full(
             (patch.shape[0], patch.shape[1] * 2, patch.shape[2] * 2),
             self.value,
@@ -29,6 +31,7 @@ def _worker(enhancer: _FakeEnhancer | None) -> RealtimeV3Worker:
     worker.face_sr_temporal_alpha = 0.75
     worker.face_sr_min_roi_edge = 320
     worker.face_sr_interval = 1
+    worker.face_sr_input_edge = 0
     return worker
 
 
@@ -112,6 +115,24 @@ def test_face_sr_interval_runs_again_on_scheduled_frame() -> None:
         )
 
     assert enhancer.calls == 2
+
+
+def test_face_sr_can_limit_model_input_edge() -> None:
+    enhancer = _FakeEnhancer(1.0)
+    worker = _worker(enhancer)
+    worker.face_sr_input_edge = 3
+    state = RealtimeV3SessionState()
+    patch = torch.zeros((3, 4, 4), dtype=torch.float32)
+
+    output = worker._enhance_face_patch(
+        patch,
+        target_height=500,
+        target_width=400,
+        state=state,
+    )
+
+    assert enhancer.last_input_shape == (3, 3, 3)
+    assert output.shape == (3, 6, 6)
 
 
 def test_face_sr_bypasses_small_face_roi() -> None:

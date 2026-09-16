@@ -35,15 +35,17 @@ function MotionVideoOverlay({
   state,
   stateUrls,
   className,
+  visible,
 }: {
   state: VideoDriverState;
   stateUrls: Partial<Record<VideoDriverState, string[]>>;
   className: string;
+  visible: boolean;
 }) {
   const [ready, setReady] = useState(false);
   const handleReady = useCallback(() => setReady(true), []);
   return (
-    <div className={`absolute inset-0 transition-opacity duration-150 ${ready ? "opacity-100" : "pointer-events-none opacity-0"}`}>
+    <div className={`absolute inset-0 transition-opacity duration-200 ${ready && visible ? "opacity-100" : "pointer-events-none opacity-0"}`}>
       <VideoAvatar
         state={state}
         videoDriver={{ states: stateUrls }}
@@ -162,7 +164,14 @@ export function SceneStage({
     && videoState !== "talk"
     && videoState !== "emphasis"
     && motionOverlaySources.length > 0;
-  const motionOverlayKey = `${videoState}:${motionOverlaySources.join("\n")}`;
+  const motionOverlayAvailable = !videoDriver
+    && !clientRenderer
+    && ["idle", "welcome", "listen", "think"].some(
+      (state) => (motionStateUrls[state as VideoDriverState] ?? []).length > 0,
+    );
+  const motionOverlayPlaybackState = videoState === "talk" || videoState === "emphasis"
+    ? "listen"
+    : videoState;
 
   return (
     <div className={`relative min-h-0 overflow-hidden ${hasSceneBackground ? "bg-slate-950" : "bg-white"} ${className}`}>
@@ -198,12 +207,12 @@ export function SceneStage({
             style={avatarMaskStyle}
           />
           {videoDriver ? <VideoAvatar state={videoState} videoDriver={mergedVideoDriverAssets} className={`absolute inset-0 h-full w-full ${avatarFit} ${avatarObjectPosition}`} /> : null}
-          {motionOverlayActive ? (
+          {motionOverlayAvailable ? (
             <MotionVideoOverlay
-              key={motionOverlayKey}
-              state={videoState}
+              state={motionOverlayPlaybackState}
               stateUrls={motionStateUrls}
               className={`absolute inset-0 h-full w-full ${avatarFit} ${avatarObjectPosition}`}
+              visible={motionOverlayActive}
             />
           ) : null}
           {clientRenderer && !rendererFailed ? (

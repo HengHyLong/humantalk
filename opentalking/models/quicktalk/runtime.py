@@ -249,6 +249,7 @@ class RealtimeV3Worker:
             self.face_sr_temporal_alpha,
             self.face_sr_min_roi_edge,
             self.face_sr_interval,
+            self.face_sr_input_edge,
         ) = face_sr_parameters()
         self.input_names = self.v2.model_backend.input_names
         self.frames, self.fps = self._load_template_frames(template_video, max_template_seconds)
@@ -328,7 +329,17 @@ class RealtimeV3Worker:
         ]
         if max_seconds is not None:
             cmd += ["-t", str(max_seconds)]
-        cmd += ["-c:v", "libx264", "-preset", "fast", "-pix_fmt", "yuv420p", str(out)]
+        cmd += [
+            "-c:v",
+            "libx264",
+            "-preset",
+            "fast",
+            "-crf",
+            os.environ.get("OPENTALKING_QUICKTALK_TEMPLATE_CRF", "16").strip() or "16",
+            "-pix_fmt",
+            "yuv420p",
+            str(out),
+        ]
         run_cmd(cmd)
         return out
 
@@ -494,12 +505,28 @@ class RealtimeV3Worker:
                 frames, fps = self._load_template_frames(path, max_motion_seconds)
                 if not frames:
                     raise RuntimeError("no frames were decoded")
-                normalized = [
-                    frame
-                    if frame.shape[:2] == (primary_height, primary_width)
-                    else cv2.resize(frame, (primary_width, primary_height), interpolation=cv2.INTER_AREA)
-                    for frame in frames
-                ]
+                normalized = []
+                for frame in frames:
+                    source_height, source_width = frame.shape[:2]
+                    if (source_height, source_width) == (primary_height, primary_width):
+                        normalized.append(frame)
+                        continue
+                    # INTER_AREA is excellent for shrinking but noticeably
+                    # softens enlarged motion templates. LANCZOS preserves
+                    # more edge detail when a small accepted mismatch needs
+                    # to be scaled up to the primary output canvas.
+                    interpolation = (
+                        cv2.INTER_AREA
+                        if source_width >= primary_width and source_height >= primary_height
+                        else cv2.INTER_LANCZOS4
+                    )
+                    normalized.append(
+                        cv2.resize(
+                            frame,
+                            (primary_width, primary_height),
+                            interpolation=interpolation,
+                        )
+                    )
                 detections = self._load_or_build_cache_for(
                     path,
                     normalized,
@@ -681,8 +708,25 @@ class RealtimeV3Worker:
             strength = float(getattr(self, "face_sr_strength", 0.7))
             return (baseline + strength * previous).clamp(0.0, 1.0)
 
-        enhanced = enhancer.enhance(patch_t)
-        if enhanced.shape[-2:] == patch_t.shape[-2:]:
+        sr_input = patch_t
+        input_edge = max(0, int(getattr(self, "face_sr_input_edge", 0)))
+        source_height, source_width = patch_t.shape[-2:]
+        source_long_edge = max(source_height, source_width)
+        if input_edge > 0 and source_long_edge > input_edge:
+            scale = input_edge / float(source_long_edge)
+            sr_input = F.interpolate(
+                patch_t.unsqueeze(0),
+                size=(
+                    max(1, int(round(source_height * scale))),
+                    max(1, int(round(source_width * scale))),
+                ),
+                mode="bicubic",
+                align_corners=False,
+                antialias=True,
+            ).squeeze(0)
+
+        enhanced = enhancer.enhance(sr_input)
+        if enhanced.shape[-2:] == sr_input.shape[-2:]:
             if state is not None:
                 state.face_sr_previous_detail = None
                 state.face_sr_frame_index = 0
@@ -1006,6 +1050,7 @@ class MultiFaceRealtimeV3Worker(RealtimeV3Worker):
             self.face_sr_temporal_alpha,
             self.face_sr_min_roi_edge,
             self.face_sr_interval,
+            self.face_sr_input_edge,
         ) = face_sr_parameters()
         self.input_names = self.v2.model_backend.input_names
         self.frames, self.fps = self._load_template_frames(template_video, max_template_seconds)

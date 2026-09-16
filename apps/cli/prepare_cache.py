@@ -85,13 +85,35 @@ def _resolve_avatar_relative_path(avatar_dir: Path, raw: object) -> Path | None:
     return path
 
 
+def _is_generated_quicktalk_template(avatar_dir: Path, path: Path) -> bool:
+    """Return whether *path* is a generated, resolution-specific template."""
+
+    try:
+        relative = path.resolve().relative_to(avatar_dir.resolve())
+    except ValueError:
+        return False
+    return (
+        len(relative.parts) == 2
+        and relative.parts[0] == "quicktalk"
+        and relative.name.startswith("template_")
+        and relative.suffix.lower() == ".mp4"
+    )
+
+
 def _resolve_quicktalk_template_source(avatar_dir: Path, manifest: dict) -> TemplateSource | None:
     metadata = _manifest_metadata(manifest)
     quicktalk = _quicktalk_metadata(manifest)
-    for source in (quicktalk, metadata):
+    generated_fallbacks: list[Path] = []
+    # Rebuild HD caches from original avatar media whenever it is available.
+    # A generated quicktalk/template_900.mp4 is only a last-resort source;
+    # upscaling it cannot recover the detail already discarded at 900 px.
+    for source in (metadata, quicktalk):
         for key in ("template_video", "source_video"):
             path = _resolve_avatar_relative_path(avatar_dir, source.get(key))
             if path is not None and path.is_file():
+                if _is_generated_quicktalk_template(avatar_dir, path):
+                    generated_fallbacks.append(path)
+                    continue
                 return TemplateSource(path=path, mode="video")
     for name in ("idle.mp4", "idle.mov", "idle.webm", "idle.avi", "source.mp4"):
         path = (avatar_dir / name).resolve()
@@ -105,6 +127,8 @@ def _resolve_quicktalk_template_source(avatar_dir: Path, manifest: dict) -> Temp
         path = (avatar_dir / name).resolve()
         if path.is_file():
             return TemplateSource(path=path, mode="image")
+    if generated_fallbacks:
+        return TemplateSource(path=generated_fallbacks[0], mode="video")
     return None
 
 
