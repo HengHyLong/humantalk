@@ -395,12 +395,7 @@ async def test_dify_retriever_uses_official_dataset_retrieve_contract(monkeypatc
         "Content-Type": "application/json",
     }
     assert captured["json"]["query"] == "服务中心在哪里？"  # type: ignore[index]
-    assert captured["json"]["retrieval_model"]["score_threshold"] == 0.45  # type: ignore[index]
-    assert captured["json"]["retrieval_model"]["score_threshold_enabled"] is False  # type: ignore[index]
-    assert captured["json"]["retrieval_model"]["reranking_model"] == {  # type: ignore[index]
-        "reranking_provider_name": "langgenius/huggingface_tei/huggingface_tei",
-        "reranking_model_name": "bge-reranker-large",
-    }
+    assert captured["json"] == {"query": "服务中心在哪里？"}
     assert len(result.sources) == 1
     assert result.sources[0].title == "服务指南.docx"
     assert result.sources[0].score == 0.93

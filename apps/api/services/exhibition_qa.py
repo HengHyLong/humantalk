@@ -163,35 +163,13 @@ class DifyKnowledgeRetriever:
         if not self.base_url or not self.api_key or not self.targets:
             return RetrievalResult(provider="dify_unconfigured")
 
-        retrieval_model: dict[str, Any] = {
-            "search_method": self.search_method,
-            "reranking_enable": True,
-            "top_k": self.top_k,
-            # Let Dify return the post-reranking candidates first.  Applying
-            # the threshold in Dify can discard a semantically relevant
-            # candidate before reranking, even when the UI has Score
-            # threshold disabled.  The response is filtered locally below.
-            "score_threshold_enabled": False,
-            "score_threshold": self.score_threshold,
-        }
-        if self.reranking_provider_name and self.reranking_model_name:
-            retrieval_model.update(
-                {
-                    "reranking_mode": None,
-                    "reranking_model": {
-                        "reranking_provider_name": self.reranking_provider_name,
-                        "reranking_model_name": self.reranking_model_name,
-                    },
-                }
-            )
-        else:
-            logger.warning(
-                "Dify reranking model is not configured; provider may return an uncalibrated score"
-            )
-        payload = {
-            "query": question[:250],
-            "retrieval_model": retrieval_model,
-        }
+        # Use the retrieval configuration saved on the Dify dataset.  Some
+        # self-hosted Dify versions return no semantic candidates when the
+        # retrieve API is sent an explicit retrieval_model override, while
+        # the same query works when only `query` is sent (the behavior used by
+        # the Dify console).  Apply QA score filtering locally after Dify
+        # returns its post-reranking scores.
+        payload = {"query": question[:250]}
         try:
             async with httpx.AsyncClient(timeout=self.timeout_sec) as client:
                 responses = await asyncio.gather(
