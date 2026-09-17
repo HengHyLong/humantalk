@@ -167,7 +167,11 @@ class DifyKnowledgeRetriever:
             "search_method": self.search_method,
             "reranking_enable": True,
             "top_k": self.top_k,
-            "score_threshold_enabled": True,
+            # Let Dify return the post-reranking candidates first.  Applying
+            # the threshold in Dify can discard a semantically relevant
+            # candidate before reranking, even when the UI has Score
+            # threshold disabled.  The response is filtered locally below.
+            "score_threshold_enabled": False,
             "score_threshold": self.score_threshold,
         }
         if self.reranking_provider_name and self.reranking_model_name:
