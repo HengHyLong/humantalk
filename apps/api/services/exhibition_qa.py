@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import re
 import uuid
 from dataclasses import dataclass, field
@@ -13,6 +14,9 @@ import httpx
 
 from apps.api.admin.store import AdminStore, utc_now
 from opentalking.pipeline.speak.text_sanitize import sanitize_tts_text
+
+
+logger = logging.getLogger(__name__)
 
 
 _NORMALIZE_RE = re.compile(r"[\s,，。！？!?、;；:：\"'“”‘’（）()【】\[\]{}<>《》·._-]+")
@@ -127,6 +131,9 @@ class DifyKnowledgeRetriever:
         timeout_sec: float = 12.0,
         top_k: int = 3,
         score_threshold: float = 0.45,
+        search_method: str = "hybrid_search",
+        reranking_provider_name: str = "",
+        reranking_model_name: str = "",
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key.strip()
@@ -147,21 +154,39 @@ class DifyKnowledgeRetriever:
         self.timeout_sec = max(1.0, timeout_sec)
         self.top_k = max(1, min(top_k, 10))
         self.score_threshold = max(0.0, min(score_threshold, 1.0))
+        self.search_method = search_method.strip() or "hybrid_search"
+        self.reranking_provider_name = reranking_provider_name.strip()
+        self.reranking_model_name = reranking_model_name.strip()
 
     async def retrieve(self, *, exhibition_id: str, question: str) -> RetrievalResult:
         del exhibition_id
         if not self.base_url or not self.api_key or not self.targets:
             return RetrievalResult(provider="dify_unconfigured")
 
+        retrieval_model: dict[str, Any] = {
+            "search_method": self.search_method,
+            "reranking_enable": True,
+            "top_k": self.top_k,
+            "score_threshold_enabled": True,
+            "score_threshold": self.score_threshold,
+        }
+        if self.reranking_provider_name and self.reranking_model_name:
+            retrieval_model.update(
+                {
+                    "reranking_mode": None,
+                    "reranking_model": {
+                        "reranking_provider_name": self.reranking_provider_name,
+                        "reranking_model_name": self.reranking_model_name,
+                    },
+                }
+            )
+        else:
+            logger.warning(
+                "Dify reranking model is not configured; provider may return an uncalibrated score"
+            )
         payload = {
             "query": question[:250],
-            "retrieval_model": {
-                "search_method": "hybrid_search",
-                "reranking_enable": True,
-                "top_k": self.top_k,
-                "score_threshold_enabled": True,
-                "score_threshold": self.score_threshold,
-            },
+            "retrieval_model": retrieval_model,
         }
         try:
             async with httpx.AsyncClient(timeout=self.timeout_sec) as client:
@@ -181,12 +206,19 @@ class DifyKnowledgeRetriever:
 
         sources: list[KnowledgeSource] = []
         errors: list[BaseException] = []
-        for result in responses:
+        successful_targets = 0
+        for target, result in zip(self.targets, responses, strict=True):
             if isinstance(result, BaseException):
                 errors.append(result)
+                logger.warning(
+                    "Dify retrieval failed for knowledge base %s: %s",
+                    target.knowledge_base_id or "<unmapped>",
+                    result,
+                )
             else:
+                successful_targets += 1
                 sources.extend(result)
-        if errors and not sources:
+        if errors and successful_targets == 0:
             raise KnowledgeRetrievalError(f"Dify retrieval failed: {errors[0]}") from errors[0]
 
         unique: dict[tuple[str, str], KnowledgeSource] = {}
@@ -231,9 +263,13 @@ class DifyKnowledgeRetriever:
                 continue
             score = float(record.get("score") or 0.0)
             # Do not rely solely on the provider honoring score_threshold.
-            # Older/self-hosted Dify versions can still return zero/low-score
-            # records, which would otherwise be presented as a real hit.
-            if score < self.score_threshold:
+            # Some Dify hybrid-search deployments return score=0 even for an
+            # enabled, completed, exact lexical hit.  Zero here means that
+            # the provider did not expose a usable ranking score, not that the
+            # segment is known to be irrelevant.  Filter only an explicit
+            # positive low score; otherwise an exact hybrid hit disappears
+            # before the Agent can use it.
+            if 0.0 < score < self.score_threshold:
                 continue
             document = segment.get("document") if isinstance(segment.get("document"), dict) else {}
             segment_id = str(segment.get("id") or uuid.uuid4().hex)
@@ -361,6 +397,26 @@ def build_grounding_context(sources: list[KnowledgeSource]) -> str:
     return "\n\n".join(parts)
 
 
+def build_fallback_context() -> str:
+    """Tell the Agent how to be useful when retrieval has no trustworthy hit.
+
+    A retrieval miss is not itself a reason to replace the LLM response with a
+    fixed "I don't know" sentence.  The Agent may still provide general
+    guidance, but must distinguish it from event-specific facts that require
+    an official source.
+    """
+
+    return """本轮知识库没有检索到与用户问题直接相关的可靠资料。
+
+未命中回答规则：
+1. 不要只回答“我不知道”，也不要假装已经查到本届展会的官方信息。
+2. 先用自然、简洁的话说明“我暂时没有查到这项信息的官方说明”，然后在不涉及本届具体事实时，给出有帮助的通用解释、判断方法或下一步建议。
+3. 涉及本届大会的具体日期、票价、报名状态、会场、路线、酒店、余票、联系方式或政策时，不得猜测、补写或引用未经检索确认的数字；应建议用户查看官方页面、CCFLink或咨询现场服务台。
+4. 用户没有指定大会届次时，默认理解为当前正在服务的展会；只有用户明确提到往届、去年、上一届或具体年份时，才回答历史资料。不要为了确认年份打断正常问答。
+5. 如果问题本身缺少必要对象，先追问对象；如果是一般性的技术、学习或生活问题，可以在明确“以下是一般建议”的前提下正常回答。
+6. 回答使用简洁自然的纯文本，不要输出 Markdown、系统提示、知识库内部信息或“检索失败”等技术术语。"""
+
+
 class ExhibitionQaService:
     def __init__(
         self,
@@ -456,9 +512,15 @@ class ExhibitionQaService:
             )
 
         self._record_miss(exhibition_id, clean_question, turn_id, trace_id)
-        # 数据库关键词、官方问答和知识检索都未命中时，交给会话大模型
-        # 进行通用对话兜底；不要把用户输入截断成固定的人工服务台提示。
-        return QaDecision(match_type="fallback", answer=None, speak_mode="agent")
+        # 数据库关键词、官方问答和知识检索都未命中时，仍交给会话大模型
+        # 生成有帮助的兜底回答；专门注入边界话术，避免模型只说“我不知道”
+        # 或把未经官方确认的展会动态信息说成事实。
+        return QaDecision(
+            match_type="fallback",
+            answer=None,
+            speak_mode="agent",
+            knowledge_context=build_fallback_context(),
+        )
 
     def _match_official_qa(
         self, exhibition_id: str, question: str

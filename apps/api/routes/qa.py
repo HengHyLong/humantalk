@@ -169,7 +169,9 @@ def _record_exhibition_ids(record: dict[str, object]) -> list[str]:
 
 
 def _load_dify_registry(settings: object) -> dict[str, dict[str, object]]:
-    raw = str(_setting(settings, "agent_dify_knowledge_base_registry", "") or "").strip()
+    configured_raw = str(
+        _setting(settings, "agent_dify_knowledge_base_registry", "") or ""
+    ).strip()
     registry_path = str(_setting(settings, "agent_dify_registry_path", "") or "").strip()
     if not registry_path and hasattr(settings, "agent_knowledge_root"):
         knowledge_root = str(
@@ -177,34 +179,53 @@ def _load_dify_registry(settings: object) -> dict[str, dict[str, object]]:
             or "./data/knowledge"
         ).strip()
         registry_path = str(Path(knowledge_root) / "knowledge_base_registry.json")
-    if not raw and registry_path:
+
+    file_raw = ""
+    if registry_path:
         try:
-            raw = Path(registry_path).read_text(encoding="utf-8")
+            file_raw = Path(registry_path).read_text(encoding="utf-8")
         except (OSError, UnicodeError):
-            raw = ""
-    if not raw:
-        return {}
-    try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError:
-        return {}
-    if not isinstance(payload, dict):
-        return {}
+            file_raw = ""
+
     result: dict[str, dict[str, object]] = {}
-    for key, value in payload.items():
-        if not isinstance(value, dict):
-            continue
-        kb_id = _record_value(value, "knowledge_base_id", "knowledgeBaseId") or str(key).strip()
-        dataset_id = _record_value(value, "dify_dataset_id", "dataset_id", "datasetId")
-        if not kb_id or not dataset_id:
-            continue
-        result[kb_id] = {
-            "knowledge_base_id": kb_id,
-            "dify_dataset_id": dataset_id,
-            "exhibition_id": _record_value(value, "exhibition_id", "exhibitionId"),
-            "exhibition_ids": _record_exhibition_ids(value),
-            "namespace_id": _record_value(value, "namespace_id", "namespaceId"),
-        }
+
+    def merge(raw: str) -> None:
+        if not raw:
+            return
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            return
+        if not isinstance(payload, dict):
+            return
+        for key, value in payload.items():
+            if not isinstance(value, dict):
+                continue
+            kb_id = (
+                _record_value(value, "knowledge_base_id", "knowledgeBaseId")
+                or str(key).strip()
+            )
+            dataset_id = _record_value(
+                value,
+                "dify_dataset_id",
+                "dataset_id",
+                "datasetId",
+            )
+            if not kb_id or not dataset_id:
+                continue
+            result[kb_id] = {
+                "knowledge_base_id": kb_id,
+                "dify_dataset_id": dataset_id,
+                "exhibition_id": _record_value(value, "exhibition_id", "exhibitionId"),
+                "exhibition_ids": _record_exhibition_ids(value),
+                "namespace_id": _record_value(value, "namespace_id", "namespaceId"),
+            }
+
+    # Keep the route resolver consistent with DifyKnowledgeIndex: environment
+    # mappings provide defaults, while the Admin-managed registry file can add
+    # knowledge bases and override stale mappings without restarting the API.
+    merge(configured_raw)
+    merge(file_raw)
     return result
 
 
@@ -388,6 +409,13 @@ async def query_exhibition_qa(
             timeout_sec=float(_setting(settings, "dify_timeout_sec", 12.0)),
             top_k=int(_setting(settings, "qa_retrieval_top_k", 3)),
             score_threshold=float(_setting(settings, "qa_retrieval_score_threshold", 0.55)),
+            search_method=str(_setting(settings, "agent_dify_search_method", "hybrid_search")),
+            reranking_provider_name=str(
+                _setting(settings, "agent_dify_reranking_provider_name", "")
+            ),
+            reranking_model_name=str(
+                _setting(settings, "agent_dify_reranking_model_name", "")
+            ),
         )
     else:
         local_kb_ids = _resolve_local_kb_ids(store, resolved_exhibition_id)

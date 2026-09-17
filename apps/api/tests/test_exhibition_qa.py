@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
+import httpx
 import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
@@ -291,6 +292,47 @@ def test_qa_loads_default_dify_registry_from_knowledge_root(tmp_path) -> None:
     assert targets[0].namespace_id == "namespace-cncc"
 
 
+def test_qa_merges_inline_and_admin_managed_dify_registries(monkeypatch) -> None:
+    managed_registry = json.dumps(
+        {
+            "kb-admin": {
+                "dify_dataset_id": "dataset-admin",
+                "exhibition_ids": ["expo-2026"],
+                "namespace_id": "ns-admin",
+            },
+            "kb-inline": {
+                "dify_dataset_id": "dataset-inline-updated",
+                "exhibition_ids": ["expo-2026"],
+                "namespace_id": "ns-inline-updated",
+            },
+        }
+    )
+    monkeypatch.setattr(
+        qa_routes.Path,
+        "read_text",
+        lambda self, **kwargs: managed_registry,
+    )
+    settings = SimpleNamespace(
+        agent_dify_knowledge_base_registry=json.dumps(
+            {
+                "kb-inline": {
+                    "dify_dataset_id": "dataset-inline-stale",
+                    "exhibition_ids": ["expo-2026"],
+                    "namespace_id": "ns-inline-stale",
+                }
+            }
+        ),
+        agent_dify_registry_path="managed-registry.json",
+    )
+
+    registry = qa_routes._load_dify_registry(settings)
+
+    assert set(registry) == {"kb-inline", "kb-admin"}
+    assert registry["kb-admin"]["dify_dataset_id"] == "dataset-admin"
+    assert registry["kb-inline"]["dify_dataset_id"] == "dataset-inline-updated"
+    assert registry["kb-inline"]["namespace_id"] == "ns-inline-updated"
+
+
 @pytest.mark.asyncio
 async def test_dify_retriever_uses_official_dataset_retrieve_contract(monkeypatch) -> None:
     captured: dict[str, object] = {}
@@ -341,6 +383,8 @@ async def test_dify_retriever_uses_official_dataset_retrieve_contract(monkeypatc
         dataset_id="dataset-1",
         top_k=3,
         score_threshold=0.45,
+        reranking_provider_name="langgenius/huggingface_tei/huggingface_tei",
+        reranking_model_name="bge-reranker-large",
     )
 
     result = await retriever.retrieve(exhibition_id="expo-2026", question="服务中心在哪里？")
@@ -352,9 +396,65 @@ async def test_dify_retriever_uses_official_dataset_retrieve_contract(monkeypatc
     }
     assert captured["json"]["query"] == "服务中心在哪里？"  # type: ignore[index]
     assert captured["json"]["retrieval_model"]["score_threshold"] == 0.45  # type: ignore[index]
+    assert captured["json"]["retrieval_model"]["reranking_model"] == {  # type: ignore[index]
+        "reranking_provider_name": "langgenius/huggingface_tei/huggingface_tei",
+        "reranking_model_name": "bge-reranker-large",
+    }
     assert len(result.sources) == 1
     assert result.sources[0].title == "服务指南.docx"
     assert result.sources[0].score == 0.93
+
+
+@pytest.mark.asyncio
+async def test_dify_retriever_keeps_zero_score_hybrid_hit(monkeypatch) -> None:
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self):
+            return {
+                "records": [
+                    {
+                        "segment": {
+                            "id": "seg-exact",
+                            "document_id": "doc-cncc",
+                            "content": "问题：中国计算机大会在哪里举办？\n标准答案：CNCC2026在成都举办。",
+                            "document": {"name": "CNCC2026_Dify_检索优化版.md"},
+                        },
+                        # Dify hybrid search can return zero when no usable
+                        # ranking score is exposed for an exact lexical hit.
+                        "score": 0.0,
+                    }
+                ]
+            }
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url, *, headers, json):
+            del url, headers, json
+            return FakeResponse()
+
+    monkeypatch.setattr(exhibition_qa_module.httpx, "AsyncClient", lambda **kwargs: FakeClient())
+    retriever = DifyKnowledgeRetriever(
+        base_url="https://dify.example/v1",
+        api_key="server-key",
+        dataset_id="dataset-cncc-test",
+        score_threshold=0.55,
+    )
+
+    result = await retriever.retrieve(
+        exhibition_id="expo-2026",
+        question="中国计算机大会在哪里举办？",
+    )
+
+    assert len(result.sources) == 1
+    assert result.sources[0].title == "CNCC2026_Dify_检索优化版.md"
+    assert result.sources[0].score == 0.0
 
 
 @pytest.mark.asyncio
@@ -417,6 +517,54 @@ async def test_dify_retriever_merges_multiple_datasets_and_keeps_source_scope(mo
     assert [source.namespace_id for source in result.sources] == ["ns-b", "ns-a"]
     assert result.sources[0].score == 0.91
     assert result.provider == "dify"
+
+
+@pytest.mark.asyncio
+async def test_dify_retriever_keeps_successful_empty_result_when_another_dataset_fails(
+    monkeypatch,
+) -> None:
+    class FakeResponse:
+        def __init__(self, dataset_id: str) -> None:
+            self.dataset_id = dataset_id
+
+        def raise_for_status(self) -> None:
+            if self.dataset_id == "dataset-broken":
+                request = httpx.Request("POST", "https://dify.example/retrieve")
+                response = httpx.Response(503, request=request)
+                raise httpx.HTTPStatusError(
+                    "provider unavailable",
+                    request=request,
+                    response=response,
+                )
+
+        def json(self):
+            return {"records": []}
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url, *, headers, json):
+            del headers, json
+            return FakeResponse(url.rsplit("/", 2)[-2])
+
+    monkeypatch.setattr(exhibition_qa_module.httpx, "AsyncClient", lambda **kwargs: FakeClient())
+    retriever = DifyKnowledgeRetriever(
+        base_url="https://dify.example/v1",
+        api_key="server-key",
+        targets=[
+            DifyKnowledgeTarget(dataset_id="dataset-ready", knowledge_base_id="kb-ready"),
+            DifyKnowledgeTarget(dataset_id="dataset-broken", knowledge_base_id="kb-broken"),
+        ],
+    )
+
+    result = await retriever.retrieve(exhibition_id="expo-2026", question="没有命中的问题")
+
+    assert result.sources == []
+    assert result.provider == "dify_partial"
 
 
 @pytest.mark.asyncio
@@ -595,6 +743,8 @@ async def test_empty_retrieval_accumulates_same_normalized_miss(tmp_path) -> Non
         assert result.match_type == "fallback"
         assert result.speak_mode == "agent"
         assert result.answer is None
+        assert "不要只回答“我不知道”" in (result.knowledge_context or "")
+        assert "不得猜测" in (result.knowledge_context or "")
 
     misses = store.list_records("miss_pool", exhibition_id="expo-2026")
     assert len(misses) == 1

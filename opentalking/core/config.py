@@ -93,6 +93,8 @@ def _flatten_config(raw: dict[str, Any] | None) -> dict[str, Any]:
             "dify_timeout_sec": "agent_dify_timeout_sec",
             "dify_search_method": "agent_dify_search_method",
             "dify_score_threshold": "agent_dify_score_threshold",
+            "dify_reranking_provider_name": "agent_dify_reranking_provider_name",
+            "dify_reranking_model_name": "agent_dify_reranking_model_name",
             "dify_default_exhibition_id": "agent_dify_default_exhibition_id",
             "dify_default_namespace_id": "agent_dify_default_namespace_id",
         },
@@ -509,6 +511,8 @@ class Settings(BaseSettings):
     agent_dify_timeout_sec: float = Field(default=15.0)
     agent_dify_search_method: str = Field(default="hybrid_search")
     agent_dify_score_threshold: float = Field(default=0.0)
+    agent_dify_reranking_provider_name: str = Field(default="")
+    agent_dify_reranking_model_name: str = Field(default="")
     agent_dify_default_exhibition_id: str = Field(default="current")
     agent_dify_default_namespace_id: str = Field(default="default")
 
