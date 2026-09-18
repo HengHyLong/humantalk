@@ -134,6 +134,7 @@ class DifyKnowledgeRetriever:
         search_method: str = "hybrid_search",
         reranking_provider_name: str = "",
         reranking_model_name: str = "",
+        retrieval_context: str = "",
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key.strip()
@@ -157,6 +158,7 @@ class DifyKnowledgeRetriever:
         self.search_method = search_method.strip() or "hybrid_search"
         self.reranking_provider_name = reranking_provider_name.strip()
         self.reranking_model_name = reranking_model_name.strip()
+        self.retrieval_context = retrieval_context.strip()
 
     async def retrieve(self, *, exhibition_id: str, question: str) -> RetrievalResult:
         del exhibition_id
@@ -169,7 +171,10 @@ class DifyKnowledgeRetriever:
         # the same query works when only `query` is sent (the behavior used by
         # the Dify console).  Apply QA score filtering locally after Dify
         # returns its post-reranking scores.
-        payload = {"query": question[:250]}
+        query = question[:250]
+        if self.retrieval_context:
+            query = f"{self.retrieval_context}\n用户问题：{query}"
+        payload = {"query": query}
         try:
             async with httpx.AsyncClient(timeout=self.timeout_sec) as client:
                 responses = await asyncio.gather(

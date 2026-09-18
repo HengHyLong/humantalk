@@ -123,6 +123,20 @@ def _resolve_dataset_id(settings: object, store: object, exhibition_id: str) -> 
     return str(_setting(settings, "dify_default_dataset_id", "") or "").strip()
 
 
+def _build_dify_retrieval_context(store: object, exhibition_id: str) -> str:
+    """Give Dify the current exhibition entity for generic spoken questions."""
+
+    exhibition = getattr(store, "get_record")("exhibitions", exhibition_id) or {}
+    name = _record_value(exhibition, "name", "title")
+    code = _record_value(exhibition, "code", "shortName", "short_name")
+    aliases = _clean_ids(exhibition.get("aliases"))
+    terms = [value for value in [name, code, *aliases] if value]
+    if not terms:
+        return ""
+    unique_terms = list(dict.fromkeys(terms))
+    return f"当前展会名称和常用称呼：{'、'.join(unique_terms)}。"
+
+
 def _clean_ids(value: object) -> list[str]:
     if isinstance(value, (list, tuple, set)):
         values = value
@@ -406,6 +420,9 @@ async def query_exhibition_qa(
             base_url=dify_base_url,
             api_key=dify_key,
             targets=dify_targets,
+            retrieval_context=_build_dify_retrieval_context(
+                store, resolved_exhibition_id
+            ),
             timeout_sec=float(_setting(settings, "dify_timeout_sec", 12.0)),
             top_k=int(_setting(settings, "qa_retrieval_top_k", 3)),
             score_threshold=float(_setting(settings, "qa_retrieval_score_threshold", 0.55)),

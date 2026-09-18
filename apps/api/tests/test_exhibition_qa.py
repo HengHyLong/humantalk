@@ -454,6 +454,45 @@ async def test_dify_retriever_keeps_zero_score_hybrid_hit(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_dify_retriever_adds_current_exhibition_context_to_generic_question(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self):
+            return {"records": []}
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url, *, headers, json):
+            del url, headers
+            captured.update(json)
+            return FakeResponse()
+
+    monkeypatch.setattr(exhibition_qa_module.httpx, "AsyncClient", lambda **kwargs: FakeClient())
+    retriever = DifyKnowledgeRetriever(
+        base_url="https://dify.example/v1",
+        api_key="server-key",
+        dataset_id="dataset-cncc-test",
+        retrieval_context="当前展会名称和常用称呼：中国计算机大会、CNCC2026。",
+    )
+
+    await retriever.retrieve(exhibition_id="expo-2026", question="展会在哪里举办？")
+
+    assert captured["query"] == (
+        "当前展会名称和常用称呼：中国计算机大会、CNCC2026。\n"
+        "用户问题：展会在哪里举办？"
+    )
+
+
+@pytest.mark.asyncio
 async def test_dify_retriever_merges_multiple_datasets_and_keeps_source_scope(monkeypatch) -> None:
     captured_urls: list[str] = []
 
