@@ -86,6 +86,11 @@ memory:
 model:
   torch_device: cpu
   default_model: wav2lip
+quicktalk:
+  # Long speech loops the selected template; prewarm only needs a short window.
+  max_template_seconds: 8.0
+  motion_max_seconds: 8.0
+  max_motion_clips: 4
 models:
   mock:
     backend: mock

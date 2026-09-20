@@ -352,7 +352,9 @@ def _quicktalk_motion_templates(avatar_path: Path, metadata: dict[str, Any]) -> 
     declared = metadata.get("motion_clips")
     if not isinstance(declared, dict):
         return ()
-    limit = _positive_int_env("OPENTALKING_QUICKTALK_MOTION_MAX_CLIPS", 4)
+    settings = _quicktalk_settings()
+    configured_limit = getattr(settings, "quicktalk_max_motion_clips", 4) if settings is not None else 4
+    limit = _positive_int_env("OPENTALKING_QUICKTALK_MOTION_MAX_CLIPS", int(configured_limit or 4))
     resolved: list[Path] = []
     seen: set[Path] = set()
     for state in ("talk", "emphasis"):
@@ -558,7 +560,10 @@ class QuickTalkAdapter:
         self._resolution = int(_env_value("OPENTALKING_QUICKTALK_RESOLUTION", "256"))
         self._neck_fade_start = float(_env_value("OPENTALKING_QUICKTALK_NECK_FADE_START", "0.72"))
         self._neck_fade_end = float(_env_value("OPENTALKING_QUICKTALK_NECK_FADE_END", "0.88"))
-        self._max_template_seconds_env = _env_value("OPENTALKING_QUICKTALK_MAX_TEMPLATE_SECONDS")
+        self._max_template_seconds_env = _env_value(
+            "OPENTALKING_QUICKTALK_MAX_TEMPLATE_SECONDS",
+            str(getattr(settings, "quicktalk_max_template_seconds", 8.0) if settings is not None else 8.0),
+        )
         self._model_backend = _env_value(
             "OPENTALKING_QUICKTALK_MODEL_BACKEND",
             str(getattr(settings, "quicktalk_model_backend", "") or "").strip()
@@ -720,7 +725,7 @@ class QuickTalkAdapter:
         )
         max_motion_seconds = _optional_positive_float_env(
             "OPENTALKING_QUICKTALK_MOTION_MAX_SECONDS",
-            8.0,
+            float(getattr(_quicktalk_settings(), "quicktalk_motion_max_seconds", 8.0) or 8.0),
         )
         if motion_template_videos:
             log.info(

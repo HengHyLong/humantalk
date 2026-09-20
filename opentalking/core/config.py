@@ -68,6 +68,11 @@ def _flatten_config(raw: dict[str, Any] | None) -> dict[str, Any]:
             "frame_num": "flashhead_frame_num",
             "chunk_samples": "flashhead_chunk_samples",
         },
+        "quicktalk": {
+            "max_template_seconds": "quicktalk_max_template_seconds",
+            "motion_max_seconds": "quicktalk_motion_max_seconds",
+            "max_motion_clips": "quicktalk_max_motion_clips",
+        },
         "llm": {
             "provider": "llm_provider",
             "base_url": "llm_base_url",
@@ -469,6 +474,13 @@ class Settings(BaseSettings):
     quicktalk_hubert_device: str = ""
     quicktalk_worker_cache: bool = True
     quicktalk_slice_len: int = 0
+    # QuickTalk keeps one restore context per template frame.  Preparing an
+    # entire uploaded 30s/120s video therefore consumes a large amount of
+    # memory without increasing the maximum live speaking duration: the
+    # selected template is looped while audio is being rendered.
+    quicktalk_max_template_seconds: float = 8.0
+    quicktalk_motion_max_seconds: float = 8.0
+    quicktalk_max_motion_clips: int = 4
 
     llm_provider: str = "openai_compatible"
     llm_base_url: str = ""

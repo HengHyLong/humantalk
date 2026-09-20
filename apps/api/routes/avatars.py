@@ -198,6 +198,21 @@ def _video_media_type(path: Path) -> str:
     return "video/mp4"
 
 
+def _read_video_fps(path: Path) -> float:
+    """Read a prepared template FPS without making OpenCV a module import."""
+    try:
+        import cv2
+
+        capture = cv2.VideoCapture(str(path))
+        try:
+            fps = float(capture.get(cv2.CAP_PROP_FPS) or 0.0)
+        finally:
+            capture.release()
+        return fps if fps > 0 else 25.0
+    except Exception:  # noqa: BLE001 - cache validation must stay best-effort
+        return 25.0
+
+
 def _video_driver_paths(avatar_dir: Path) -> tuple[Path, Path, Path | None] | None:
     try:
         raw = json.loads((avatar_dir / "manifest.json").read_text(encoding="utf-8"))
@@ -854,6 +869,7 @@ def _quicktalk_cache_hit_result(
     manifest: dict[str, Any],
     *,
     max_long_edge: int,
+    max_template_seconds: float | None = None,
     verify: bool,
 ) -> PreparedAssetResult | None:
     width, height = _target_video_size(manifest, max_long_edge=max_long_edge)
@@ -864,6 +880,14 @@ def _quicktalk_cache_hit_result(
         return None
     source = _resolve_quicktalk_template_source(avatar_dir, manifest)
     info = _validate_quicktalk_face_cache(cache_path) if verify else None
+    if max_template_seconds is not None and info is not None:
+        # Cache filenames are dimension-based, so a cache generated before a
+        # duration-limit change can otherwise be reused indefinitely.  Reject
+        # oversized caches and let the caller rebuild a bounded template.
+        fps = _read_video_fps(template_path)
+        max_frames = max(1, int(round(float(max_template_seconds) * fps)))
+        if info.frames > max_frames:
+            return None
     return PreparedAssetResult(
         avatar_id=str(manifest.get("id") or avatar_dir.name),
         status="hit",
@@ -1214,10 +1238,17 @@ def _prepare_quicktalk_prewarm(
         "OPENTALKING_QUICKTALK_MAX_LONG_EDGE",
         900,
     )
+    max_template_seconds = _settings_optional_float(
+        settings,
+        "quicktalk_max_template_seconds",
+        "OPENTALKING_QUICKTALK_MAX_TEMPLATE_SECONDS",
+        8.0,
+    )
     cache = None if overwrite else _quicktalk_cache_hit_result(
         avatar_dir,
         manifest,
         max_long_edge=max_long_edge,
+        max_template_seconds=max_template_seconds,
         verify=True,
     )
     if cache is None:
@@ -1226,12 +1257,7 @@ def _prepare_quicktalk_prewarm(
             manifest=manifest,
             rebuild=_quicktalk_cache_builder(settings),
             max_long_edge=max_long_edge,
-            max_template_seconds=_settings_optional_float(
-                settings,
-                "quicktalk_max_template_seconds",
-                "OPENTALKING_QUICKTALK_MAX_TEMPLATE_SECONDS",
-                None,
-            ),
+            max_template_seconds=max_template_seconds,
             overwrite=overwrite,
             verify=True,
         )

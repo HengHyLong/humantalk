@@ -803,7 +803,7 @@ def test_quicktalk_model_root_prefers_asset_root_setting_and_env(tmp_path, monke
     ).resolve()
 
 
-def test_quicktalk_avatar_prewarm_uses_full_video_by_default(
+def test_quicktalk_avatar_prewarm_bounds_long_video_templates_by_default(
     tmp_path,
     monkeypatch,
 ):
@@ -902,8 +902,8 @@ def test_quicktalk_avatar_prewarm_uses_full_video_by_default(
     assert payload["status"] == "ready"
     assert payload["cache"]["status"] == "generated"
     assert payload["cache"]["frames"] == 75
-    assert writes[0]["max_seconds"] is None
-    assert max_seconds_seen == [None]
+    assert writes[0]["max_seconds"] == 8.0
+    assert max_seconds_seen == [8.0]
     assert calls
 
 def test_quicktalk_avatar_prewarm_generates_cache_and_calls_omnirt(
