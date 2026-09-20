@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import logging
 import os
 import re
 import secrets
@@ -60,6 +61,7 @@ from apps.cli.prepare_cache import (
 from opentalking.avatar.wav2lip_preload import collect_wav2lip_preload_payload_for_avatar
 
 router = APIRouter(prefix="/avatars", tags=["avatars"])
+log = logging.getLogger(__name__)
 
 _MOTION_STATES: tuple[MotionState, ...] = (
     "idle",
@@ -986,7 +988,22 @@ def _prewarm_local_adapter(
     device = _local_adapter_device(model, settings)
     adapter.load_model(device)
     avatar_state = adapter.load_avatar(str(avatar_dir))
-    warmed = _call_adapter_warmup(adapter, avatar_state)
+    warmup_error = ""
+    try:
+        warmed = _call_adapter_warmup(adapter, avatar_state)
+    except Exception as exc:  # noqa: BLE001 - prewarm must not block cold start
+        # Loading the model/avatar is the required part of prewarm.  The dummy
+        # inference is only an optimization and can fail transiently (CUDA
+        # pressure, provider startup, or a device-specific kernel).  Keep the
+        # loaded state available so the first real request can cold-start.
+        warmed = False
+        warmup_error = str(exc).strip() or exc.__class__.__name__
+        log.warning(
+            "local %s prewarm inference failed; keeping loaded avatar for cold start: %s",
+            model,
+            avatar_dir,
+            exc_info=True,
+        )
     worker = getattr(avatar_state, "worker", None)
     frames = None
     restore_contexts = getattr(worker, "restore_contexts", None)
@@ -1006,6 +1023,9 @@ def _prewarm_local_adapter(
         "warmed": warmed,
         "elapsed_ms": round((time.monotonic() - started) * 1000.0, 3),
     }
+    if warmup_error:
+        runtime["message"] = warmup_error
+        runtime["warmup_deferred"] = True
     if isinstance(preload_result, dict):
         runtime["preload"] = preload_result
     cache = {
@@ -1013,7 +1033,11 @@ def _prewarm_local_adapter(
         "status": "warmed" if warmed else "loaded",
         "source_mode": "local",
         "frames": frames,
-        "detail": "local adapter loaded avatar and ran warmup" if warmed else "local adapter loaded avatar",
+        "detail": (
+            "local adapter loaded avatar and ran warmup"
+            if warmed
+            else "local adapter loaded avatar; inference warmup deferred to first request"
+        ),
     }
     if model == "wav2lip":
         cache_dir = avatar_dir / "wav2lip"
@@ -1739,6 +1763,11 @@ async def prewarm_avatar(avatar_id: str, request: Request) -> dict[str, Any]:
                 overwrite=overwrite,
             )
         except Exception as exc:  # noqa: BLE001
+            log.exception(
+                "local %s prewarm failed before avatar load completed: avatar=%s",
+                model,
+                avatar_id,
+            )
             raise HTTPException(status_code=500, detail=f"failed to prewarm local {model}: {exc}") from exc
         runtime_status = "failed" if not bool(runtime.get("warmed", True)) else "ready"
         return {

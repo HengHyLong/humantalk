@@ -390,7 +390,7 @@ export function AvatarSelectionStage({
                 ) : null}
                 {modelConnected && prewarmState === "failed" ? (
                   <p className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800">
-                    资产准备失败，点击开始会重新尝试。
+                    预热未完成，点击开始会自动冷启动。
                   </p>
                 ) : null}
                 <button

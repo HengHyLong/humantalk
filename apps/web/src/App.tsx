@@ -2179,9 +2179,16 @@ export default function App() {
         if (seq === prewarmSeqRef.current) {
           const detail = error instanceof ApiError ? error.detail : null;
           const label = modelLabel(targetModel);
-          notify(detail ? `${label} 准备失败：${detail}` : `${label} 准备失败，首次生成会走冷启动。`, "error");
+          notify(
+            detail
+              ? `${label} 预热未完成，将在首次生成时冷启动：${detail}`
+              : `${label} 预热未完成，首次生成会自动冷启动。`,
+            "info",
+          );
         }
-        return false;
+        // Prewarm is an optimization.  Do not prevent a valid session from
+        // starting when the model can still load on the first real request.
+        return true;
       } finally {
         prewarmInFlightRef.current.delete(key);
       }

@@ -1445,6 +1445,42 @@ def test_avatar_prewarm_offloads_local_adapter_work(tmp_path, monkeypatch):
     assert offloaded == ["fake_local_backend"]
 
 
+def test_local_adapter_prewarm_keeps_loaded_avatar_when_warmup_fails(tmp_path, monkeypatch):
+    avatar = tmp_path / "local-quicktalk"
+    avatar.mkdir()
+
+    class FakeWorker:
+        restore_contexts = [object(), object()]
+
+    class FakeAdapter:
+        def load_model(self, device):
+            assert device == "cuda:0"
+
+        def load_avatar(self, avatar_path):
+            assert avatar_path == str(avatar)
+            return SimpleNamespace(worker=FakeWorker(), extra={})
+
+        def warmup(self, avatar_state):
+            del avatar_state
+            raise RuntimeError("dummy kernel failed")
+
+    monkeypatch.setattr(avatars, "get_adapter", lambda model: FakeAdapter())
+    monkeypatch.setattr(avatars, "_local_adapter_device", lambda model, settings: "cuda:0")
+
+    cache, runtime = avatars._prewarm_local_adapter(
+        "quicktalk",
+        avatar,
+        SimpleNamespace(),
+    )
+
+    assert cache["status"] == "loaded"
+    assert cache["frames"] == 2
+    assert "first request" in cache["detail"]
+    assert runtime["warmed"] is False
+    assert runtime["warmup_deferred"] is True
+    assert runtime["message"] == "dummy kernel failed"
+
+
 def test_wav2lip_local_frames_prewarm_reports_avatar_npz_cache(tmp_path, monkeypatch):
     avatar = tmp_path / "local-wav-frames"
     frames = avatar / "frames"

@@ -778,6 +778,15 @@ def test_frontend_treats_ready_cache_as_prepared_when_runtime_prewarm_fails():
     assert "资产已准备，运行时预热失败" in app
 
 
+def test_frontend_does_not_block_cold_start_when_prewarm_request_fails():
+    app = (WEB / "App.tsx").read_text(encoding="utf-8")
+    start = app.index('console.warn("Avatar prewarm failed"')
+    end = app.index("} finally", start)
+
+    assert "预热未完成，首次生成会自动冷启动。" in app
+    assert "return true;" in app[start:end]
+
+
 def test_avatar_grid_does_not_render_global_prewarm_failure_on_every_card():
     stage = (WEB / "components" / "AvatarSelectionStage.tsx").read_text(encoding="utf-8")
 
