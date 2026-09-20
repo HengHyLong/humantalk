@@ -186,6 +186,7 @@ def test_quicktalk_adapter_passes_uploaded_speaking_clips_to_shared_worker(
     assert captured["template_video"] == template.resolve()
     assert captured["motion_template_videos"] == (talk_a.resolve(), talk_b.resolve())
     assert captured["max_motion_seconds"] == 8.0
+    assert "face_sr_signature" not in captured
     quicktalk_adapter._WORKER_CACHE.clear()
 
 

@@ -801,7 +801,6 @@ class QuickTalkAdapter:
                             model_backend=self._model_backend,
                             motion_template_videos=motion_template_videos,
                             max_motion_seconds=max_motion_seconds,
-                            face_sr_signature=face_sr_signature,
                         )
                     except Exception as exc:  # noqa: BLE001
                         fallback_device = _fallback_quicktalk_device(self._device)
