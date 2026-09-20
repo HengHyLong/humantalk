@@ -10,11 +10,14 @@ import pytest
 
 from opentalking.core.types.frames import AudioChunk, VideoFrameData
 from opentalking.models.quicktalk.adapter import (
+    DEFAULT_QUICKTALK_MOTION_MAX_SECONDS,
+    MAX_QUICKTALK_MOTION_SECONDS,
     QuickTalkAdapter,
     _configured_quicktalk_device,
     _default_quicktalk_device,
     _filter_quicktalk_motion_templates,
     _quicktalk_idle_template,
+    _quicktalk_motion_max_seconds,
     _quicktalk_motion_templates,
 )
 
@@ -206,8 +209,21 @@ def test_quicktalk_adapter_passes_uploaded_speaking_clips_to_shared_worker(
     assert captured["template_video"] == template.resolve()
     assert captured["motion_template_videos"] == (talk_a.resolve(), talk_b.resolve())
     assert captured["idle_template_video"] == idle.resolve()
-    assert captured["max_motion_seconds"] == 8.0
+    assert captured["max_motion_seconds"] == DEFAULT_QUICKTALK_MOTION_MAX_SECONDS
     quicktalk_adapter._WORKER_CACHE.clear()
+
+
+def test_quicktalk_motion_duration_defaults_to_120_seconds_and_is_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("OPENTALKING_QUICKTALK_MOTION_MAX_SECONDS", raising=False)
+    assert _quicktalk_motion_max_seconds() == 120.0
+
+    monkeypatch.setenv("OPENTALKING_QUICKTALK_MOTION_MAX_SECONDS", "240")
+    assert _quicktalk_motion_max_seconds() == MAX_QUICKTALK_MOTION_SECONDS
+
+    monkeypatch.setenv("OPENTALKING_QUICKTALK_MOTION_MAX_SECONDS", "invalid")
+    assert _quicktalk_motion_max_seconds() == DEFAULT_QUICKTALK_MOTION_MAX_SECONDS
 
 
 def test_quicktalk_runtime_available_rejects_unavailable_explicit_cuda(

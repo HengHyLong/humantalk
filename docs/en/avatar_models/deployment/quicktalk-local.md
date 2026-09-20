@@ -52,6 +52,7 @@ export OPENTALKING_TORCH_DEVICE=cuda:0
 export OPENTALKING_MODEL_ROOT="${OPENTALKING_MODEL_ROOT:-$DIGITAL_HUMAN_HOME/models}"
 export OPENTALKING_QUICKTALK_ASSET_ROOT="${OPENTALKING_QUICKTALK_ASSET_ROOT:-$OPENTALKING_MODEL_ROOT/quicktalk}"
 export OPENTALKING_QUICKTALK_WORKER_CACHE=1
+export OPENTALKING_QUICKTALK_MOTION_MAX_SECONDS=120
 export OPENTALKING_QUICKTALK_MOTION_TRANSITION_FRAMES=10
 export OPENTALKING_QUICKTALK_MOTION_FLOW_MAX_EDGE=384
 export OPENTALKING_QUICKTALK_MOTION_SPATIAL_ALIGN=1
@@ -72,6 +73,9 @@ interpolation before the next action; the web client no longer layers a second
 idle video over the stream.
 Restart the API/worker after changing motion assets or these settings so the
 resident worker and motion contexts are rebuilt.
+Each uploaded idle or action clip is read for up to 120 seconds by default. On
+GPUs with limited memory, lower `OPENTALKING_QUICKTALK_MOTION_MAX_SECONDS` to
+keep fewer motion frames resident in the worker.
 
 ## Verification
 

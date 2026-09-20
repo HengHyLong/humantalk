@@ -23,6 +23,13 @@ if TYPE_CHECKING:  # pragma: no cover — avoids importing torch/onnx at module 
 
 log = logging.getLogger(__name__)
 
+# Motion clips are used as a continuous visual timeline. The previous default
+# of eight seconds silently discarded the rest of an uploaded clip. Keep the
+# limit explicit and bounded so a malformed deployment value cannot make a
+# worker retain an unbounded number of video frames.
+DEFAULT_QUICKTALK_MOTION_MAX_SECONDS = 120.0
+MAX_QUICKTALK_MOTION_SECONDS = 120.0
+
 
 @dataclass
 class QuickTalkFeatures:
@@ -479,15 +486,17 @@ def _filter_quicktalk_motion_templates(
     return tuple(accepted)
 
 
-def _optional_positive_float_env(name: str, default: float | None = None) -> float | None:
-    raw = _env_value(name)
+def _quicktalk_motion_max_seconds() -> float:
+    raw = _env_value("OPENTALKING_QUICKTALK_MOTION_MAX_SECONDS")
     if not raw:
-        return default
+        return DEFAULT_QUICKTALK_MOTION_MAX_SECONDS
     try:
         value = float(raw)
     except ValueError:
-        return default
-    return value if value > 0 else default
+        return DEFAULT_QUICKTALK_MOTION_MAX_SECONDS
+    if not np.isfinite(value) or value <= 0:
+        return DEFAULT_QUICKTALK_MOTION_MAX_SECONDS
+    return min(value, MAX_QUICKTALK_MOTION_SECONDS)
 
 
 def _normalize_asset_root(asset_root: Path) -> Path:
@@ -750,10 +759,7 @@ class QuickTalkAdapter:
             motion_template_videos,
             target_size=_target_video_size(bundle.manifest),
         )
-        max_motion_seconds = _optional_positive_float_env(
-            "OPENTALKING_QUICKTALK_MOTION_MAX_SECONDS",
-            8.0,
-        )
+        max_motion_seconds = _quicktalk_motion_max_seconds()
         if motion_template_videos:
             log.info(
                 "QuickTalk multi-motion templates selected: avatar=%s clips=%d names=%s",
