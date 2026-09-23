@@ -778,6 +778,8 @@ async def test_empty_retrieval_accumulates_same_normalized_miss(tmp_path) -> Non
         assert result.match_type == "fallback"
         assert result.speak_mode == "agent"
         assert result.answer is None
+        assert "回答第一句必须" in (result.knowledge_context or "")
+        assert "仍要继续根据自己的通用知识生成" in (result.knowledge_context or "")
         assert "不要只回答“我不知道”" in (result.knowledge_context or "")
         assert "不得猜测" in (result.knowledge_context or "")
 
