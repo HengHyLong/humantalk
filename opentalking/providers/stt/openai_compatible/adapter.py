@@ -69,6 +69,9 @@ class OpenAICompatibleSTTAdapter:
             if self.protocol in {"chat_completions", "chat"}:
                 encoded = base64.b64encode(path.read_bytes()).decode("ascii")
                 data_url = f"data:audio/{self.audio_format};base64,{encoded}"
+                input_audio = {"data": data_url}
+                if self.model != "mimo-v2.5-asr":
+                    input_audio["format"] = self.audio_format
                 payload = {
                     "model": self.model,
                     "messages": [
@@ -77,12 +80,14 @@ class OpenAICompatibleSTTAdapter:
                             "content": [
                                 {
                                     "type": "input_audio",
-                                    "input_audio": {"data": data_url, "format": self.audio_format},
+                                    "input_audio": input_audio,
                                 }
                             ],
                         }
                     ],
                 }
+                if self.model == "mimo-v2.5-asr":
+                    payload["asr_options"] = {"language": self.language or "auto"}
                 resp = client.post(f"{self.base_url}/chat/completions", headers=headers, json=payload)
             else:
                 data: dict[str, str] = {"model": self.model}

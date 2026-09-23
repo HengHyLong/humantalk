@@ -284,8 +284,9 @@ def test_stt_openai_compatible_chat_completions_posts_data_url(tmp_path: Path, m
         payload = json.loads(request.content.decode("utf-8"))
         audio = payload["messages"][0]["content"][0]["input_audio"]
         assert payload["model"] == "mimo-v2.5-asr"
-        assert audio["format"] == "wav"
+        assert "format" not in audio
         assert audio["data"].startswith("data:audio/wav;base64,")
+        assert payload["asr_options"] == {"language": "auto"}
         return httpx.Response(200, json={"choices": [{"message": {"content": "你好，测试完成。"}}]})
 
     transport = httpx.MockTransport(handler)
@@ -350,8 +351,9 @@ def test_stt_xiaomi_mimo_profile_posts_chat_completions_data_url(
         payload = json.loads(request.content.decode("utf-8"))
         audio = payload["messages"][0]["content"][0]["input_audio"]
         assert payload["model"] == "mimo-v2.5-asr"
-        assert audio["format"] == "wav"
+        assert "format" not in audio
         assert audio["data"].startswith("data:audio/wav;base64,")
+        assert payload["asr_options"] == {"language": "zh"}
         return httpx.Response(200, json={"choices": [{"message": {"content": "小米识别完成。"}}]})
 
     transport = httpx.MockTransport(handler)
@@ -368,6 +370,7 @@ def test_stt_xiaomi_mimo_profile_posts_chat_completions_data_url(
     monkeypatch.setenv("OPENTALKING_STT_XIAOMI_MODEL", "mimo-v2.5-asr")
     monkeypatch.setenv("OPENTALKING_STT_XIAOMI_PROTOCOL", "chat_completions")
     monkeypatch.setenv("OPENTALKING_STT_XIAOMI_AUDIO_FORMAT", "wav")
+    monkeypatch.setenv("OPENTALKING_STT_XIAOMI_LANGUAGE", "zh")
     clear_stt_adapter_cache()
 
     text, elapsed_ms = transcribe_wav_path_sync(wav_path)
