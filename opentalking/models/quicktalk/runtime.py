@@ -34,7 +34,6 @@ from .motion_cycle import (
     ping_pong_frame_index,
     reset_motion_cursor,
 )
-from .face_super_resolution import create_face_super_resolution, face_sr_parameters
 
 
 @dataclass
@@ -69,8 +68,6 @@ class RealtimeV3SessionState:
     last_output_frame: np.ndarray | None = None
     transition_source_frame: np.ndarray | None = None
     transition_frame_index: int = 0
-    face_sr_previous_detail: torch.Tensor | None = None
-    face_sr_frame_index: int = 0
     hn: np.ndarray | None = None
     cn: np.ndarray | None = None
 
@@ -85,8 +82,6 @@ class RealtimeV3SessionState:
         self.last_output_frame = None
         self.transition_source_frame = None
         self.transition_frame_index = 0
-        self.face_sr_previous_detail = None
-        self.face_sr_frame_index = 0
         if self.hn is not None:
             self.hn.fill(0)
         if self.cn is not None:
@@ -244,18 +239,6 @@ class RealtimeV3Worker:
             hubert_device=hubert_device,
             model_backend=model_backend,
         )
-        patch_color_order = "bgr" if output_transform in {"bgr", "tanh_bgr"} else "rgb"
-        self.face_super_resolution = create_face_super_resolution(
-            device=self.v2.device,
-            patch_color_order=patch_color_order,
-        )
-        (
-            self.face_sr_strength,
-            self.face_sr_temporal_alpha,
-            self.face_sr_min_roi_edge,
-            self.face_sr_interval,
-            self.face_sr_input_edge,
-        ) = face_sr_parameters()
         self.input_names = self.v2.model_backend.input_names
         self.frames, self.fps = self._load_template_frames(template_video, max_template_seconds)
         if not self.frames:
@@ -678,86 +661,6 @@ class RealtimeV3Worker:
         output[y0:y1, x0:x1] = roi.permute(1, 2, 0).contiguous().to(dtype=torch.uint8).cpu().numpy()
         return output
 
-    def _enhance_face_patch(
-        self,
-        patch_t: torch.Tensor,
-        *,
-        target_height: int,
-        target_width: int,
-        state: RealtimeV3SessionState | None,
-    ) -> torch.Tensor:
-        enhancer = getattr(self, "face_super_resolution", None)
-        min_roi_edge = int(getattr(self, "face_sr_min_roi_edge", 320))
-        if enhancer is None or max(target_height, target_width) < min_roi_edge:
-            if state is not None:
-                state.face_sr_previous_detail = None
-                state.face_sr_frame_index = 0
-            return patch_t
-
-        interval = max(1, int(getattr(self, "face_sr_interval", 1)))
-        previous = state.face_sr_previous_detail if state is not None else None
-        frame_index = state.face_sr_frame_index if state is not None else 0
-        should_run_sr = interval == 1 or previous is None or frame_index % interval == 0
-        if state is not None:
-            state.face_sr_frame_index += 1
-
-        if not should_run_sr and previous is not None:
-            # Preserve the current QuickTalk mouth geometry in the bicubic base.
-            # Only reuse the prior frame's high-frequency SR residual, avoiding a
-            # full previous-frame face that would visibly delay lip motion.
-            baseline = F.interpolate(
-                patch_t.unsqueeze(0),
-                size=previous.shape[-2:],
-                mode="bicubic",
-                align_corners=False,
-                antialias=True,
-            ).squeeze(0)
-            strength = float(getattr(self, "face_sr_strength", 0.7))
-            return (baseline + strength * previous).clamp(0.0, 1.0)
-
-        sr_input = patch_t
-        input_edge = max(0, int(getattr(self, "face_sr_input_edge", 0)))
-        source_height, source_width = patch_t.shape[-2:]
-        source_long_edge = max(source_height, source_width)
-        if input_edge > 0 and source_long_edge > input_edge:
-            scale = input_edge / float(source_long_edge)
-            sr_input = F.interpolate(
-                patch_t.unsqueeze(0),
-                size=(
-                    max(1, int(round(source_height * scale))),
-                    max(1, int(round(source_width * scale))),
-                ),
-                mode="bicubic",
-                align_corners=False,
-                antialias=True,
-            ).squeeze(0)
-
-        enhanced = enhancer.enhance(sr_input)
-        if enhanced.shape[-2:] == sr_input.shape[-2:]:
-            if state is not None:
-                state.face_sr_previous_detail = None
-                state.face_sr_frame_index = 0
-            return patch_t
-
-        baseline = F.interpolate(
-            patch_t.unsqueeze(0),
-            size=enhanced.shape[-2:],
-            mode="bicubic",
-            align_corners=False,
-            antialias=True,
-        ).squeeze(0)
-        detail = enhanced - baseline
-        if state is not None:
-            previous = state.face_sr_previous_detail
-            if previous is not None and previous.shape == detail.shape:
-                detail = (
-                    float(getattr(self, "face_sr_temporal_alpha", 0.7)) * detail
-                    + (1.0 - float(getattr(self, "face_sr_temporal_alpha", 0.7))) * previous
-                )
-            state.face_sr_previous_detail = detail.detach()
-        strength = float(getattr(self, "face_sr_strength", 0.7))
-        return (baseline + strength * detail).clamp(0.0, 1.0)
-
     def generate_frames_from_reps(
         self,
         reps: Sequence[np.ndarray],
@@ -811,12 +714,6 @@ class RealtimeV3Worker:
                 )
                 patch_t = self.v2.transform_output_torch(patch_t)
                 x1, y1, x2, y2 = context.coords
-                patch_t = self._enhance_face_patch(
-                    patch_t,
-                    target_height=int(y2 - y1),
-                    target_width=int(x2 - x1),
-                    state=state,
-                )
                 patch_t = F.interpolate(
                     patch_t.unsqueeze(0),
                     size=(int(y2 - y1), int(x2 - x1)),
@@ -1047,18 +944,6 @@ class MultiFaceRealtimeV3Worker(RealtimeV3Worker):
             hubert_device=hubert_device,
             model_backend=model_backend,
         )
-        patch_color_order = "bgr" if output_transform in {"bgr", "tanh_bgr"} else "rgb"
-        self.face_super_resolution = create_face_super_resolution(
-            device=self.v2.device,
-            patch_color_order=patch_color_order,
-        )
-        (
-            self.face_sr_strength,
-            self.face_sr_temporal_alpha,
-            self.face_sr_min_roi_edge,
-            self.face_sr_interval,
-            self.face_sr_input_edge,
-        ) = face_sr_parameters()
         self.input_names = self.v2.model_backend.input_names
         self.frames, self.fps = self._load_template_frames(template_video, max_template_seconds)
         if not self.frames:
@@ -1356,12 +1241,6 @@ class MultiFaceRealtimeV3Worker(RealtimeV3Worker):
         )
         patch_t = self.v2.transform_output_torch(patch_t)
         x1, y1, x2, y2 = context.coords
-        patch_t = self._enhance_face_patch(
-            patch_t,
-            target_height=int(y2 - y1),
-            target_width=int(x2 - x1),
-            state=face_state,
-        )
         patch_t = F.interpolate(
             patch_t.unsqueeze(0),
             size=(int(y2 - y1), int(x2 - x1)),

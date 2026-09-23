@@ -143,6 +143,8 @@ interface ChatInputProps {
   onVoiceModeChange?: (active: boolean) => void;
   /** 禁止数字人播报期间抢话，避免扬声器回声被再次送入 STT。 */
   suspendBargeInWhileSpeaking?: boolean;
+  /** 数字人处理当前请求期间暂停 VAD，回答结束后由外层自动恢复。 */
+  suspendListening?: boolean;
 }
 
 export type ListeningState = "off" | "listening" | "recording" | "transcribing" | "processing" | "error";
@@ -209,6 +211,7 @@ export function ChatInput({
   autoStartVoice = false,
   onVoiceModeChange,
   suspendBargeInWhileSpeaking = false,
+  suspendListening = false,
 }: ChatInputProps) {
   const voiceCaptureEnabled = !!(
     onSpeakAudio ||
@@ -263,8 +266,8 @@ export function ChatInput({
   /** 用户点「打断」时递增，用于丢弃 VAD 已触发的断句上传 */
   const voiceBreakGenRef = useRef(0);
 
-  const uiRef = useRef({ disabled, voiceBusy, isSpeaking, suspendBargeInWhileSpeaking });
-  uiRef.current = { disabled, voiceBusy, isSpeaking, suspendBargeInWhileSpeaking };
+  const uiRef = useRef({ disabled, voiceBusy, isSpeaking, suspendBargeInWhileSpeaking, suspendListening });
+  uiRef.current = { disabled, voiceBusy, isSpeaking, suspendBargeInWhileSpeaking, suspendListening };
 
   const onSpeakAudioRef = useRef(onSpeakAudio);
   onSpeakAudioRef.current = onSpeakAudio;
@@ -449,6 +452,16 @@ export function ChatInput({
             }
           }
           if (!ws) throw lastError ?? new Error("语音识别 WebSocket 连接失败");
+          if (uiRef.current.suspendListening) {
+            try {
+              ws.close();
+            } catch {
+              /* ignore */
+            }
+            segmentActiveRef.current = false;
+            setSegmentHot(false);
+            return;
+          }
           ws.send(
             JSON.stringify({
               type: "meta",
@@ -497,7 +510,7 @@ export function ChatInput({
         // WS 链路失败时，不要直接丢段；继续走 MediaRecorder + speak_audio 回退路径。
       }
 
-      if (mediaRecorderRef.current) return;
+      if (uiRef.current.suspendListening || mediaRecorderRef.current) return;
       const mime = pickRecorderMime();
       const mr = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
       chunksRef.current = [];
@@ -542,11 +555,12 @@ export function ChatInput({
       voiceBusy: vb,
       isSpeaking: spk,
       suspendBargeInWhileSpeaking: suspendDuringPlayback,
+      suspendListening: suspendDuringTurn,
     } = uiRef.current;
 
-    /** Vidu 的 RTC 会播放远端语音，播报时必须彻底停收，不能仅依赖能量阈值过滤回声。 */
-    const hardPaused = d || vb || uploadLockRef.current || (spk && suspendDuringPlayback);
-    if (spk && suspendDuringPlayback) {
+    /** 数字人思考或播报期间彻底暂停 VAD，避免回声和后续讲话打断当前回答。 */
+    const hardPaused = d || vb || uploadLockRef.current || suspendDuringTurn || (spk && suspendDuringPlayback);
+    if (suspendDuringTurn || (spk && suspendDuringPlayback)) {
       loudFramesRef.current = 0;
       softFramesRef.current = 0;
       silenceStartRef.current = null;
@@ -675,8 +689,12 @@ export function ChatInput({
           SP.onaudioprocess = (e) => {
             const input = e.inputBuffer.getChannelData(0);
             const pcm = downsampleFloat32To16kPcm(input, ctx.sampleRate);
-            if (voiceModeRef.current && !pcmSendGateRef.current) {
+            if (voiceModeRef.current && !uiRef.current.suspendListening && !pcmSendGateRef.current) {
               appendPcmPrerollChunk(pcm, pcmPrerollRef);
+            }
+            if (uiRef.current.suspendListening) {
+              pcmPrerollRef.current = new Int16Array(0);
+              return;
             }
             if (!pcmSendGateRef.current) return;
             const w = streamWsRef.current;
@@ -808,22 +826,26 @@ export function ChatInput({
 
   const hasText = !!text.trim();
   const showInterruptButton = (isSpeaking && !hasText) || (voiceMode && (segmentHot || voiceBusy));
-  const listeningLabel = listeningState === "recording"
-    ? "正在收音"
-    : listeningState === "transcribing"
-      ? "正在识别"
-      : listeningState === "processing"
-        ? "正在处理"
-        : listeningState === "error"
-          ? "监听异常"
-          : voiceMode
-            ? "正在监听"
-            : "语音输入";
-  const listeningHint = voiceMode
-    ? listeningState === "error"
-      ? "下一句话会自动重试"
-      : "静音自动分句，识别后继续监听"
-    : "点击开启长期监听";
+  const listeningLabel = suspendListening
+    ? "数字人回答中"
+    : listeningState === "recording"
+      ? "正在收音"
+      : listeningState === "transcribing"
+        ? "正在识别"
+        : listeningState === "processing"
+          ? "正在处理"
+          : listeningState === "error"
+            ? "监听异常"
+            : voiceMode
+              ? "正在监听"
+              : "语音输入";
+  const listeningHint = suspendListening
+    ? "已暂停监听，回答结束后自动恢复"
+    : voiceMode
+      ? listeningState === "error"
+        ? "下一句话会自动重试"
+        : "静音自动分句，识别后继续监听"
+      : "点击开启长期监听";
 
   if (compact) {
     return (

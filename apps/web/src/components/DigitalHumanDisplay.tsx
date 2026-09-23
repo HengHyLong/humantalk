@@ -42,6 +42,7 @@ type DigitalHumanDisplayProps = {
   connection: ConnectionStatus;
   isSpeaking: boolean;
   suspendVoiceWhileSpeaking?: boolean;
+  suspendListening?: boolean;
   avatar: AvatarSummary | null;
   modelLabel: string;
   messages: Message[];
@@ -95,10 +96,11 @@ export function DigitalHumanDisplay({
                                       videoState = "listen",
                                       videoDriverAssets = null,
                                       motionDriverAssets = null,
-                                      connection,
-                                      isSpeaking,
-                                      suspendVoiceWhileSpeaking = false,
-                                      avatar,
+                                       connection,
+                                       isSpeaking,
+                                       suspendVoiceWhileSpeaking = false,
+                                       suspendListening = false,
+                                       avatar,
                                       modelLabel,
                                       messages,
                                       wakeSleeping = false,
@@ -534,6 +536,7 @@ export function DigitalHumanDisplay({
                             onInterrupt={onInterrupt}
                             isSpeaking={isSpeaking}
                             suspendBargeInWhileSpeaking={suspendVoiceWhileSpeaking}
+                            suspendListening={suspendListening}
                             disabled={!live}
                             onNotify={onNotify}
                             ttsProvider={ttsProvider}

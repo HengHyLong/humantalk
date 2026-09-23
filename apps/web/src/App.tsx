@@ -1060,6 +1060,8 @@ export default function App() {
   const [conversationLanguage, setConversationLanguage] = useState<ConversationLanguage>("zh-CN");
   const englishConversation = isEnglishConversation(conversationLanguage);
   const [isSpeaking, setIsSpeaking] = useState(false);
+  /** 用户一句话提交后，直到数字人回答结束前暂停连续语音监听。 */
+  const [voiceTurnActive, setVoiceTurnActive] = useState(false);
   const [videoState, setVideoState] = useState<VideoDriverState>("welcome");
   const [currentSubtitle, setCurrentSubtitle] = useState("");
   const welcomedVideoSessionRef = useRef<string | null>(null);
@@ -1182,6 +1184,7 @@ export default function App() {
   const appendAssistantError = useCallback((message: string) => {
     const normalized = message.startsWith("出错了：") ? message : `出错了：${message}`;
     const msgId = streamingAssistantMsgIdRef.current ?? pendingAssistantMsgIdRef.current;
+    setVoiceTurnActive(false);
     clearSubtitleState();
     if (msgId) {
       setMessages((prev) =>
@@ -2115,6 +2118,7 @@ export default function App() {
       setActiveAsrProvider("");
       setQueueInfo(null);
       setExpiringCountdown(null);
+      setVoiceTurnActive(false);
       setNavigationResult(null);
       setLastVoiceIntent(null);
       slotAcquiredRef.current = null;
@@ -2406,6 +2410,7 @@ export default function App() {
         setExpiringCountdown(null);
         setSessionId(null);
         setActiveAsrProvider("");
+        setVoiceTurnActive(false);
         setVideoState("listen");
         const orphanId = streamingAssistantMsgIdRef.current;
         const pendingId = pendingAssistantMsgIdRef.current;
@@ -2418,6 +2423,7 @@ export default function App() {
       if (ev === "error") {
         const d = data && typeof data === "object" ? (data as { message?: string; code?: string }) : {};
         const detail = d.message || d.code || "语音合成失败，请切换可用音色后重试。";
+        setVoiceTurnActive(false);
         appendAssistantError(detail);
         notify(`对话失败：${detail}`, "error");
       }
@@ -2435,6 +2441,7 @@ export default function App() {
         // speech.ended belongs to the active turn and must be handled.
         pendingAssistantMsgIdRef.current = null;
         clearSubtitleState(false);
+        setVoiceTurnActive(true);
         setIsSpeaking(true);
         setVideoState("think");
         if (immediateText) setCurrentSubtitle(immediateText);
@@ -2477,6 +2484,7 @@ export default function App() {
         const streamed = subtitleAccRef.current.trim();
         const finalText = fromEvent || streamed;
         const msgId = streamingAssistantMsgIdRef.current;
+        setVoiceTurnActive(false);
         setVideoState("listen");
         finishSubtitleState(finalText);
         const wakeConfig = exhibitionVoiceConfigRef.current?.wake_word;
@@ -2969,6 +2977,7 @@ export default function App() {
       const text = speechText.trim();
       const user = userText.trim();
       if (!sessionId || !text) return;
+      setVoiceTurnActive(true);
       const pendingId = makeId();
       const activeAssistantId = streamingAssistantMsgIdRef.current;
       const previousPendingId = pendingAssistantMsgIdRef.current;
@@ -3012,6 +3021,7 @@ export default function App() {
   const routeRecognizedText = useCallback(async (rawText: string, options: RecognizedTextOptions = {}) => {
     const text = rawText.trim();
     if (!text || !sessionId) return;
+    setVoiceTurnActive(true);
     const databaseShortcut = options.databaseShortcut;
     const displayText = options.displayText?.trim() || text;
     const selectedEntity = options.selectedEntityId
@@ -3599,6 +3609,7 @@ export default function App() {
       console.warn("exhibition Q&A query failed", error);
       const detail = apiErrorMessage(error, englishConversation ? "The Q&A service is temporarily unavailable." : "问答服务暂不可用，请稍后重试。");
       pendingAssistantMsgIdRef.current = null;
+      setVoiceTurnActive(false);
       setIsSpeaking(false);
       setVideoState("listen");
       setMessages((prev) => prev.map((message) => (
@@ -3676,6 +3687,7 @@ export default function App() {
     if (!text) return;
     const wakeConfig = exhibitionVoiceConfig?.wake_word;
     if (!wakeConfig?.enabled || !wakeConfig.words.length) {
+      setVoiceTurnActive(true);
       await routeRecognizedText(text);
       return;
     }
@@ -3690,6 +3702,7 @@ export default function App() {
     });
     if (!gate.accepted) return;
 
+    setVoiceTurnActive(true);
     keepWakeSessionActiveUntil(gate.awakeUntil);
     if (gate.wakeOnly) {
       const welcomeText = exhibitionVoiceConfig?.welcome.text.trim();
@@ -3715,8 +3728,8 @@ export default function App() {
   }, [activeAsrProvider, appendAssistantError, handleRecognizedVoiceText, notify, sessionId]);
 
   /** 流式 STT 只返回识别文本，统一交给唤醒词和业务路由处理。 */
-  const handleSpeakAudioStreamResult = useCallback(({ text }: { text: string }) => {
-    void handleRecognizedVoiceText(text);
+  const handleSpeakAudioStreamResult = useCallback(async ({ text }: { text: string }) => {
+    await handleRecognizedVoiceText(text);
   }, [handleRecognizedVoiceText]);
 
   const handleSpeakAudioStreamError = useCallback((message: string) => {
@@ -3757,6 +3770,8 @@ export default function App() {
 
   const handleInterrupt = useCallback(() => {
     speakAudioAbortRef.current?.abort();
+    setVoiceTurnActive(false);
+    setIsSpeaking(false);
     setVideoState("listen");
     if (!sessionId) return;
     void apiPost(`/sessions/${sessionId}/interrupt`, {}).catch(() => {});
@@ -4258,10 +4273,11 @@ export default function App() {
           videoState={videoState}
           videoDriverAssets={currentAvatar?.video_driver ?? null}
           motionDriverAssets={currentAvatar?.motion_driver ?? null}
-          connection={connection}
-          isSpeaking={isSpeaking}
-          suspendVoiceWhileSpeaking={model === "vidu"}
-          avatar={currentAvatar}
+           connection={connection}
+           isSpeaking={isSpeaking}
+           suspendVoiceWhileSpeaking={model === "vidu"}
+           suspendListening={voiceTurnActive || isSpeaking || videoState === "think" || videoState === "talk"}
+           avatar={currentAvatar}
           modelLabel={selectedModelLabel}
           messages={messages}
           wakeSleeping={wakeSleeping}
@@ -4564,6 +4580,7 @@ export default function App() {
                 onInterrupt={handleInterrupt}
                 isSpeaking={isSpeaking}
                 suspendBargeInWhileSpeaking={model === "vidu"}
+                suspendListening={voiceTurnActive || isSpeaking || videoState === "think" || videoState === "talk"}
                 disabled={connection !== "live" && connection !== "expiring"}
                 onNotify={notify}
                 onOpenSettings={() => setSettingsExpanded(true)}

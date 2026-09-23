@@ -70,7 +70,6 @@ def _worker_cache_key(
     model_backend: str,
     motion_template_videos: tuple[Path, ...] = (),
     max_motion_seconds: float | None = None,
-    face_sr_signature: tuple[Any, ...] = (),
 ) -> tuple[Any, ...]:
     motion_signature: list[tuple[str, int, int]] = []
     for path in motion_template_videos:
@@ -96,7 +95,6 @@ def _worker_cache_key(
         str(model_backend),
         tuple(motion_signature),
         float(max_motion_seconds) if max_motion_seconds is not None else None,
-        face_sr_signature,
     )
 
 
@@ -736,10 +734,6 @@ class QuickTalkAdapter:
             )
 
         from opentalking.models.quicktalk.runtime import RealtimeV3Worker
-        from opentalking.models.quicktalk.face_super_resolution import face_sr_cache_signature
-
-        face_sr_signature = face_sr_cache_signature()
-
         cache_key = _worker_cache_key(
             asset_root=asset_root,
             template_video=template_video,
@@ -757,7 +751,6 @@ class QuickTalkAdapter:
             model_backend=self._model_backend,
             motion_template_videos=motion_template_videos,
             max_motion_seconds=max_motion_seconds,
-            face_sr_signature=face_sr_signature,
         )
 
         cache_disabled = _env_value("OPENTALKING_QUICKTALK_WORKER_CACHE", "1") == "0"
@@ -830,7 +823,6 @@ class QuickTalkAdapter:
                             model_backend=self._model_backend,
                             motion_template_videos=motion_template_videos,
                             max_motion_seconds=max_motion_seconds,
-                            face_sr_signature=face_sr_signature,
                         )
                         worker = RealtimeV3Worker(
                             asset_root=asset_root,
@@ -903,7 +895,6 @@ class QuickTalkAdapter:
                 model_backend=self._model_backend,
                 motion_template_videos=motion_template_videos,
                 max_motion_seconds=max_motion_seconds,
-                face_sr_signature=face_sr_signature,
             )
             worker = RealtimeV3Worker(
                 asset_root=asset_root,

@@ -87,32 +87,3 @@ AUDIO2VIDEO_PLAYBACK_AUDIO_RESERVE_MS=1200
 After a WebRTC session starts, the log should contain `WebRTC H.264 encoder active: codec=h264_nvenc`. OpenTalking logs the error and falls back to `libx264` if NVENC cannot be initialized. NVENC reduces final video compression cost only; model generation must still complete faster than the corresponding audio duration.
 
 `AUDIO2VIDEO_PLAYBACK_AUDIO_RESERVE_MS` prevents video backpressure from draining previously queued audio. The `audio_buffer_ms=before-wait->after-wait->after-new-audio` log confirms that new audio is not played ahead of its matching video; the after-wait value normally settles near the reserve. `av_queue_skew_ms` estimates queued audio duration minus queued video duration: a sustained large positive value means more audio is buffered, while a sustained large negative value means more video is buffered. A larger reserve improves jitter tolerance at the cost of additional playback buffering.
-
-## Optional face-patch super-resolution
-
-QuickTalk normally generates a 256×256 face patch and enlarges it before compositing it back into the template canvas. For a 1K portrait avatar, an optional 2× TorchScript stage can enhance the patch to 512×512 before compositing. This path applies only to `backend: local`; with `backend: omnirt`, the equivalent feature must be enabled in the OmniRT QuickTalk runtime.
-
-Use the repository's compatible exporter to convert the official `RealESRGAN_x2plus.pth` checkpoint. It only needs the PyTorch already used by QuickTalk; BasicSR is not required:
-
-```bash
-uv run python scripts/export_realesrgan_x2_torchscript.py \
-  --weights /models/RealESRGAN_x2plus.pth \
-  --output /models/realesrgan_x2plus.torchscript.pt \
-  --device cuda:0
-```
-
-Configure the server:
-
-```env
-OPENTALKING_QUICKTALK_FACE_SR_ENABLED=1
-OPENTALKING_QUICKTALK_FACE_SR_MODEL_PATH=/models/realesrgan_x2plus.torchscript.pt
-OPENTALKING_QUICKTALK_FACE_SR_FP16=1
-OPENTALKING_QUICKTALK_FACE_SR_DEVICE=cuda:1
-OPENTALKING_QUICKTALK_FACE_SR_STRENGTH=0.7
-OPENTALKING_QUICKTALK_FACE_SR_TEMPORAL_ALPHA=0.7
-OPENTALKING_QUICKTALK_FACE_SR_MIN_ROI_EDGE=320
-OPENTALKING_QUICKTALK_FACE_SR_INTERVAL=2
-OPENTALKING_QUICKTALK_FACE_SR_INPUT_EDGE=192
-```
-
-The model is loaded and warmed once per QuickTalk worker, while temporal high-frequency state remains session-local. On a multi-GPU host, `FACE_SR_DEVICE` can place SR on a GPU other than the QuickTalk model; the enhanced patch is transferred back to the compositor device automatically. `FACE_SR_INPUT_EDGE=192` reduces the 256px input before SR and produces a 384px patch, trading a small amount of detail for lower latency. `FACE_SR_INTERVAL=2` runs SR every other frame. Skipped frames retain the current QuickTalk mouth geometry and reuse only the previous high-frequency residual, rather than reusing an old full face. The default is `1` (every frame); use `3` if end-to-end generation still cannot keep up in real time. Face regions smaller than the threshold bypass SR. A missing, invalid, or failing model logs a warning and falls back to the original patch without interrupting the conversation. The TorchScript model must accept and return an RGB `0..1` tensor shaped `[1, 3, H, W]` and enlarge both spatial dimensions.
