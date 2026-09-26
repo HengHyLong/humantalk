@@ -409,3 +409,31 @@ body {
   .exhibition-product-list-item-placeholder { height: clamp(78px, 14vh, 116px); }
   .digital-display-chat-panel.is-presentation-hidden { right: 4%; bottom: 2%; left: 4%; }
 }
+
+@media (orientation: portrait) {
+  .digital-display-chat-panel .digital-display-voice-trigger,
+  .digital-display-chat-panel .digital-display-voice-break,
+  .digital-display-chat-panel .digital-display-stop {
+    position: fixed;
+    right: max(12px, env(safe-area-inset-right, 0px));
+    z-index: 36;
+    display: inline-flex;
+    min-width: 92px;
+    min-height: 50px;
+    align-items: center;
+    justify-content: center;
+    padding: 10px 12px;
+    box-shadow: 0 8px 22px rgba(0, 18, 58, .36);
+    transform: translateY(-50%);
+  }
+
+  .digital-display-chat-panel .digital-display-voice-trigger,
+  .digital-display-chat-panel .digital-display-stop,
+  .digital-display-chat-panel .digital-display-voice-break {
+    top: calc(50% - 30px);
+  }
+
+  .digital-display-chat-panel .digital-display-voice-trigger {
+    top: calc(50% + 30px);
+  }
+}

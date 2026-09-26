@@ -359,6 +359,7 @@ export function DigitalHumanDisplay({
                     {option.label}
                   </button>
               ))}
+              <button type="button">四川话</button>
             </aside>
 
             <aside className={`digital-display-quick-actions ${quickActionsOpen ? "is-open" : ""}`}>
