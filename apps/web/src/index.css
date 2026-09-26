@@ -347,6 +347,7 @@ body {
 .digital-display-voice-trigger.is-active { color: #fff; background: #119f96; }
 .digital-display-voice-break { color: #fff; background: #dc7085; }
 .digital-display-voice-trigger:disabled { cursor: wait; opacity: .5; }
+.digital-display-voice-break:disabled { cursor: not-allowed; opacity: .58; }
 
 @media (max-width: 760px) {
   .digital-display-shell { height: 100dvh; min-height: 580px; }
@@ -435,5 +436,8 @@ body {
 
   .digital-display-chat-panel .digital-display-voice-trigger {
     top: calc(50% + 30px);
+    min-width: 80px;
+    min-height: 44px;
+    padding: 8px 10px;
   }
 }

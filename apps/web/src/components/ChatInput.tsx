@@ -875,11 +875,16 @@ export function ChatInput({
             {voiceMode ? "停止监听" : "开始监听"}
           </button>
         ) : null}
-        {showInterruptButton ? (
-          <button type="button" className="digital-display-voice-break" onClick={() => void handleVoiceBreak()}>
-            打断
-          </button>
-        ) : null}
+        <button
+          type="button"
+          className="digital-display-voice-break"
+          onClick={() => void handleVoiceBreak()}
+          disabled={!showInterruptButton}
+          aria-label="打断"
+          title={showInterruptButton ? "打断当前播报或语音识别" : "当前没有需要打断的播报或语音识别"}
+        >
+          打断
+        </button>
       </div>
     );
   }
