@@ -43,6 +43,8 @@ type DigitalHumanDisplayProps = {
   isSpeaking: boolean;
   suspendVoiceWhileSpeaking?: boolean;
   suspendListening?: boolean;
+  microphoneModeEnabled: boolean;
+  onMicrophoneModeChange: (enabled: boolean) => void;
   avatar: AvatarSummary | null;
   modelLabel: string;
   messages: Message[];
@@ -100,6 +102,8 @@ export function DigitalHumanDisplay({
                                        isSpeaking,
                                        suspendVoiceWhileSpeaking = false,
                                        suspendListening = false,
+                                       microphoneModeEnabled,
+                                       onMicrophoneModeChange,
                                        avatar,
                                       modelLabel,
                                       messages,
@@ -369,16 +373,29 @@ export function DigitalHumanDisplay({
                   onClick={() => setQuickActionsOpen((open) => !open)}
                   aria-expanded={quickActionsOpen}
                   aria-controls="digital-display-quick-actions-menu"
-                  aria-label={quickActionsOpen ? (english ? "Hide shortcuts" : "收起快捷入口") : (english ? "Show shortcuts" : "展开快捷入口")}
+                  aria-label={quickActionsOpen ? (english ? "Hide quick actions" : "收起快捷功能") : (english ? "Show quick actions" : "展开快捷功能")}
               >
                 <span aria-hidden><i /><i /><i /><i /></span>
               </button>
               <div
                   id="digital-display-quick-actions-menu"
                   className="digital-display-quick-actions-menu"
-                  aria-label={english ? "Suggested questions" : "快捷入口"}
+                  aria-label={english ? "Quick actions" : "快捷功能"}
                   hidden={!quickActionsOpen}
               >
+                <button
+                    type="button"
+                    className={microphoneModeEnabled ? "is-active" : ""}
+                    onClick={() => {
+                      const enabled = !microphoneModeEnabled;
+                      onMicrophoneModeChange(enabled);
+                      if (enabled) setInputMode("voice");
+                    }}
+                    aria-pressed={microphoneModeEnabled}
+                    title={english ? "Allow speech to interrupt the digital human while it is speaking" : "开启后，说话可打断正在播报的数字人"}
+                >
+                  {english ? `Mic mode: ${microphoneModeEnabled ? "On" : "Off"}` : `麦克风模式：${microphoneModeEnabled ? "开" : "关"}`}
+                </button>
                 {suggestions.map((suggestion) => (
                     <button
                         key={suggestion}

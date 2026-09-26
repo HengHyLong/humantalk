@@ -1062,6 +1062,7 @@ export default function App() {
   const [isSpeaking, setIsSpeaking] = useState(false);
   /** 用户一句话提交后，直到数字人回答结束前暂停连续语音监听。 */
   const [voiceTurnActive, setVoiceTurnActive] = useState(false);
+  const [microphoneModeEnabled, setMicrophoneModeEnabled] = useState(false);
   const [videoState, setVideoState] = useState<VideoDriverState>("welcome");
   const [currentSubtitle, setCurrentSubtitle] = useState("");
   const welcomedVideoSessionRef = useRef<string | null>(null);
@@ -2778,10 +2779,10 @@ export default function App() {
     if (model !== "vidu") return;
     const playback = viduPlaybackRef.current;
     if (!playback) return;
-    void playback.setMicrophoneEnabled(!isSpeaking).catch((error) => {
+    void playback.setMicrophoneEnabled(!isSpeaking || (workflow === "realtime" && microphoneModeEnabled)).catch((error) => {
       console.warn("Failed to update Vidu microphone state", error);
     });
-  }, [isSpeaking, model]);
+  }, [isSpeaking, microphoneModeEnabled, model, workflow]);
 
   const handleFasterLivePortraitConfigChange = useCallback((config: FasterLivePortraitConfig) => {
     setFasterliveportraitConfig(sanitizeFasterLivePortraitConfig(config));
@@ -4275,8 +4276,10 @@ export default function App() {
           motionDriverAssets={currentAvatar?.motion_driver ?? null}
            connection={connection}
            isSpeaking={isSpeaking}
-           suspendVoiceWhileSpeaking={model === "vidu"}
-           suspendListening={voiceTurnActive || isSpeaking || videoState === "think" || videoState === "talk"}
+           suspendVoiceWhileSpeaking={model === "vidu" && !microphoneModeEnabled}
+           suspendListening={(voiceTurnActive || isSpeaking || videoState === "think" || videoState === "talk") && !(microphoneModeEnabled && isSpeaking)}
+           microphoneModeEnabled={microphoneModeEnabled}
+           onMicrophoneModeChange={setMicrophoneModeEnabled}
            avatar={currentAvatar}
           modelLabel={selectedModelLabel}
           messages={messages}
