@@ -130,8 +130,13 @@ def _require_audio_provider_config(
     tts_provider: str | None,
     settings: object,
 ) -> None:
-    if stt_provider in {"dashscope", "openai_compatible", "xiaomi_mimo"}:
+    if stt_provider in {"dashscope", "openai_compatible", "xiaomi_mimo", "xfyun"}:
         stt_status = stt_provider_config(stt_provider)
+        if stt_provider == "xfyun" and stt_status.get("credentials_complete") is not True:
+            raise HTTPException(
+                status_code=400,
+                detail="科大讯飞 STT 缺少 AppID、API Key 或 API Secret，请在管理员后台语音识别配置中补全。",
+            )
         if not stt_status.get("key_set"):
             if stt_provider == "openai_compatible":
                 key_name = "OPENTALKING_STT_OPENAI_API_KEY"

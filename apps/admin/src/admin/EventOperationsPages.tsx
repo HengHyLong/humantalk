@@ -147,6 +147,7 @@ function voiceCategoryOf(voice: VoiceAsset): string {
 const EVENT_STT_PROVIDERS = [
   { id: "dashscope", label: "API 语音识别", model: "paraformer-realtime-v2" },
   { id: "sensevoice", label: "SenseVoiceSmall", model: "iic/SenseVoiceSmall" },
+  { id: "xfyun", label: "科大讯飞识别", model: "slm" },
   { id: "xiaomi_mimo", label: "小米 MiMo 识别", model: "mimo-v2.5-asr" },
   { id: "openai_compatible", label: "OpenAI API 识别", model: "OpenAI-compatible ASR" },
 ];

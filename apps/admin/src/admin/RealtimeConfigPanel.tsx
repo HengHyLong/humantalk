@@ -21,6 +21,7 @@ import { modelLabel } from "../lib/modelLabels";
 export type RuntimeProviderStatus = {
   key_set?: boolean;
   service_url_set?: boolean;
+  credentials_complete?: boolean;
   model?: string;
   runtime_ready?: boolean;
   availability_error?: string;
@@ -82,6 +83,7 @@ const PROVIDERS: Array<{ id: TtsProviderExtended; label: string; subtitle: strin
 const ASR_PROVIDERS = [
   { id: "sensevoice", label: "SenseVoiceSmall", model: "iic/SenseVoiceSmall", local: true },
   { id: "dashscope", label: "API 语音识别", model: "paraformer-realtime-v2", local: false },
+  { id: "xfyun", label: "科大讯飞识别", model: "slm", local: false },
   { id: "xiaomi_mimo", label: "小米 MiMo 识别", model: "mimo-v2.5-asr", local: false },
   { id: "openai_compatible", label: "OpenAI API 识别", model: "OpenAI-compatible ASR", local: false },
 ];
@@ -183,7 +185,7 @@ export function RealtimeConfigPanel({
     : apiTtsStatus ? apiTtsStatus.key_set === true && (ttsProvider === "xiaomi_mimo" || ttsProvider === "openai_compatible" ? apiTtsStatus.service_url_set === true : true) : undefined;
   const sttConfigured = selectedAsr.local
     ? apiSttStatus?.runtime_ready === true
-    : apiSttStatus ? apiSttStatus.key_set === true && (asrProvider === "xiaomi_mimo" || asrProvider === "openai_compatible" ? apiSttStatus.service_url_set === true : true) : undefined;
+    : apiSttStatus ? apiSttStatus.key_set === true && (asrProvider === "xfyun" ? apiSttStatus.credentials_complete === true : asrProvider === "xiaomi_mimo" || asrProvider === "openai_compatible" ? apiSttStatus.service_url_set === true : true) : undefined;
   const ttsBadge = statusLabel(ttsConfigured);
   const sttBadge = statusLabel(sttConfigured);
 

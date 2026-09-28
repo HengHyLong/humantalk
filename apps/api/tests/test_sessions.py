@@ -34,6 +34,19 @@ def test_conversation_language_schema_is_strict_and_defaults_to_chinese() -> Non
         SpeakRequest(text="bonjour", language="fr-FR")
 
 
+def test_xfyun_session_requires_all_three_stt_credentials(monkeypatch) -> None:
+    status = {"key_set": True, "credentials_complete": False}
+    monkeypatch.setattr(sessions_routes, "stt_provider_config", lambda _provider: status)
+    with pytest.raises(HTTPException, match="AppID、API Key 或 API Secret"):
+        sessions_routes._require_audio_provider_config(
+            stt_provider="xfyun", tts_provider="edge", settings=SimpleNamespace(),
+        )
+    status["credentials_complete"] = True
+    sessions_routes._require_audio_provider_config(
+        stt_provider="xfyun", tts_provider="edge", settings=SimpleNamespace(),
+    )
+
+
 def test_worker_forwards_language_marker_to_chat_runner(tmp_path: Path) -> None:
     calls: list[dict[str, object]] = []
 

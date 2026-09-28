@@ -32,6 +32,7 @@ function keepRecentConversation(messages: ChatMessage[]): ChatMessage[] {
 
 const ASR_MODELS: Record<string, string> = {
   dashscope: "paraformer-realtime-v2",
+  xfyun: "slm",
   xiaomi_mimo: "mimo-v2.5-asr",
   openai_compatible: "OpenAI-compatible ASR",
   sensevoice: "iic/SenseVoiceSmall",
@@ -51,7 +52,7 @@ function audioProviderConfigError({
   const missing: string[] = [];
   const sttStatus = health?.stt_providers?.[asrProvider];
   const ttsStatus = health?.tts_providers?.[ttsProvider];
-  const apiStt = ["dashscope", "xiaomi_mimo", "openai_compatible"].includes(asrProvider);
+  const apiStt = ["dashscope", "xfyun", "xiaomi_mimo", "openai_compatible"].includes(asrProvider);
   const apiTts = ["dashscope", "cosyvoice", "sambert", "xiaomi_mimo", "openai_compatible"].includes(ttsProvider);
   const enabledTtsProviders = health?.tts_enabled_providers;
   if (enabledTtsProviders?.length && !enabledTtsProviders.includes(ttsProvider)) {
@@ -59,8 +60,8 @@ function audioProviderConfigError({
   }
   const sttConfigured = sttStatus?.key_set ?? health?.stt_key_set;
   const ttsConfigured = ttsStatus?.key_set ?? health?.tts_key_set;
-  if (apiStt && (sttConfigured !== true || (["xiaomi_mimo", "openai_compatible"].includes(asrProvider) && sttStatus?.service_url_set !== true))) {
-    missing.push(asrProvider === "dashscope" ? "API 语音识别" : asrProvider === "xiaomi_mimo" ? "小米 MiMo 语音识别" : "OpenAI API 语音识别");
+  if (apiStt && (sttConfigured !== true || (asrProvider === "xfyun" && sttStatus?.credentials_complete !== true) || (["xiaomi_mimo", "openai_compatible"].includes(asrProvider) && sttStatus?.service_url_set !== true))) {
+    missing.push(asrProvider === "dashscope" ? "API 语音识别" : asrProvider === "xfyun" ? "科大讯飞语音识别" : asrProvider === "xiaomi_mimo" ? "小米 MiMo 语音识别" : "OpenAI API 语音识别");
   }
   if (asrProvider === "sensevoice" && sttStatus?.runtime_ready !== true) {
     missing.push(sttStatus?.availability_error || "本地 SenseVoice 运行时未就绪");
@@ -75,6 +76,7 @@ function isSttProviderReady(provider: string, health: RuntimeHealth | null): boo
   const status = health?.stt_providers?.[provider];
   if (provider === "sensevoice") return status?.runtime_ready === true;
   return status?.key_set === true
+    && (provider !== "xfyun" || status.credentials_complete === true)
     && (!["xiaomi_mimo", "openai_compatible"].includes(provider) || status.service_url_set === true);
 }
 

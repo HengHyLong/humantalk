@@ -78,6 +78,7 @@ const TTS_PROVIDER_SUBTITLES: Record<TtsProviderExtended, string> = {
 
 const ASR_PROVIDER_LABELS: Record<string, string> = {
   dashscope: "API 语音识别",
+  xfyun: "科大讯飞识别",
   xiaomi_mimo: "小米 MiMo 识别",
   openai_compatible: "OpenAI API 识别",
   sensevoice: "SenseVoiceSmall",
@@ -85,6 +86,7 @@ const ASR_PROVIDER_LABELS: Record<string, string> = {
 
 const ASR_PROVIDER_SUBTITLES: Record<string, string> = {
   dashscope: "百炼 API",
+  xfyun: "讯飞大模型识别",
   xiaomi_mimo: "MiMo ASR",
   openai_compatible: "OpenAI-compatible",
   sensevoice: "本地模型",
@@ -92,6 +94,7 @@ const ASR_PROVIDER_SUBTITLES: Record<string, string> = {
 
 const ASR_PROVIDER_MODELS: Record<string, string> = {
   dashscope: "paraformer-realtime-v2",
+  xfyun: "slm",
   xiaomi_mimo: "mimo-v2.5-asr",
   openai_compatible: "OpenAI-compatible ASR",
   sensevoice: "iic/SenseVoiceSmall",
