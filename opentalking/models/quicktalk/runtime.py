@@ -74,7 +74,11 @@ class RealtimeV3SessionState:
     def reset(self) -> None:
         self.template_group_index, self.template_group_frame_index = reset_motion_cursor(
             emitted_frames=self.frame_index,
-            group_index=self.template_group_index,
+            group_index=(
+                self.active_template_group_index
+                if self.active_template_group_index >= 0
+                else self.template_group_index
+            ),
             group_count=self.template_group_count,
         )
         self.frame_index = 0
@@ -591,13 +595,6 @@ class RealtimeV3Worker:
             state.frame_index += 1
             state.template_group_index = next_group
             state.template_group_frame_index = next_frame
-            if next_group != current_group:
-                current_name = self.motion_template_videos[current_group].name
-                next_name = self.motion_template_videos[next_group].name
-                print(
-                    f"v3_motion_template_switch from={current_name} to={next_name}",
-                    flush=True,
-                )
             return context
 
         contexts = groups[0]

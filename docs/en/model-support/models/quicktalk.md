@@ -39,6 +39,13 @@ not require the avatar manifest to be bound to a dedicated type; if the runtime 
 fixed template video, make sure that asset is reachable from deployment configuration
 or session initialization.
 
+With the local QuickTalk backend, multiple uploaded speaking-motion clips play
+in sequence within one reply, returning to the first clip after the last.
+Clip changes use a short visual transition. A single clip still plays in a
+forward/backward loop. `quicktalk.motion_max_seconds` limits the portion used
+from each clip. Motion scheduling with OmniRT is controlled by that external
+service.
+
 ## Configure Backend
 
 ```bash

@@ -30,23 +30,24 @@ def next_motion_context(
     group_index: int,
     frame_index: int,
 ) -> tuple[T, int, int]:
-    """Return a frame from one stable motion clip using seamless ping-pong playback.
+    """Play uploaded clips in order, advancing after each complete clip.
 
-    A speaking turn deliberately stays on one motion group.  Switching between
-    unrelated uploaded clips inside the same WebRTC stream creates a large pose
-    discontinuity which remains visible even when crossfaded.  The next group
-    is selected by :func:`reset_motion_cursor` between utterances instead.
+    A lone clip keeps seamless ping-pong playback.  With several clips, the
+    caller blends the boundary between groups while speech continues.
     """
     if not groups or any(not group for group in groups):
         raise ValueError("QuickTalk motion context groups must be non-empty")
     selected_group = group_index % len(groups)
     contexts = groups[selected_group]
-    selected_frame = ping_pong_frame_index(
-        frame_index=frame_index,
-        frame_count=len(contexts),
-    )
-    context = contexts[selected_frame]
-    return context, selected_group, max(0, int(frame_index)) + 1
+    cursor = max(0, int(frame_index))
+    if len(groups) == 1:
+        context = contexts[ping_pong_frame_index(frame_index=cursor, frame_count=len(contexts))]
+        return context, selected_group, cursor + 1
+    context = contexts[cursor % len(contexts)]
+    next_cursor = cursor % len(contexts) + 1
+    if next_cursor == len(contexts):
+        return context, (selected_group + 1) % len(groups), 0
+    return context, selected_group, next_cursor
 
 
 def reset_motion_cursor(
