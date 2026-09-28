@@ -46,6 +46,49 @@ function normalizeEntityQuery(value: string): string {
   return text;
 }
 
+/**
+ * True when the utterance refers only to the current exhibition itself, not
+ * to a specific exhibitor/exhibit whose keywords may accidentally contain
+ * the exhibition name or code.
+ */
+export function isExhibitionOnlyReference(text: string, exhibitionTerms: string[]): boolean {
+  let normalized = normalizeEntityKeyword(text);
+  if (!normalized) return false;
+
+  const prefixes = [
+    "请问", "麻烦", "请", "帮我", "我想了解一下", "我想了解", "想了解一下", "想了解",
+    "介绍一下", "介绍", "了解一下", "了解", "告诉我",
+  ].map(normalizeEntityKeyword).sort((left, right) => right.length - left.length);
+  const suffixes = [
+    "是什么", "是什么呢", "有什么", "有哪些", "怎么样", "简介", "介绍", "呢", "吗", "啊", "呀",
+  ].map(normalizeEntityKeyword).sort((left, right) => right.length - left.length);
+
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const prefix of prefixes) {
+      if (prefix && normalized.startsWith(prefix) && normalized.length > prefix.length) {
+        normalized = normalized.slice(prefix.length);
+        changed = true;
+        break;
+      }
+    }
+    for (const suffix of suffixes) {
+      if (suffix && normalized.endsWith(suffix) && normalized.length > suffix.length) {
+        normalized = normalized.slice(0, -suffix.length);
+        changed = true;
+        break;
+      }
+    }
+  }
+
+  return exhibitionTerms
+    .map(normalizeEntityKeyword)
+    .some((term) => term.length >= 2 && (
+      normalized === term || (normalized.length >= 4 && term.includes(normalized))
+    ));
+}
+
 export function matchExhibitionEntities(text: string, entities: ExhibitionEntityCard[]): ExhibitionEntityCard[] {
   const normalizedText = normalizeEntityKeyword(text);
   if (!normalizedText) return [];
