@@ -58,3 +58,12 @@ def test_presentation_images_open_an_accessible_lightbox() -> None:
     assert 'className="digital-display-zoom-trigger exhibition-entity-card-image"' in entity_card
     assert 'className="digital-display-zoom-trigger exhibition-product-list-image"' in product_list
     assert ".digital-display-image-lightbox { position: absolute; inset: 0;" in styles
+
+
+def test_exhibitor_image_is_primary_and_centered() -> None:
+    styles = STYLE_SOURCE.read_text(encoding="utf-8")
+    card_rule = styles.split("\n.exhibition-entity-card.is-immersive {", 1)[1].split("}", 1)[0]
+    image_rule = styles.split(".exhibition-entity-card.is-immersive .exhibition-entity-card-image {", 1)[1].split("}", 1)[0]
+    assert "flex-direction: column" in card_rule
+    assert "order: -1" in image_rule
+    assert "margin: 0 auto" in image_rule

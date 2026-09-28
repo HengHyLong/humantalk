@@ -26,6 +26,12 @@ const RUNTIME_STT_PRESETS: Record<string, { label: string; baseUrl: string; mode
     model: "mimo-v2.5-asr",
     needsKey: true,
   },
+  xfyun: {
+    label: "科大讯飞大模型识别",
+    baseUrl: "wss://iat.cn-huabei-1.xf-yun.com/v1",
+    model: "slm",
+    needsKey: true,
+  },
   sensevoice: {
     label: "SenseVoice",
     baseUrl: "",

@@ -353,6 +353,10 @@ def _current_stt_payload(provider: str, settings: Any, values: dict[str, str]) -
         base_url = _env_value(values, "OPENTALKING_STT_XIAOMI_BASE_URL", _settings_value(settings, "stt_xiaomi_base_url"))
         model = _env_value(values, "OPENTALKING_STT_XIAOMI_MODEL", _settings_value(settings, "stt_xiaomi_model", "mimo-v2.5-asr"))
         key = _env_value(values, "OPENTALKING_STT_XIAOMI_API_KEY", _settings_value(settings, "stt_xiaomi_api_key"))
+    elif provider == "xfyun":
+        base_url = "wss://iat.cn-huabei-1.xf-yun.com/v1"
+        model = "slm"
+        key = _env_value(values, "OPENTALKING_STT_XFYUN_API_KEY", _settings_value(settings, "stt_xfyun_api_key"))
     elif provider == "sensevoice":
         base_url = ""
         model = _env_value(values, "OPENTALKING_STT_SENSEVOICE_MODEL", _settings_value(settings, "stt_sensevoice_model", "iic/SenseVoiceSmall"))
@@ -604,6 +608,8 @@ def _build_updates(payload: RuntimeConfigPayload) -> dict[str, str]:
     if value := _strip(payload.stt_api_key):
         if stt_provider == "openai_compatible":
             updates["OPENTALKING_STT_OPENAI_API_KEY"] = value
+        elif stt_provider == "xfyun":
+            updates["OPENTALKING_STT_XFYUN_API_KEY"] = value
         elif stt_provider == "xiaomi_mimo":
             updates["OPENTALKING_STT_XIAOMI_API_KEY"] = value
         else:

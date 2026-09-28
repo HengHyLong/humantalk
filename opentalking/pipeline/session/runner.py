@@ -1757,6 +1757,7 @@ class SessionRunner:
             self._conversation = ConversationHistory(
                 system_prompt=system_prompt,
                 max_turns=20,
+                reset_after_turns=3,
             )
         return self._conversation
 

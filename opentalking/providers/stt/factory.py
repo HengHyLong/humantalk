@@ -17,7 +17,7 @@ import numpy as np
 
 from opentalking.core.model_paths import local_audio_model_root
 
-STT_PROVIDERS = frozenset({"dashscope", "openai_compatible", "xiaomi_mimo", "funasr", "sensevoice", "sherpa_onnx"})
+STT_PROVIDERS = frozenset({"dashscope", "openai_compatible", "xiaomi_mimo", "xfyun", "funasr", "sensevoice", "sherpa_onnx"})
 LOCAL_STT_PROVIDERS = frozenset({"funasr", "sensevoice", "sherpa_onnx"})
 _SENSEVOICE_TAG_RE = re.compile(r"<\|[^|<>]+\|>")
 
@@ -214,6 +214,8 @@ def _xiaomi_stt_audio_format() -> str:
 
 def _stt_model(provider: str) -> str:
     provider = normalize_stt_provider(provider, default="dashscope") or "dashscope"
+    if provider == "xfyun":
+        return "slm"
     if provider == "funasr":
         return (
             _provider_env("funasr", "MODEL")
@@ -473,6 +475,14 @@ def create_stt_adapter(provider: str | None = None):
                 protocol=_openai_stt_protocol(),
                 audio_format=_openai_stt_audio_format(),
             )
+    elif selected == "xfyun":
+        from opentalking.providers.stt.xfyun.adapter import XfyunSTTAdapter
+
+        adapter = XfyunSTTAdapter(
+            app_id=_provider_env("xfyun", "APP_ID") or _settings_value("stt_xfyun_app_id"),
+            api_key=_provider_env("xfyun", "API_KEY") or _settings_value("stt_xfyun_api_key"),
+            api_secret=_provider_env("xfyun", "API_SECRET") or _settings_value("stt_xfyun_api_secret"),
+        )
     elif selected in {"funasr", "sensevoice"}:
         adapter = LocalFunASRSTTAdapter(provider=selected, model=model, model_dir=model_dir, device=device)
     elif selected == "sherpa_onnx":
@@ -574,6 +584,9 @@ def stt_provider_config(provider: str) -> dict[str, str | bool]:
     elif selected == "xiaomi_mimo":
         key = _xiaomi_stt_api_key()
         service_url = _xiaomi_stt_base_url()
+    elif selected == "xfyun":
+        key = _provider_env("xfyun", "API_KEY") or _settings_value("stt_xfyun_api_key")
+        service_url = "wss://iat.cn-huabei-1.xf-yun.com/v1"
     config: dict[str, str | bool] = {
         "provider": selected,
         "model": model,
@@ -596,4 +609,9 @@ def stt_provider_config(provider: str) -> dict[str, str | bool]:
             )
     if selected == "xiaomi_mimo":
         config["profile"] = "xiaomi_mimo"
+    if selected == "xfyun":
+        config["credentials_complete"] = bool(
+            key and (_provider_env("xfyun", "APP_ID") or _settings_value("stt_xfyun_app_id"))
+            and (_provider_env("xfyun", "API_SECRET") or _settings_value("stt_xfyun_api_secret"))
+        )
     return config

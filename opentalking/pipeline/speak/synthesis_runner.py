@@ -400,6 +400,7 @@ class FlashTalkRunner:
         self.conversation = ConversationHistory(
             system_prompt=system_prompt,
             max_turns=20,
+            reset_after_turns=3,
         )
 
         # WebRTC (created in prepare)

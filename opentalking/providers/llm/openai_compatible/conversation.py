@@ -8,13 +8,17 @@ class ConversationHistory:
         self,
         system_prompt: str = "\u4f60\u662f\u4e00\u4e2a\u53cb\u597d\u7684\u6570\u5b57\u4eba\u52a9\u624b\u3002",
         max_turns: int = 20,
+        reset_after_turns: int | None = None,
     ) -> None:
         self.system_prompt = system_prompt
         self.max_turns = max_turns
+        self.reset_after_turns = reset_after_turns
         self._messages: list[dict[str, str]] = []
 
     def add_user(self, text: str) -> None:
         """Add a user message."""
+        if self.reset_after_turns and sum(message["role"] == "assistant" for message in self._messages) >= self.reset_after_turns:
+            self.clear()
         self._messages.append({"role": "user", "content": text})
         self._trim()
 

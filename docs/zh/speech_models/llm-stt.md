@@ -21,7 +21,9 @@ OPENTALKING_LLM_MODEL=qwen-flash
 | OpenAI | 设置 `OPENTALKING_LLM_BASE_URL=https://api.openai.com/v1` 并使用 OpenAI 模型 id。 |
 | vLLM | 指向 vLLM OpenAI-compatible server。 |
 | Ollama | 使用 Ollama OpenAI-compatible endpoint，通常为 `http://localhost:11434/v1`。 |
-| DeepSeek | 使用 provider 提供的 OpenAI-compatible base URL 和模型 id。 |
+| DeepSeek | 使用 `https://api.deepseek.com` 和 `deepseek-flash`，密钥写入 `OPENTALKING_LLM_API_KEY`。 |
+
+在展会数字人会话中，每完成三轮 LLM 问答，下一轮会自动以系统提示词重新开始，避免下一位观众继承上一位的短期对话内容。
 
 ## STT
 
@@ -37,6 +39,18 @@ OPENTALKING_STT_DASHSCOPE_MODEL=paraformer-realtime-v2
 
 DashScope 部署中，LLM 与 STT 可以使用同一把实际 key，但必须分别写入
 `OPENTALKING_LLM_API_KEY` 与 `OPENTALKING_STT_DASHSCOPE_API_KEY`。如果文本对话正常但麦克风输入失败，优先检查 STT 模块 key。
+
+### 科大讯飞大模型识别
+
+使用讯飞大模型多语种识别 WebSocket API，支持 16 kHz 单声道 PCM，单次语音最长 60 秒。该接口可在 Windows 和 Linux 运行；讯飞 Linux SDK 文档中的本地动态库不需要安装。
+
+```env title=".env"
+OPENTALKING_STT_DEFAULT_PROVIDER=xfyun
+OPENTALKING_STT_ENABLED_PROVIDERS=xfyun
+OPENTALKING_STT_XFYUN_APP_ID=<xfyun-app-id>
+OPENTALKING_STT_XFYUN_API_KEY=<xfyun-api-key>
+OPENTALKING_STT_XFYUN_API_SECRET=<xfyun-api-secret>
+```
 
 ### 本地 SenseVoiceSmall
 

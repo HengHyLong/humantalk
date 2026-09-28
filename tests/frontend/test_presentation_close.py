@@ -48,3 +48,12 @@ def test_registration_dialog_uses_the_same_lower_face_safe_area() -> None:
     assert ".digital-display-presentation-stack.is-registration { width:" in source
     assert ".digital-display-presentation-stack.is-registration { top:" not in source
     assert ".digital-display-presentation-stack .digital-display-waist-panel.is-registration { max-height: 100%; overflow-y: auto; }" in source
+
+
+def test_new_visitor_turn_replaces_the_previous_presentation() -> None:
+    source = APP_SOURCE.read_text(encoding="utf-8")
+    turn = source.split("const routeRecognizedText = useCallback", 1)[1]
+    cleanup = turn.index("setNavigationResult(null);")
+    assert cleanup < turn.index("const pendingShopping =")
+    assert "setShoppingRegistration(null);" in turn[cleanup:turn.index("const pendingShopping =")]
+    assert "message.relatedEntities?.length ? { ...message, relatedEntities: [] }" in turn[cleanup:turn.index("const pendingShopping =")]

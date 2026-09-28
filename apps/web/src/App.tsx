@@ -395,6 +395,7 @@ const BROKEN_VIDEO_CREATION_FASTLIVEPORTRAIT_DEFAULT_CONFIG: FasterLivePortraitC
 
 const STT_MODEL_BY_PROVIDER: Record<string, string> = {
   dashscope: "paraformer-realtime-v2",
+  xfyun: "slm",
   xiaomi_mimo: "mimo-v2.5-asr",
   openai_compatible: "OpenAI-compatible ASR",
   sensevoice: "iic/SenseVoiceSmall",
@@ -402,7 +403,7 @@ const STT_MODEL_BY_PROVIDER: Record<string, string> = {
 
 function normalizeAsrProvider(value: string | null | undefined, fallback = "dashscope"): string {
   const provider = (value ?? "").trim();
-  return ["dashscope", "xiaomi_mimo", "openai_compatible", "sensevoice"].includes(provider) ? provider : fallback;
+  return ["dashscope", "xiaomi_mimo", "openai_compatible", "xfyun", "sensevoice"].includes(provider) ? provider : fallback;
 }
 
 function sttModelForProvider(provider: string): string {
@@ -410,7 +411,7 @@ function sttModelForProvider(provider: string): string {
 }
 
 function sttProviderNeedsApiKey(provider: string): boolean {
-  return ["dashscope", "xiaomi_mimo", "openai_compatible"].includes(normalizeAsrProvider(provider, "dashscope"));
+  return ["dashscope", "xiaomi_mimo", "openai_compatible", "xfyun"].includes(normalizeAsrProvider(provider, "dashscope"));
 }
 
 function ttsProviderNeedsApiKey(provider: TtsProviderExtended): boolean {
@@ -646,9 +647,11 @@ function validateAudioProviderConfigBeforeStart({
   const ttsKeySet = ttsStatus?.key_set ?? runtimeStatus?.tts_key_set;
   const sttServiceUrlSet = sttStatus?.service_url_set;
   const ttsServiceUrlSet = ttsStatus?.service_url_set ?? runtimeStatus?.tts_service_url_set;
-  if (sttProviderNeedsApiKey(sttProvider) && (sttKeySet !== true || ((sttProvider === "openai_compatible" || sttProvider === "xiaomi_mimo") && sttServiceUrlSet !== true))) {
+  if (sttProviderNeedsApiKey(sttProvider) && (sttKeySet !== true || (sttProvider === "xfyun" && sttStatus?.credentials_complete !== true) || ((sttProvider === "openai_compatible" || sttProvider === "xiaomi_mimo") && sttServiceUrlSet !== true))) {
     missing.push(sttProvider === "openai_compatible"
       ? "API 语音识别缺少对应的 API Key 或服务地址"
+      : sttProvider === "xfyun"
+        ? "讯飞语音识别需要 AppID、APIKey 和 APISecret"
       : sttProvider === "xiaomi_mimo"
         ? "小米 MiMo 语音识别缺少对应的 API Key 或服务地址"
         : "API 语音识别缺少对应的 API Key");
@@ -691,7 +694,7 @@ type HealthResponse = {
   stt_device?: string;
   stt_default_provider?: string;
   stt_enabled_providers?: string[];
-  stt_providers?: Record<string, { key_set?: boolean; model?: string; model_dir?: string; device?: string; service_url_set?: boolean; runtime_ready?: boolean; availability_error?: string }>;
+  stt_providers?: Record<string, { key_set?: boolean; model?: string; model_dir?: string; device?: string; service_url_set?: boolean; credentials_complete?: boolean; runtime_ready?: boolean; availability_error?: string }>;
 };
 
 function sanitizeFasterLivePortraitConfig(
@@ -3033,6 +3036,12 @@ export default function App() {
   const routeRecognizedText = useCallback(async (rawText: string, options: RecognizedTextOptions = {}) => {
     const text = rawText.trim();
     if (!text || !sessionId) return;
+    // A new visitor turn replaces any presentation left by the previous turn.
+    setNavigationResult(null);
+    setShoppingRegistration(null);
+    setMessages((current) => current.map((message) => (
+      message.relatedEntities?.length ? { ...message, relatedEntities: [] } : message
+    )));
     setVoiceTurnActive(true);
     const databaseShortcut = options.databaseShortcut;
     const displayText = options.displayText?.trim() || text;

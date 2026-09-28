@@ -21,7 +21,9 @@ Common alternatives:
 | OpenAI | Set `OPENTALKING_LLM_BASE_URL=https://api.openai.com/v1` and use an OpenAI model id. |
 | vLLM | Point `OPENTALKING_LLM_BASE_URL` to the vLLM OpenAI-compatible server. |
 | Ollama | Use the Ollama OpenAI-compatible endpoint, usually `http://localhost:11434/v1`. |
-| DeepSeek | Use the provider's OpenAI-compatible base URL and model id. |
+| DeepSeek | Use `https://api.deepseek.com` with `deepseek-flash` and set `OPENTALKING_LLM_API_KEY`. |
+
+Exhibition sessions start a fresh LLM conversation after every three completed question-answer turns so the next visitor does not inherit the previous visitor's short-term chat context.
 
 Verify the API key and endpoint by starting OpenTalking and sending a text `speak`
 request after creating a `mock` session.
@@ -42,6 +44,18 @@ For DashScope-based deployments, LLM and STT may use the same actual key, but it
 must be written explicitly to `OPENTALKING_LLM_API_KEY` and
 `OPENTALKING_STT_DASHSCOPE_API_KEY`. If microphone input fails but text `speak` works, verify
 the STT module key first.
+
+### iFLYTEK large-model recognition
+
+The multilingual recognition WebSocket API accepts 16 kHz mono PCM and audio up to 60 seconds. It runs on Windows and Linux without the Linux SDK shared library.
+
+```env title=".env"
+OPENTALKING_STT_DEFAULT_PROVIDER=xfyun
+OPENTALKING_STT_ENABLED_PROVIDERS=xfyun
+OPENTALKING_STT_XFYUN_APP_ID=<xfyun-app-id>
+OPENTALKING_STT_XFYUN_API_KEY=<xfyun-api-key>
+OPENTALKING_STT_XFYUN_API_SECRET=<xfyun-api-secret>
+```
 
 ### Local SenseVoiceSmall
 
