@@ -399,6 +399,15 @@ def _llm_signature(item: dict[str, Any]) -> tuple[str, str, str]:
     )
 
 
+def _same_conversation_config(left: dict[str, Any], right: dict[str, Any]) -> bool:
+    # RuntimeConfig stores every conversational provider as openai_compatible.
+    # The endpoint and model identify the selected Admin record after a switch.
+    return (
+        _llm_signature(left)[1:] == _llm_signature(right)[1:]
+        and str(left.get("apiKey") or "") == str(right.get("apiKey") or "")
+    )
+
+
 def _llm_usage(item: dict[str, Any]) -> str:
     return str(item.get("usage") or "conversation").strip().lower() or "conversation"
 
@@ -408,6 +417,32 @@ def _resolve_llm_config(request: Request, record_id: str) -> dict[str, Any] | No
     if stored is not None:
         return stored
     return next((item for item in _configured_llm_configs(request) if item["id"] == record_id), None)
+
+
+def _preserve_current_conversation_config(request: Request) -> None:
+    current = next(
+        (item for item in _configured_llm_configs(request) if _llm_usage(item) == "conversation"),
+        None,
+    )
+    if not current or not all(current.get(field) for field in ("baseUrl", "model", "apiKey")):
+        return
+    store = get_store(request)
+    if any(
+        _same_conversation_config(item, current)
+        for item in store.list_records("llm_configs")
+        if _llm_usage(item) == "conversation"
+    ):
+        return
+    now = utc_now()
+    store.save_record("llm_configs", {
+        **current,
+        "id": f"llm-{uuid.uuid4().hex[:12]}",
+        "name": "原有对话网关（自动保留）",
+        "source": "managed",
+        "readOnly": False,
+        "createdAt": now,
+        "updatedAt": now,
+    })
 
 
 def _normalized_llm_config(body: LlmConfigBody, *, existing: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -497,7 +532,8 @@ def list_llm_configs(request: Request, auth: dict[str, Any] = Depends(current_us
                 and (
                     configured_provider == VIDU_PROVIDER
                     and str(item.get("provider") or "").strip().lower() == VIDU_PROVIDER
-                    or _llm_signature(item) == current_signature
+                    or (_same_conversation_config(item, configured_item)
+                        if usage == "conversation" else _llm_signature(item) == current_signature)
                 )
             ),
             None,
@@ -524,9 +560,9 @@ def list_llm_configs(request: Request, auth: dict[str, Any] = Depends(current_us
     # provider/base URL/model. Keep the active/newest record and never expose
     # duplicate logical configurations to the admin UI.
     items: list[dict[str, Any]] = []
-    seen: set[tuple[str, str, str, str]] = set()
+    seen: set[tuple[str, str, str, str, str]] = set()
     for item in [*configured, *managed]:
-        key = (_llm_usage(item), *_llm_signature(item))
+        key = (_llm_usage(item), *_llm_signature(item), str(item.get("apiKey") or ""))
         if key in seen:
             continue
         seen.add(key)
@@ -576,6 +612,8 @@ async def activate_llm_config(record_id: str, request: Request, auth: dict[str, 
     store = get_store(request)
     _require(store, auth, "system:llm:write")
     target = _record(store, "llm_configs", record_id) or {}
+    if _llm_usage(target) == "conversation":
+        _preserve_current_conversation_config(request)
     runtime = await _apply_llm_config(request, target)
     now = utc_now()
     target_usage = _llm_usage(target)

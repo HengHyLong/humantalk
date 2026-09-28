@@ -31,6 +31,8 @@ OpenTalking 从两个来源加载配置，按优先级从高到低：
 | `OPENTALKING_LLM_MODEL` | `qwen-flash` | 传递给端点的模型标识。 |
 | `OPENTALKING_LLM_SYSTEM_PROMPT` | _口语化默认值_ | System prompt。默认值指示模型以纯文本口语方式回复，不使用 markdown。 |
 
+已有第三方网关时，保留它的 `.env` 配置。在管理员界面打开“系统管理 → 大模型配置”，新增服务商为 `DeepSeek` 的配置，填写 Base URL `https://api.deepseek.com/v1`、模型名称和 DeepSeek API Key；保存后先“测试连接”，再“设为当前配置”。首次切换时，系统会将原网关及其密钥自动保留为可再次启用的配置。以后可在同一页面切回原网关，无需重填密钥。配置保存在 Admin SQLite，切换时当前运行参数也会写入 `.env`；请保留 Admin 数据库以便继续切换。
+
 ### 语音识别
 
 默认语音识别后端为 DashScope Paraformer realtime。

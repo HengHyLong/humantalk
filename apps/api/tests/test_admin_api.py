@@ -815,6 +815,62 @@ def test_llm_config_crud_masks_secret_and_activation_updates_runtime(tmp_path, m
         assert client.delete(f"/api/v1/admin/llm-configs/{record_id}", headers=headers).status_code == 409
 
 
+def test_switching_to_deepseek_preserves_gateway_for_admin_switch_back(tmp_path, monkeypatch) -> None:
+    async def fake_apply(request, item):
+        settings = request.app.state.settings
+        settings.llm_provider = "openai_compatible"
+        settings.llm_base_url = item["baseUrl"]
+        settings.llm_model = item["model"]
+        settings.llm_api_key = item["apiKey"]
+        settings.llm_system_prompt = item["systemPrompt"]
+        return {"live_runners_refreshed": 0}
+
+    monkeypatch.setattr(admin_routes, "_apply_llm_config", fake_apply)
+    with _client(tmp_path) as client:
+        settings = client.app.state.settings
+        settings.llm_provider = "openai_compatible"
+        settings.llm_base_url = "https://gateway.example.test/v1"
+        settings.llm_model = "deepseek/gateway-model"
+        settings.llm_api_key = "gateway-secret"
+        settings.llm_system_prompt = "网关提示词"
+        headers = _login(client)
+        created = client.post(
+            "/api/v1/admin/llm-configs",
+            headers=headers,
+            json={
+                "name": "DeepSeek 官方",
+                "provider": "deepseek",
+                "baseUrl": "https://api.deepseek.com/v1",
+                "model": "deepseek-chat",
+                "apiKey": "deepseek-secret",
+                "systemPrompt": "官方提示词",
+            },
+        )
+        assert created.status_code == 200
+        deepseek_id = created.json()["id"]
+
+        activated = client.post(f"/api/v1/admin/llm-configs/{deepseek_id}/activate", headers=headers)
+        assert activated.status_code == 200
+        stored = client.app.state.admin_store.list_records("llm_configs")
+        gateway = next(item for item in stored if item["baseUrl"] == "https://gateway.example.test/v1")
+        assert gateway["apiKey"] == "gateway-secret"
+        assert gateway["isActive"] is False
+
+        listed = client.get("/api/v1/admin/llm-configs", headers=headers)
+        assert listed.status_code == 200
+        conversation = [item for item in listed.json()["items"] if item["usage"] == "conversation"]
+        assert len(conversation) == 2
+        assert next(item for item in conversation if item["id"] == deepseek_id)["isActive"] is True
+        assert next(item for item in conversation if item["id"] == gateway["id"])["readOnly"] is False
+        assert "gateway-secret" not in listed.text
+        assert "deepseek-secret" not in listed.text
+
+        restored = client.post(f"/api/v1/admin/llm-configs/{gateway['id']}/activate", headers=headers)
+        assert restored.status_code == 200
+        assert settings.llm_base_url == "https://gateway.example.test/v1"
+        assert client.app.state.admin_store.get_record("llm_configs", deepseek_id)["isActive"] is False
+
+
 def test_vidu_config_activation_uses_digital_human_runtime_without_disabling_chat(tmp_path, monkeypatch) -> None:
     applied: list[admin_routes.RuntimeConfigPayload] = []
 

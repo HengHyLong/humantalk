@@ -32,6 +32,7 @@ export function RoleManagementPage({ canWrite }: SystemProps) {
 const LLM_PROVIDER_OPTIONS: Array<{ value: string; label: string; baseUrl: string; model: string }> = [
   { value: "dashscope", label: "阿里云百炼 / DashScope", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "qwen-flash" },
   { value: "deepseek", label: "DeepSeek", baseUrl: "https://api.deepseek.com/v1", model: "deepseek-chat" },
+  { value: "gateway", label: "第三方网关（OpenAI 兼容）", baseUrl: "", model: "" },
   { value: "openai_compatible", label: "OpenAI-compatible", baseUrl: "https://api.openai.com/v1", model: "gpt-4o-mini" },
   { value: "custom", label: "自定义兼容服务", baseUrl: "", model: "" },
 ];
@@ -93,7 +94,7 @@ export function LlmConfigManagementPage({ canWrite, onNavigate }: SystemProps) {
       if (saved.provider === "vidu" && !saved.isActive) {
         saved = await adminApi.activateLlmConfig(saved.id);
       }
-      setItems((current) => [saved, ...current.filter((item) => item.id !== saved.id && item.id !== editing.id).map((item) => (item.usage || "conversation") === (saved.usage || "conversation") ? { ...item, isActive: false } : item)]);
+      setItems((current) => [saved, ...current.filter((item) => item.id !== saved.id && item.id !== editing.id).map((item) => saved.isActive && (item.usage || "conversation") === (saved.usage || "conversation") ? { ...item, isActive: false } : item)]);
       setEditing(null);
       setNotice(saved.provider === "vidu" && saved.isActive ? "Vidu Key 已保存。仅选择 Vidu 模型并上传单张图片的数字人会使用该外部驱动。" : saved.isActive ? "配置已保存，新建对话会话将使用该配置。" : "配置已保存到 SQLite。");
     } catch (caught) { setError(caught instanceof Error ? caught.message : "大模型配置保存失败。"); }
@@ -101,7 +102,7 @@ export function LlmConfigManagementPage({ canWrite, onNavigate }: SystemProps) {
   };
   const activate = async (item: LlmConfig) => {
     setBusyId(item.id); setError(""); setNotice("");
-    try { const saved = await adminApi.activateLlmConfig(item.id); setItems((current) => current.map((candidate) => (candidate.usage || "conversation") === (saved.usage || "conversation") ? { ...candidate, isActive: candidate.id === saved.id } : candidate)); setNotice(`已启用“${saved.name}”，新会话将使用该配置。`); }
+    try { const saved = await adminApi.activateLlmConfig(item.id); await reload(); setNotice(`已启用“${saved.name}”，新会话将使用该配置。`); }
     catch (caught) { setError(caught instanceof Error ? caught.message : "启用配置失败。"); }
     finally { setBusyId(""); }
   };
@@ -122,7 +123,7 @@ export function LlmConfigManagementPage({ canWrite, onNavigate }: SystemProps) {
   const activeVidu = items.find((item) => item.isActive && item.usage === "digital_human" && item.provider === "vidu");
   const editableVidu = items.find((item) => item.provider === "vidu" && !item.readOnly) || items.find((item) => item.provider === "vidu");
   const conversationItems = items.filter((item) => item.provider !== "vidu");
-  return <div className="p-6 xl:p-8"><Header eyebrow="系统管理" title="大模型配置" description="对话大模型与外部数字人驱动独立配置；接入 Vidu 不会替换原有数字人驱动。" action={<Button onClick={() => setEditing(emptyLlmConfig())} disabled={!canWrite}>+ 新增配置</Button>} />
+  return <div className="p-6 xl:p-8"><Header eyebrow="系统管理" title="大模型配置" description="保留原有第三方网关，新增 DeepSeek 后可在这里测试并切换对话模型。" action={<Button onClick={() => setEditing(emptyLlmConfig())} disabled={!canWrite}>+ 新增配置</Button>} />
     {error ? <p className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-700">{error}</p> : null}
     {notice ? <p className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs text-emerald-700">{notice}</p> : null}
     <div className="mb-4 grid gap-4 lg:grid-cols-2"><Card className="p-5"><div className="flex flex-wrap items-center justify-between gap-4"><div><p className="text-xs font-semibold text-slate-400">当前对话大模型</p><h2 className="mt-2 text-lg font-semibold text-slate-900">{active?.name || "尚未检测到当前运行配置"}</h2><p className="mt-1 text-xs text-slate-500">{active ? `${active.model} · ${active.baseUrl}` : "请在下方选择一项对话配置并启用。"}</p></div><Badge tone={active ? "green" : "amber"}>{active ? "运行中" : "待配置"}</Badge></div></Card><Card className="p-5"><div className="flex flex-wrap items-center justify-between gap-4"><div><p className="text-xs font-semibold text-slate-400">Vidu 外部数字人驱动</p><h2 className="mt-2 text-lg font-semibold text-slate-900">{activeVidu ? "已配置 Vidu Key" : "尚未配置 Vidu Key"}</h2><p className="mt-1 text-xs text-slate-500">只需配置 Key；数字人图片在“数字人形象”中选择 Vidu 后上传。</p></div><div className="flex items-center gap-2"><Badge tone={activeVidu ? "green" : "amber"}>{activeVidu ? "已接入" : "待配置"}</Badge><Button variant="secondary" onClick={() => setEditing(editableViduConfig(editableVidu))} disabled={!canWrite}>{activeVidu ? "更新 Key" : "配置 Key"}</Button></div></div></Card></div>
