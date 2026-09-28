@@ -114,7 +114,7 @@ import {
   TTS_PROVIDER_STORAGE_KEY,
 } from "./constants/ttsQwen";
 import type { ConnectionStatus, ExhibitionEntityCard, MemoryLibrary, Message, QueueInfo } from "./types";
-import { matchExhibitionEntities, selectExhibitionEntity } from "./lib/exhibitionEntityMatch";
+import { matchExhibitionEntities, normalizeEntityKeyword, selectExhibitionEntity } from "./lib/exhibitionEntityMatch";
 import { readExhibitionEntityCache, writeExhibitionEntityCache } from "./lib/exhibitionCache";
 import { useAutoDismiss } from "./lib/useAutoDismiss";
 import { classifyProductInterestDecision, classifyRegistrationFollowupDecision, selectShoppingPresentationEntities } from "./lib/shoppingConversation";
@@ -2969,11 +2969,22 @@ export default function App() {
       setIsSpeaking(true);
       setVideoState("think");
       if (direct) setCurrentSubtitle(text);
-      setMessages((prev) => [
-        ...prev.filter((m) => m.id !== previousPendingId && m.id !== activeAssistantId),
-        ...(user ? [{ id: makeId(), role: "user" as const, text: user, timestamp: Date.now() }] : []),
-        { id: pendingId, role: "assistant", text: direct ? text : "正在合成语音和口型...", timestamp: Date.now(), relatedEntities },
-      ]);
+      if (relatedEntities.length) {
+        setNavigationResult(null);
+        setShoppingRegistration(null);
+      }
+      setMessages((prev) => {
+        const retained = prev
+          .filter((m) => m.id !== previousPendingId && m.id !== activeAssistantId)
+          .map((message) => relatedEntities.length && message.relatedEntities?.length
+            ? { ...message, relatedEntities: [] }
+            : message);
+        return [
+          ...retained,
+          ...(user ? [{ id: makeId(), role: "user" as const, text: user, timestamp: Date.now() }] : []),
+          { id: pendingId, role: "assistant", text: direct ? text : "正在合成语音和口型...", timestamp: Date.now(), relatedEntities },
+        ];
+      });
       if (isSpeaking) {
         void apiPost(`/sessions/${sessionId}/interrupt`, {}).catch(() => {});
       }
@@ -3013,7 +3024,21 @@ export default function App() {
     const relatedEntities = selectedEntity
       ? [selectedEntity, ...matchExhibitionEntities(text, exhibitionEntities).filter((entity) => entity.id !== selectedEntity.id)]
       : matchExhibitionEntities(text, exhibitionEntities);
+    const normalizedQuestion = normalizeEntityKeyword(text);
+    const explicitRelatedEntities = relatedEntities.filter((entity) => (
+      selectedEntity?.id === entity.id
+      || [entity.name, ...entity.keywords].some((term) => {
+        const normalizedTerm = normalizeEntityKeyword(term);
+        return normalizedTerm.length >= 2 && normalizedQuestion.includes(normalizedTerm);
+      })
+    ));
     const explicitContentRequest = selectedEntity ? "entity" : classifyExplicitContentRequest(text);
+    const isEntityNameOnlyQuery = explicitRelatedEntities.some((entity) => (
+      [entity.name, ...entity.keywords]
+        .map(normalizeEntityKeyword)
+        .some((term) => term.length >= 2 && normalizedQuestion === term)
+    ));
+    const wantsEntityPresentation = explicitContentRequest === "entity" || isEntityNameOnlyQuery;
 
     const introduceExhibitAndOfferRegistration = async (
       exhibit: ExhibitionEntityCard,
@@ -3085,15 +3110,15 @@ export default function App() {
         const address = venue.details.find((detail) => detail.label === "地址")?.value;
         return address ? `${venue.name}，地址是${address}` : venue.name;
       }).join("；");
-      enqueueSpeech(
-        venueSummary
-          ? `本次展览有以下场馆和导航信息：${venueSummary}。请选择具体场馆或目的地，我可以继续为您查询路线。`
-          : "本次展览暂未发布场馆和导航信息，请咨询现场工作人员。",
-        displayText,
-        venues.slice(0, 4),
-        true,
-      );
-      return;
+      if (venueSummary) {
+        enqueueSpeech(
+          `本次展览有以下场馆和导航信息：${venueSummary}。请选择具体场馆或目的地，我可以继续为您查询路线。`,
+          displayText,
+          venues.slice(0, 4),
+          true,
+        );
+        return;
+      }
     }
 
     if (databaseShortcut === "conference_services") {
@@ -3103,15 +3128,15 @@ export default function App() {
         const location = schedule.details.find((detail) => detail.label === "地点")?.value;
         return [schedule.name, time, location].filter(Boolean).join("，");
       }).join("；");
-      enqueueSpeech(
-        scheduleSummary
-          ? `本次会展有以下会议安排：${scheduleSummary}。具体安排以现场最新通知为准。`
-          : "本次会展暂未发布会议日程和服务信息，请以现场最新通知为准。",
-        displayText,
-        schedules.slice(0, 4),
-        true,
-      );
-      return;
+      if (scheduleSummary) {
+        enqueueSpeech(
+          `本次会展有以下会议安排：${scheduleSummary}。具体安排以现场最新通知为准。`,
+          displayText,
+          schedules.slice(0, 4),
+          true,
+        );
+        return;
+      }
     }
 
     if (databaseShortcut === "about_exhibition") {
@@ -3119,14 +3144,13 @@ export default function App() {
       const detailText = exhibition?.details
         .map((detail) => `${detail.label}：${detail.value}`)
         .join("；");
-      const overview = [exhibition?.name, exhibition?.description, detailText].filter(Boolean).join("。 ");
-      enqueueSpeech(
-        overview || "本次展览暂未发布展会介绍，请咨询现场工作人员。",
-        displayText,
-        exhibition ? [exhibition] : [],
-        true,
-      );
-      return;
+      const overview = exhibition?.description || detailText
+        ? [exhibition?.name, exhibition?.description, detailText].filter(Boolean).join("。 ")
+        : "";
+      if (overview) {
+        enqueueSpeech(overview, displayText, exhibition ? [exhibition] : [], true);
+        return;
+      }
     }
 
     const pendingExhibition = pendingExhibitionFollowupRef.current;
@@ -3338,7 +3362,7 @@ export default function App() {
           session_id: sessionId,
           language: conversationLanguage,
         });
-        const competingEntity = relatedEntities.find((entity) => (
+        const competingEntity = explicitRelatedEntities.find((entity) => (
           entity.kind === "exhibit"
           || entity.kind === "exhibitor"
           || entity.kind === "point"
@@ -3397,13 +3421,20 @@ export default function App() {
           enqueueSpeech(prompt, text, [], true);
           return;
         }
-        setNavigationResult(result);
-        const spokenText = result.spoken_text?.trim();
-        // Navigation has its own route card. Do not attach entities matched from
-        // the destination phrase (for example, "机器人" matching a product),
-        // otherwise product-introduction cards compete with the route result.
-        enqueueSpeech(spokenText || text, text, [], true);
-        return;
+        if (result.matched) {
+          setNavigationResult(result);
+          setShoppingRegistration(null);
+          const spokenText = result.spoken_text?.trim();
+          // Navigation has its own route card. Do not attach entities matched from
+          // the destination phrase (for example, "机器人" matching a product),
+          // otherwise product-introduction cards compete with the route result.
+          enqueueSpeech(spokenText || text, text, [], true);
+          return;
+        }
+        // A route intent that has no structured-data match is not a final answer:
+        // continue through QA so Dify and, if needed, the LLM can help.
+        setNavigationResult(null);
+        setLastVoiceIntent(null);
       } catch (error) {
         console.warn("navigation query failed, falling back to exhibition Q&A", error);
         setNavigationResult(null);
@@ -3411,24 +3442,25 @@ export default function App() {
       }
     } else {
       setNavigationResult(null);
+      setShoppingRegistration(null);
     }
 
     const explicitIntroductionEntity = explicitContentRequest === "entity"
-      ? relatedEntities.find((entity) => (
+      ? explicitRelatedEntities.find((entity) => (
         entity.kind === "venue"
         || entity.kind === "point"
         || entity.kind === "exhibit"
         || entity.kind === "exhibitor"
       ))
       : undefined;
-    const matchedExhibit = relatedEntities.find((entity) => entity.kind === "exhibit");
-    if (matchedExhibit && match.intent !== "navigation") {
+    const matchedExhibit = explicitRelatedEntities.find((entity) => entity.kind === "exhibit");
+    if (matchedExhibit && wantsEntityPresentation) {
       setNavigationResult(null);
       await introduceExhibitAndOfferRegistration(matchedExhibit, text);
       return;
     }
-    const matchedExhibitor = relatedEntities.find((entity) => entity.kind === "exhibitor");
-    if (matchedExhibitor && (match.intent === "exhibition_content" || explicitContentRequest === "entity")) {
+    const matchedExhibitor = explicitRelatedEntities.find((entity) => entity.kind === "exhibitor");
+    if (matchedExhibitor && wantsEntityPresentation) {
       const products = exhibitionEntities.filter((entity) => (
         entity.kind === "exhibit"
         && (entity.parent_id === matchedExhibitor.id
@@ -3497,20 +3529,9 @@ export default function App() {
       }
     }
 
-    if (databaseShortcut === "appointment") {
-      const exhibitors = exhibitionEntities.filter((entity) => entity.kind === "exhibitor");
-      enqueueSpeech(
-        exhibitors.length
-          ? `本次展览有${exhibitors.length}家展商可供预约洽谈。请选择具体展商，我将为您展示该展商的相关展品。`
-          : "本次展览暂未发布展商和预约洽谈信息，请咨询现场工作人员。",
-        displayText,
-        exhibitors.slice(0, 4),
-        true,
-      );
-      return;
-    }
-
-    const introductionEntity = relatedEntities.find((entity) => entity.kind === "venue" || entity.kind === "point" || entity.kind === "exhibit" || entity.kind === "exhibitor");
+    const introductionEntity = wantsEntityPresentation
+      ? explicitRelatedEntities.find((entity) => entity.kind === "venue" || entity.kind === "point" || entity.kind === "exhibit" || entity.kind === "exhibitor")
+      : undefined;
     if (introductionEntity) {
       if (introductionEntity.kind === "exhibitor") {
         const products = exhibitionEntities.filter((entity) => (
@@ -3531,6 +3552,28 @@ export default function App() {
       }
     }
 
+    const databaseFallbackQuestions: Record<DatabaseShortcut, Record<ConversationLanguage, string>> = {
+      venue_navigation: {
+        "zh-CN": "当前展会有哪些场馆、展位或导航信息？",
+        "en-US": "What venues, booths, or navigation information are available at this exhibition?",
+      },
+      appointment: {
+        "zh-CN": "当前展会是否提供预约洽谈？如何预约？",
+        "en-US": "Does this exhibition offer meeting appointments, and how can I book one?",
+      },
+      conference_services: {
+        "zh-CN": "当前展会有哪些会议日程和服务信息？",
+        "en-US": "What conference schedule and visitor services are available at this exhibition?",
+      },
+      about_exhibition: {
+        "zh-CN": "请介绍一下当前展会的基本情况。",
+        "en-US": "Please introduce this exhibition.",
+      },
+    };
+    const qaQuestion = databaseShortcut
+      ? databaseFallbackQuestions[databaseShortcut][conversationLanguage]
+      : text;
+
     const turnId = `turn-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const pendingId = makeId();
     const activeAssistantId = streamingAssistantMsgIdRef.current;
@@ -3546,7 +3589,7 @@ export default function App() {
         role: "assistant",
         text: englishConversation ? "Searching exhibition knowledge..." : "正在检索展会知识...",
         timestamp: Date.now(),
-        relatedEntities,
+        relatedEntities: wantsEntityPresentation ? explicitRelatedEntities : [],
         qa: { turnId },
       },
     ]);
@@ -3556,7 +3599,7 @@ export default function App() {
       const result: ExhibitionQaQueryResponse = await queryExhibitionQa(configuredExhibitionId, {
         session_id: sessionId,
         turn_id: turnId,
-        question: text,
+        question: qaQuestion,
         locale: conversationLanguage,
         voice:
           isEdgeTts(ttsProvider)

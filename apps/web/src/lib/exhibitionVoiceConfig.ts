@@ -86,7 +86,9 @@ function fuzzyContains(text: string, keyword: string): boolean {
     for (let index = 0; index <= text.length - size; index += 1) {
       const candidate = text.slice(index, index + size);
       const similarity = 1 - editDistance(candidate, keyword) / Math.max(candidate.length, keyword.length);
-      if (similarity >= 0.66) return true;
+      // Fuzzy intent routing is a shortcut into structured data. Prefer
+      // precision here; lower-confidence speech can continue to QA/RAG.
+      if (similarity >= 0.8) return true;
     }
   }
   return false;
