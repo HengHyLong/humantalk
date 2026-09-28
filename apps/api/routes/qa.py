@@ -3,8 +3,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from pathlib import Path
+import re
 import uuid
+from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Request
@@ -317,6 +318,35 @@ def _record_value(record: dict[str, object], *keys: str) -> str:
     return ""
 
 
+def _build_dify_retrieval_context(
+    store: object,
+    exhibition_id: str,
+    question: str,
+) -> str:
+    """Disambiguate generic exhibit references without biasing named entities."""
+
+    if not any(term in question for term in ("展会", "大会", "本届", "这届", "本次会议")):
+        return ""
+    # A specific acronym, product/model name, or year is already a stronger
+    # query anchor. Do not inject the current exhibition and accidentally
+    # redirect questions such as “介绍一下 T1000” to the event itself.
+    if re.search(r"(?<![A-Za-z0-9])[A-Za-z]{2,}[A-Za-z0-9_-]*|\d{4}(?!\d)", question):
+        return ""
+
+    exhibition = getattr(store, "get_record")("exhibitions", exhibition_id) or {}
+    name = _record_value(exhibition, "name", "title")
+    code = _record_value(exhibition, "code", "shortName", "short_name")
+    aliases = _clean_ids(exhibition.get("aliases"))
+    terms = list(dict.fromkeys(value for value in (name, code, *aliases) if value))
+    if not terms:
+        return ""
+    return (
+        f"当前服务的展会是：{'、'.join(terms)}。"
+        "仅当用户问题中的展会或大会指代不明确时，才用此信息消歧；"
+        "不要覆盖问题中已经明确提到的其他对象。"
+    )
+
+
 def _record_exhibition_ids(record: dict[str, object]) -> list[str]:
     raw = record.get("exhibition_ids", record.get("exhibitionIds"))
     result = _clean_ids(raw)
@@ -543,6 +573,11 @@ async def query_exhibition_qa(
             base_url=dify_base_url,
             api_key=dify_key,
             targets=dify_targets,
+            retrieval_context=_build_dify_retrieval_context(
+                store,
+                resolved_exhibition_id,
+                body.question,
+            ),
             timeout_sec=float(_setting(settings, "dify_timeout_sec", 12.0)),
             top_k=int(_setting(settings, "qa_retrieval_top_k", 3)),
             score_threshold=float(_setting(settings, "qa_retrieval_score_threshold", 0.55)),
