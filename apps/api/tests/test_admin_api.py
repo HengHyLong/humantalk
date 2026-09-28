@@ -871,6 +871,64 @@ def test_switching_to_deepseek_preserves_gateway_for_admin_switch_back(tmp_path,
         assert client.app.state.admin_store.get_record("llm_configs", deepseek_id)["isActive"] is False
 
 
+def test_admin_stt_configs_keep_xfyun_and_xiaomi_credentials_separate(tmp_path, monkeypatch) -> None:
+    applied = []
+
+    async def fake_apply(payload, request):
+        applied.append(payload)
+        settings = request.app.state.settings
+        for field in (
+            "stt_xfyun_app_id", "stt_xfyun_api_key", "stt_xfyun_api_secret",
+            "stt_xiaomi_base_url", "stt_xiaomi_model", "stt_xiaomi_api_key",
+            "stt_enabled_providers",
+        ):
+            value = getattr(payload, field)
+            if value:
+                setattr(settings, field, value)
+        if payload.stt_provider:
+            settings.stt_default_provider = payload.stt_provider
+        return {"applied": True}
+
+    monkeypatch.setattr(admin_routes, "apply_runtime_config", fake_apply)
+    with _client(tmp_path) as client:
+        settings = client.app.state.settings
+        settings.stt_default_provider = "xiaomi_mimo"
+        settings.stt_enabled_providers = "xiaomi_mimo"
+        settings.stt_xiaomi_base_url = "https://api.xiaomimimo.com/v1"
+        settings.stt_xiaomi_model = "mimo-v2.5-asr"
+        settings.stt_xiaomi_api_key = "xiaomi-old-key"
+        headers = _login(client)
+
+        saved = client.put("/api/v1/admin/stt-configs/xfyun", headers=headers, json={
+            "appId": "xfyun-app", "apiKey": "xfyun-key", "apiSecret": "xfyun-secret",
+        })
+        assert saved.status_code == 200, saved.text
+        assert saved.json()["apiKeyConfigured"] is True
+        assert saved.json()["apiSecretConfigured"] is True
+        assert saved.json()["isActive"] is False
+        assert applied[-1].stt_provider is None
+        assert settings.stt_xiaomi_api_key == "xiaomi-old-key"
+        assert settings.stt_enabled_providers == "xiaomi_mimo,xfyun"
+
+        activated = client.post("/api/v1/admin/stt-configs/xfyun/activate", headers=headers)
+        assert activated.status_code == 200, activated.text
+        assert activated.json()["isActive"] is True
+        assert settings.stt_xiaomi_api_key == "xiaomi-old-key"
+
+        listed = client.get("/api/v1/admin/stt-configs", headers=headers)
+        assert listed.status_code == 200
+        assert len(listed.json()["items"]) == 2
+        assert "xfyun-key" not in listed.text
+        assert "xfyun-secret" not in listed.text
+        assert "xiaomi-old-key" not in listed.text
+
+        switched_back = client.post("/api/v1/admin/stt-configs/xiaomi_mimo/activate", headers=headers)
+        assert switched_back.status_code == 200
+        assert switched_back.json()["isActive"] is True
+        assert settings.stt_xfyun_api_key == "xfyun-key"
+        assert settings.stt_xfyun_api_secret == "xfyun-secret"
+
+
 def test_vidu_config_activation_uses_digital_human_runtime_without_disabling_chat(tmp_path, monkeypatch) -> None:
     applied: list[admin_routes.RuntimeConfigPayload] = []
 

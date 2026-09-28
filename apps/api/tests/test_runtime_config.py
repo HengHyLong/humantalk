@@ -28,6 +28,33 @@ def _request(monkeypatch, tmp_path) -> SimpleNamespace:
     return SimpleNamespace(app=app)
 
 
+def test_stt_provider_credentials_are_written_to_distinct_keys() -> None:
+    xfyun = runtime_config._build_updates(runtime_config.RuntimeConfigPayload(
+        stt_enabled_providers="xfyun,xiaomi_mimo",
+        stt_xfyun_app_id="app-id",
+        stt_xfyun_api_key="xfyun-key",
+        stt_xfyun_api_secret="xfyun-secret",
+        sync_dashscope_api_key=False,
+    ))
+    assert xfyun["OPENTALKING_STT_XFYUN_APP_ID"] == "app-id"
+    assert xfyun["OPENTALKING_STT_XFYUN_API_KEY"] == "xfyun-key"
+    assert xfyun["OPENTALKING_STT_XFYUN_API_SECRET"] == "xfyun-secret"
+    assert "OPENTALKING_STT_DEFAULT_PROVIDER" not in xfyun
+    assert "OPENTALKING_STT_XIAOMI_API_KEY" not in xfyun
+
+    xiaomi = runtime_config._build_updates(runtime_config.RuntimeConfigPayload(
+        stt_xiaomi_base_url="https://mimo.example.test/v1/",
+        stt_xiaomi_model="mimo-v2.5-asr",
+        stt_xiaomi_api_key="mimo-key",
+        sync_dashscope_api_key=False,
+    ))
+    assert xiaomi["OPENTALKING_STT_XIAOMI_BASE_URL"] == "https://mimo.example.test/v1"
+    assert xiaomi["OPENTALKING_STT_XIAOMI_MODEL"] == "mimo-v2.5-asr"
+    assert xiaomi["OPENTALKING_STT_XIAOMI_API_KEY"] == "mimo-key"
+    assert "OPENTALKING_STT_DEFAULT_PROVIDER" not in xiaomi
+    assert "OPENTALKING_STT_XFYUN_API_KEY" not in xiaomi
+
+
 async def test_runtime_config_get_masks_secret_values(monkeypatch, tmp_path) -> None:
     (tmp_path / ".env").write_text(
         "\n".join(

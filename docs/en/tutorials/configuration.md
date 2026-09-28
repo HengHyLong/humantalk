@@ -38,6 +38,8 @@ If a third-party gateway is already configured, keep its `.env` settings. In Adm
 
 ### Speech recognition
 
+Admins can use **System Management → Speech Recognition Configuration** to save iFLYTEK's AppID, API key, and API secret separately from Xiaomi MiMo's base URL, model, and API key. Saving either configuration leaves the active STT provider and the other provider's credentials unchanged. **Set as Default STT** switches the default provider. Each provider uses its own `.env` variables, and API responses report only whether secrets are configured.
+
 The default speech recognition backend is DashScope Paraformer realtime.
 
 | Variable | Default | Description |

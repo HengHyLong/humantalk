@@ -518,6 +518,25 @@ export type LlmConfig = {
   updatedAt: string;
 };
 
+export type SttConfig = {
+  provider: "xfyun" | "xiaomi_mimo";
+  name: string;
+  appId: string;
+  baseUrl: string;
+  model: string;
+  apiKeyConfigured: boolean;
+  apiSecretConfigured: boolean;
+  isActive: boolean;
+};
+
+export type SttConfigInput = {
+  appId?: string;
+  baseUrl?: string;
+  model?: string;
+  apiKey?: string;
+  apiSecret?: string;
+};
+
 export type LlmConnectionTestResult = {
   success: boolean;
   latencyMs: number;

@@ -44,6 +44,9 @@ _RUNTIME_ENV_KEYS = {
     "OPENTALKING_VIDU_VOICE",
     "OPENTALKING_STT_DEFAULT_PROVIDER",
     "OPENTALKING_STT_ENABLED_PROVIDERS",
+    "OPENTALKING_STT_XFYUN_APP_ID",
+    "OPENTALKING_STT_XFYUN_API_KEY",
+    "OPENTALKING_STT_XFYUN_API_SECRET",
     "OPENTALKING_STT_MODEL",
     "OPENTALKING_STT_API_KEY",
     "OPENTALKING_STT_DASHSCOPE_MODEL",
@@ -121,9 +124,16 @@ class RuntimeConfigPayload(BaseModel):
     vidu_character_id: Optional[str] = Field(default=None, max_length=128)
     vidu_voice: Optional[str] = Field(default=None, max_length=256)
     stt_provider: Optional[str] = Field(default=None, max_length=64)
+    stt_enabled_providers: Optional[str] = Field(default=None, max_length=512)
     stt_base_url: Optional[str] = Field(default=None, max_length=2048)
     stt_model: Optional[str] = Field(default=None, max_length=256)
     stt_api_key: Optional[str] = Field(default=None, max_length=4096)
+    stt_xfyun_app_id: Optional[str] = Field(default=None, max_length=128)
+    stt_xfyun_api_key: Optional[str] = Field(default=None, max_length=4096)
+    stt_xfyun_api_secret: Optional[str] = Field(default=None, max_length=4096)
+    stt_xiaomi_base_url: Optional[str] = Field(default=None, max_length=2048)
+    stt_xiaomi_model: Optional[str] = Field(default=None, max_length=256)
+    stt_xiaomi_api_key: Optional[str] = Field(default=None, max_length=4096)
     tts_provider: Optional[str] = Field(default=None, max_length=64)
     tts_base_url: Optional[str] = Field(default=None, max_length=2048)
     tts_model: Optional[str] = Field(default=None, max_length=256)
@@ -578,6 +588,9 @@ def _build_updates(payload: RuntimeConfigPayload) -> dict[str, str]:
         updates["OPENTALKING_VIDU_VOICE"] = value
 
     stt_provider = ""
+    if raw := _strip(payload.stt_enabled_providers):
+        providers = [normalize_stt_provider(item.strip(), default=None) for item in raw.split(",") if item.strip()]
+        updates["OPENTALKING_STT_ENABLED_PROVIDERS"] = ",".join(dict.fromkeys(provider for provider in providers if provider))
     if raw := _strip(payload.stt_provider):
         try:
             stt_provider = normalize_stt_provider(raw, default=None) or ""
@@ -585,7 +598,23 @@ def _build_updates(payload: RuntimeConfigPayload) -> dict[str, str]:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         if stt_provider:
             updates["OPENTALKING_STT_DEFAULT_PROVIDER"] = stt_provider
-            updates["OPENTALKING_STT_ENABLED_PROVIDERS"] = _enabled_provider_csv(stt_enabled_providers(), stt_provider)
+            updates["OPENTALKING_STT_ENABLED_PROVIDERS"] = _enabled_provider_csv(
+                updates.get("OPENTALKING_STT_ENABLED_PROVIDERS", "").split(",")
+                if "OPENTALKING_STT_ENABLED_PROVIDERS" in updates else stt_enabled_providers(),
+                stt_provider,
+            )
+    if value := _strip(payload.stt_xfyun_app_id):
+        updates["OPENTALKING_STT_XFYUN_APP_ID"] = value
+    if value := _strip(payload.stt_xfyun_api_key):
+        updates["OPENTALKING_STT_XFYUN_API_KEY"] = value
+    if value := _strip(payload.stt_xfyun_api_secret):
+        updates["OPENTALKING_STT_XFYUN_API_SECRET"] = value
+    if value := _strip(payload.stt_xiaomi_base_url):
+        updates["OPENTALKING_STT_XIAOMI_BASE_URL"] = value.rstrip("/")
+    if value := _strip(payload.stt_xiaomi_model):
+        updates["OPENTALKING_STT_XIAOMI_MODEL"] = value
+    if value := _strip(payload.stt_xiaomi_api_key):
+        updates["OPENTALKING_STT_XIAOMI_API_KEY"] = value
     if value := _strip(payload.stt_base_url):
         if stt_provider == "openai_compatible":
             updates["OPENTALKING_STT_OPENAI_BASE_URL"] = value.rstrip("/")

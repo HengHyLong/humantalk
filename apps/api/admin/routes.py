@@ -137,6 +137,16 @@ class LlmConfigBody(BaseModel):
         return self
 
 
+class SttConfigBody(BaseModel):
+    app_id: str = Field(default="", max_length=128, alias="appId")
+    api_key: str = Field(default="", max_length=4096, alias="apiKey")
+    api_secret: str = Field(default="", max_length=4096, alias="apiSecret")
+    base_url: str = Field(default="", max_length=2048, alias="baseUrl")
+    model: str = Field(default="", max_length=256)
+
+    model_config = {"populate_by_name": True}
+
+
 def _public_user(store: AdminStore, user: dict[str, Any]) -> dict[str, Any]:
     roles = store.roles_for_user(user["id"])
     return {
@@ -512,6 +522,85 @@ async def _apply_llm_config(request: Request, item: dict[str, Any]) -> dict[str,
         ),
         request,
     )
+
+
+STT_ADMIN_PROVIDERS = {"xfyun", "xiaomi_mimo"}
+
+
+def _stt_admin_items(request: Request) -> list[dict[str, Any]]:
+    settings = request.app.state.settings
+    active = _setting_text(settings, "stt_default_provider") or _setting_text(settings, "stt_provider", "dashscope")
+    return [
+        {
+            "provider": "xfyun",
+            "name": "科大讯飞大模型识别",
+            "appId": _setting_text(settings, "stt_xfyun_app_id"),
+            "baseUrl": "wss://iat.cn-huabei-1.xf-yun.com/v1",
+            "model": "slm",
+            "apiKeyConfigured": bool(_setting_text(settings, "stt_xfyun_api_key")),
+            "apiSecretConfigured": bool(_setting_text(settings, "stt_xfyun_api_secret")),
+            "isActive": active == "xfyun",
+        },
+        {
+            "provider": "xiaomi_mimo",
+            "name": "小米 MiMo",
+            "appId": "",
+            "baseUrl": _setting_text(settings, "stt_xiaomi_base_url") or "https://api.xiaomimimo.com/v1",
+            "model": _setting_text(settings, "stt_xiaomi_model", "mimo-v2.5-asr"),
+            "apiKeyConfigured": bool(_setting_text(settings, "stt_xiaomi_api_key")),
+            "apiSecretConfigured": False,
+            "isActive": active == "xiaomi_mimo",
+        },
+    ]
+
+
+def _stt_admin_item(request: Request, provider: str) -> dict[str, Any]:
+    if provider not in STT_ADMIN_PROVIDERS:
+        raise HTTPException(status_code=404, detail="不支持的语音识别服务")
+    return next(item for item in _stt_admin_items(request) if item["provider"] == provider)
+
+
+@router.get("/admin/stt-configs")
+def list_stt_configs(request: Request, auth: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    _require(get_store(request), auth, "system:llm")
+    return {"items": _stt_admin_items(request)}
+
+
+@router.put("/admin/stt-configs/{provider}")
+async def save_stt_config(provider: str, body: SttConfigBody, request: Request, auth: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    _require(get_store(request), auth, "system:llm:write")
+    _stt_admin_item(request, provider)
+    settings = request.app.state.settings
+    current = _setting_text(settings, "stt_enabled_providers")
+    default_provider = _setting_text(settings, "stt_default_provider") or _setting_text(settings, "stt_provider", "dashscope")
+    enabled = list(dict.fromkeys([*(current.split(",") if current else [default_provider]), provider]))
+    payload = RuntimeConfigPayload(
+        stt_enabled_providers=",".join(value for value in enabled if value),
+        stt_xfyun_app_id=body.app_id if provider == "xfyun" else None,
+        stt_xfyun_api_key=body.api_key if provider == "xfyun" else None,
+        stt_xfyun_api_secret=body.api_secret if provider == "xfyun" else None,
+        stt_xiaomi_base_url=body.base_url if provider == "xiaomi_mimo" else None,
+        stt_xiaomi_model=body.model if provider == "xiaomi_mimo" else None,
+        stt_xiaomi_api_key=body.api_key if provider == "xiaomi_mimo" else None,
+        sync_dashscope_api_key=False,
+    )
+    await apply_runtime_config(payload, request)
+    result = _stt_admin_item(request, provider)
+    _audit(request, auth, action="update", resource_type="stt_config", resource_id=provider, before=None, after=result)
+    return result
+
+
+@router.post("/admin/stt-configs/{provider}/activate")
+async def activate_stt_config(provider: str, request: Request, auth: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    _require(get_store(request), auth, "system:llm:write")
+    item = _stt_admin_item(request, provider)
+    ready = item["apiKeyConfigured"] and (item["appId"] and item["apiSecretConfigured"] if provider == "xfyun" else item["baseUrl"] and item["model"])
+    if not ready:
+        raise HTTPException(status_code=400, detail="请先补全该语音识别服务的配置")
+    await apply_runtime_config(RuntimeConfigPayload(stt_provider=provider, sync_dashscope_api_key=False), request)
+    result = _stt_admin_item(request, provider)
+    _audit(request, auth, action="activate", resource_type="stt_config", resource_id=provider, before=None, after=result)
+    return result
 
 
 @router.get("/admin/llm-configs")

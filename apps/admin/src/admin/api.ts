@@ -28,6 +28,8 @@ import type {
   Lead,
   LlmConfig,
   LlmConnectionTestResult,
+  SttConfig,
+  SttConfigInput,
   LeadStatus,
   Feedback,
   AdminUserRecord,
@@ -378,6 +380,9 @@ export interface AdminApiClient {
   deleteLlmConfig(id: string): Promise<void>;
   activateLlmConfig(id: string): Promise<LlmConfig>;
   testLlmConfig(id: string): Promise<LlmConnectionTestResult>;
+  listSttConfigs(): Promise<SttConfig[]>;
+  saveSttConfig(provider: SttConfig["provider"], input: SttConfigInput): Promise<SttConfig>;
+  activateSttConfig(provider: SttConfig["provider"]): Promise<SttConfig>;
 }
 
 function buildUser(username: string, role: AdminUser["role"]): AdminUser {
@@ -675,6 +680,9 @@ export class MockAdminApiClient implements AdminApiClient {
   async deleteLlmConfig(id: string) { writeStore("llm-configs", (await this.listLlmConfigs()).filter((item) => item.id !== id)); }
   async activateLlmConfig(id: string) { const items = await this.listLlmConfigs(); const saved = items.find((item) => item.id === id); if (!saved) throw new Error("大模型配置不存在"); const usage = saved.usage || "conversation"; writeStore("llm-configs", items.map((item) => (item.usage || "conversation") === usage ? { ...item, isActive: item.id === id } : item)); return { ...saved, isActive: true }; }
   async testLlmConfig(_id: string) { return { success: true, latencyMs: 1, message: "连接成功" }; }
+  async listSttConfigs() { return readStore<SttConfig[]>("stt-configs", []); }
+  async saveSttConfig(provider: SttConfig["provider"], input: SttConfigInput) { const items = await this.listSttConfigs(); const current = items.find((item) => item.provider === provider); const saved: SttConfig = { provider, name: provider === "xfyun" ? "科大讯飞大模型识别" : "小米 MiMo", appId: input.appId || current?.appId || "", baseUrl: input.baseUrl || current?.baseUrl || "", model: input.model || current?.model || "", apiKeyConfigured: Boolean(input.apiKey || current?.apiKeyConfigured), apiSecretConfigured: Boolean(input.apiSecret || current?.apiSecretConfigured), isActive: Boolean(current?.isActive) }; writeStore("stt-configs", [saved, ...items.filter((item) => item.provider !== provider)]); return saved; }
+  async activateSttConfig(provider: SttConfig["provider"]) { const items = await this.listSttConfigs(); const selected = items.find((item) => item.provider === provider); if (!selected) throw new Error("语音识别配置不存在"); writeStore("stt-configs", items.map((item) => ({ ...item, isActive: item.provider === provider }))); return { ...selected, isActive: true }; }
 }
 
 function normalizeMenuPermissionNodes(nodes: PermissionNode[]): PermissionNode[] {
@@ -1310,6 +1318,9 @@ export class FetchAdminApiClient implements AdminApiClient {
   async deleteLlmConfig(id: string) { await this.request(`/admin/llm-configs/${encodeURIComponent(id)}`, { method: "DELETE" }); }
   async activateLlmConfig(id: string) { return this.request<LlmConfig>(`/admin/llm-configs/${encodeURIComponent(id)}/activate`, { method: "POST" }); }
   async testLlmConfig(id: string) { return this.request<LlmConnectionTestResult>(`/admin/llm-configs/${encodeURIComponent(id)}/test`, { method: "POST" }); }
+  async listSttConfigs() { const payload = await this.request<{ items: SttConfig[] }>("/admin/stt-configs"); return payload.items; }
+  async saveSttConfig(provider: SttConfig["provider"], input: SttConfigInput) { return this.request<SttConfig>(`/admin/stt-configs/${encodeURIComponent(provider)}`, { method: "PUT", body: JSON.stringify(input) }); }
+  async activateSttConfig(provider: SttConfig["provider"]) { return this.request<SttConfig>(`/admin/stt-configs/${encodeURIComponent(provider)}/activate`, { method: "POST" }); }
 }
 
 export function createAdminApiClient(mode: "mock" | "real"): AdminApiClient {
