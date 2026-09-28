@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { matchExhibitionEntities, selectExhibitionEntity } from "../src/lib/exhibitionEntityMatch";
+import { isExhibitionOnlyReference, matchExhibitionEntities, selectExhibitionEntity } from "../src/lib/exhibitionEntityMatch";
 import type { ExhibitionEntityCard } from "../src/types";
 
 const entity: ExhibitionEntityCard = {
@@ -18,6 +18,22 @@ const entity: ExhibitionEntityCard = {
 
 test("entity matcher matches configured alias after wake word is removed", () => {
   assert.equal(matchExhibitionEntities("介绍一下小蓝", [entity])[0]?.id, "exhibit-1");
+});
+
+test("a current exhibition name/code is not confused with a specific entity keyword", () => {
+  const company: ExhibitionEntityCard = {
+    ...entity,
+    id: "exhibitor-1",
+    kind: "exhibitor",
+    name: "具身科学有限公司",
+    keywords: ["具身科学有限公司", "CNCC2026"],
+  };
+
+  assert.equal(matchExhibitionEntities("CNCC2026", [company])[0]?.id, company.id);
+  assert.equal(isExhibitionOnlyReference("CNCC2026", ["中国计算机大会", "CNCC-2026"]), true);
+  assert.equal(isExhibitionOnlyReference("CNCC2026", ["中国计算机大会（CNCC2026）"]), true);
+  assert.equal(isExhibitionOnlyReference("介绍一下CNCC2026", ["中国计算机大会", "CNCC-2026"]), true);
+  assert.equal(isExhibitionOnlyReference("CNCC2026具身科学有限公司", ["中国计算机大会", "CNCC-2026"]), false);
 });
 
 test("entity matcher tolerates one ASR character error", () => {

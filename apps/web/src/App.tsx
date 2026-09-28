@@ -114,7 +114,7 @@ import {
   TTS_PROVIDER_STORAGE_KEY,
 } from "./constants/ttsQwen";
 import type { ConnectionStatus, ExhibitionEntityCard, MemoryLibrary, Message, QueueInfo } from "./types";
-import { matchExhibitionEntities, normalizeEntityKeyword, selectExhibitionEntity } from "./lib/exhibitionEntityMatch";
+import { isExhibitionOnlyReference, matchExhibitionEntities, normalizeEntityKeyword, selectExhibitionEntity } from "./lib/exhibitionEntityMatch";
 import { readExhibitionEntityCache, writeExhibitionEntityCache } from "./lib/exhibitionCache";
 import { useAutoDismiss } from "./lib/useAutoDismiss";
 import { classifyProductInterestDecision, classifyRegistrationFollowupDecision, selectShoppingPresentationEntities } from "./lib/shoppingConversation";
@@ -3021,9 +3021,16 @@ export default function App() {
     const selectedEntity = options.selectedEntityId
       ? exhibitionEntities.find((entity) => entity.id === options.selectedEntityId)
       : undefined;
-    const relatedEntities = selectedEntity
+    const matchedEntities = selectedEntity
       ? [selectedEntity, ...matchExhibitionEntities(text, exhibitionEntities).filter((entity) => entity.id !== selectedEntity.id)]
       : matchExhibitionEntities(text, exhibitionEntities);
+    const isCurrentExhibitionOnlyReference = isExhibitionOnlyReference(text, [
+      selectedExhibition?.name ?? "",
+      selectedExhibition?.code ?? "",
+    ]);
+    const relatedEntities = isCurrentExhibitionOnlyReference
+      ? matchedEntities.filter((entity) => entity.kind === "exhibition")
+      : matchedEntities;
     const normalizedQuestion = normalizeEntityKeyword(text);
     const explicitRelatedEntities = relatedEntities.filter((entity) => (
       selectedEntity?.id === entity.id
@@ -3642,7 +3649,7 @@ export default function App() {
       )));
       notify(englishConversation ? `Q&A failed: ${detail}` : `问答失败：${detail}`, "error");
     }
-  }, [bailianVoices, configuredExhibitionId, conversationLanguage, edgeVoice, englishConversation, enqueueSpeech, exhibitionEntities, exhibitionVoiceConfig, notify, qwenModel, qwenVoice, sessionId, ttsProvider]);
+  }, [bailianVoices, configuredExhibitionId, conversationLanguage, edgeVoice, englishConversation, enqueueSpeech, exhibitionEntities, exhibitionVoiceConfig, notify, qwenModel, qwenVoice, selectedExhibition, sessionId, ttsProvider]);
   const handleSend = useCallback((text: string) => {
     void routeRecognizedText(text);
   }, [routeRecognizedText]);
