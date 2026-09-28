@@ -1,0 +1,14 @@
+{
+  "kb-shared": {
+    "knowledge_base_id": "kb-shared",
+    "name": "共享知识库",
+    "exhibition_id": "expo-test",
+    "namespace_id": "namespace-shared",
+    "dify_dataset_id": "dataset-shared",
+    "status": "active",
+    "exhibition_ids": [
+      "expo-test",
+      "expo-second"
+    ]
+  }
+}
