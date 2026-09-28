@@ -34,6 +34,8 @@ Any OpenAI-compatible chat completion endpoint is supported.
 | `OPENTALKING_LLM_MODEL` | `qwen-flash` | Model identifier passed to the endpoint. |
 | `OPENTALKING_LLM_SYSTEM_PROMPT` | _conversational default_ | System prompt. The default instructs the model to respond in plain spoken text without markdown formatting. |
 
+If a third-party gateway is already configured, keep its `.env` settings. In Admin, open **System Management → LLM Configuration**, add a `DeepSeek` configuration with base URL `https://api.deepseek.com/v1`, a model name, and a DeepSeek API key. Save it, test the connection, then make it active. The first switch automatically saves the previous gateway and its key as a configuration that can be activated again from the same page. Admin configurations are stored in SQLite; switching also writes the active runtime settings to `.env`. Keep the Admin database to retain the switch-back option.
+
 ### Speech recognition
 
 The default speech recognition backend is DashScope Paraformer realtime.

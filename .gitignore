@@ -92,3 +92,5 @@ docs/superpowers/
 
 # MkDocs build output
 site/
+
+/.pytest-llm-switch*/
