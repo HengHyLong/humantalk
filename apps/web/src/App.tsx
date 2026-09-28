@@ -2171,13 +2171,8 @@ export default function App() {
           [key]: ready ? "ready" : "failed",
         }));
         if (ready && seq === prewarmSeqRef.current) {
-          const cacheStatus = response.cache?.status;
-          const label = modelLabel(targetModel);
           if (response.runtime_status === "failed") {
-            const detail = response.runtime?.message;
-            notify(detail ? `${label} 资产已准备，运行时预热失败：${detail}` : `${label} 资产已准备，运行时预热失败。`, "info");
-          } else {
-            notify(cacheStatus ? `${label} 已准备：${cacheStatus}` : `${label} 已准备`, "success");
+            console.warn("Avatar runtime prewarm failed", response.runtime?.message);
           }
         }
         return ready;
@@ -2185,14 +2180,7 @@ export default function App() {
         console.warn("Avatar prewarm failed", error);
         setPrewarmByKey((prev) => ({ ...prev, [key]: "failed" }));
         if (seq === prewarmSeqRef.current) {
-          const detail = error instanceof ApiError ? error.detail : null;
-          const label = modelLabel(targetModel);
-          notify(
-            detail
-              ? `${label} 预热未完成，将在首次生成时冷启动：${detail}`
-              : `${label} 预热未完成，首次生成会自动冷启动。`,
-            "info",
-          );
+          notify("数字人准备时间较长，请稍候。", "info");
         }
         // Prewarm is an optimization.  Do not prevent a valid session from
         // starting when the model can still load on the first real request.
@@ -2360,7 +2348,7 @@ export default function App() {
         console.warn("load exhibition bindings failed", error);
         setExhibitionBindingsReady(false);
         setConnection("error");
-        notify("会展绑定的数字人配置加载失败，请返回 Admin 检查形象和驱动模型。", "error");
+        notify("数字人暂时无法加载，请联系现场工作人员。", "error");
       }
     })();
     return () => {
@@ -2425,8 +2413,8 @@ export default function App() {
         }
       }
       if (ev === "error") {
-        const d = data && typeof data === "object" ? (data as { message?: string; code?: string }) : {};
-        const detail = d.message || d.code || "语音合成失败，请切换可用音色后重试。";
+        console.warn("Session event error", data);
+        const detail = "对话暂时中断，请稍后重试。";
         setVoiceTurnActive(false);
         appendAssistantError(detail);
         notify(`对话失败：${detail}`, "error");
@@ -2551,16 +2539,16 @@ export default function App() {
     try {
     const selectedExhibition = exhibitions.find((item) => item.id === selectedExhibitionId) ?? null;
     if (!selectedExhibitionId || !selectedExhibition) {
-      notify("请先选择会展，再启动 WebRTC。", "error");
+      notify("请先选择会展，再开始对话。", "error");
       return;
     }
     if (!selectedExhibition.bound_avatar_id) {
-      notify("当前会展尚未绑定数字人，请先在 Admin 中完成会展配置。", "error");
+      notify("当前会展的数字人尚未配置完成，请联系管理员。", "error");
       return;
     }
     const boundModel = selectedExhibition.bound_model?.trim();
     if (!boundModel) {
-      notify("当前会展尚未绑定驱动模型，请先在 Admin 中完成会展配置。", "error");
+      notify("当前会展的数字人尚未配置完成，请联系管理员。", "error");
       return;
     }
     if (!exhibitionBindingsReady) {
@@ -2570,7 +2558,7 @@ export default function App() {
     if (avatarId !== selectedExhibition.bound_avatar_id || model !== boundModel) {
       setAvatarId(selectedExhibition.bound_avatar_id);
       setModel(boundModel);
-      notify("会展绑定配置已更新，正在按最新形象和模型重新加载。", "info");
+      notify("数字人配置已更新，正在重新加载。", "info");
       return;
     }
     if (!avatarId) {
@@ -2594,7 +2582,8 @@ export default function App() {
       runtimeStatus: latestRuntimeStatus,
     });
     if (startBlockReason) {
-      notify(startBlockReason, "error");
+      console.warn("Audio provider configuration blocked session start", startBlockReason);
+      notify("语音服务暂不可用，请联系管理员。", "error");
       setSettingsExpanded(true);
       setConnection("error");
       return;
@@ -2723,11 +2712,7 @@ export default function App() {
       resetLiveState();
       console.warn("Failed to start session", error);
       setConnection("error");
-      const detail = error instanceof ApiError ? error.detail : null;
-      const msg = detail
-        ? `启动会话失败：${detail}`
-        : "启动会话失败，请稍后重试。";
-      notify(msg, "error");
+      notify("数字人连接失败，请稍后重试。", "error");
     }
     } finally {
       startInFlightRef.current = false;
@@ -3025,9 +3010,9 @@ export default function App() {
       };
       void apiPost(`/sessions/${sessionId}/${endpoint}`, payload).catch((err) => {
         console.warn(`${endpoint} failed`, err);
-        const detail = apiErrorMessage(err, "请确认会话仍处于已连接状态。");
-        appendAssistantError(`发送失败：${detail}`);
-        notify(`发送失败：${detail}`, "error");
+        const message = "发送失败，请稍后重试。";
+        appendAssistantError(message);
+        notify(message, "error");
       });
     },
     [appendAssistantError, bailianVoices, conversationLanguage, edgeVoice, isSpeaking, notify, qwenModel, qwenVoice, sessionId, ttsProvider],
@@ -3649,8 +3634,8 @@ export default function App() {
           ? {
               ...message,
               text: result.speak_mode === "agent"
-                ? (englishConversation ? "Generating an answer from the knowledge base..." : "正在根据知识库生成答案...")
-                : (englishConversation ? "Synthesizing speech and lip movement..." : "正在合成语音和口型..."),
+                ? (englishConversation ? "Preparing an answer..." : "正在准备回答...")
+                : (englishConversation ? "Preparing a response..." : "正在准备回复..."),
               qa: {
                 turnId: result.turn_id,
                 traceId: result.trace_id,
@@ -3661,13 +3646,13 @@ export default function App() {
           : message
       )));
       if (result.match_type === "retrieval_error") {
-        notify(englishConversation ? `Knowledge retrieval is unavailable (Trace: ${result.trace_id})` : `知识检索暂不可用（Trace：${result.trace_id}）`, "error");
+        notify(englishConversation ? "This information is temporarily unavailable." : "相关信息暂不可用，请稍后重试。", "error");
       } else if (result.match_type === "clarification") {
         notify(englishConversation ? "Please provide more details based on the follow-up question." : "问题信息不足，请根据数字人的追问补充具体对象。", "info");
       }
     } catch (error) {
       console.warn("exhibition Q&A query failed", error);
-      const detail = apiErrorMessage(error, englishConversation ? "The Q&A service is temporarily unavailable." : "问答服务暂不可用，请稍后重试。");
+      const detail = englishConversation ? "The Q&A service is temporarily unavailable." : "问答服务暂不可用，请稍后重试。";
       pendingAssistantMsgIdRef.current = null;
       setVoiceTurnActive(false);
       setIsSpeaking(false);
@@ -3781,9 +3766,8 @@ export default function App() {
       await handleRecognizedVoiceText(result.text);
     } catch (error) {
       console.warn("realtime voice transcription failed", error);
-      const detail = apiErrorMessage(error, "语音识别失败，请检查 STT 配置。");
-      appendAssistantError(`语音识别失败：${detail}`);
-      notify(`语音识别失败：${detail}`, "error");
+      appendAssistantError("语音识别失败，请重试。");
+      notify("语音识别失败，请重试。", "error");
     }
   }, [activeAsrProvider, appendAssistantError, handleRecognizedVoiceText, notify, sessionId]);
 
@@ -3793,9 +3777,9 @@ export default function App() {
   }, [handleRecognizedVoiceText]);
 
   const handleSpeakAudioStreamError = useCallback((message: string) => {
-    const detail = message || "语音识别失败，请检查 STT 配置。";
-    appendAssistantError(`语音识别失败：${detail}`);
-    notify(`语音识别失败：${detail}`, "error");
+    console.warn("Streaming voice transcription failed", message);
+    appendAssistantError("语音识别失败，请重试。");
+    notify("语音识别失败，请重试。", "error");
   }, [appendAssistantError, notify]);
 
   const handleSpeakAudio = useCallback(
@@ -3816,9 +3800,8 @@ export default function App() {
         if (error instanceof DOMException && error.name === "AbortError") return;
         // 勿将 connection 置为 error，否则会重新出现「开始 Demo」全屏遮罩
         console.warn("speak_audio failed", error);
-        const detail = apiErrorMessage(error, "请检查 STT 配置和后端日志。");
-        appendAssistantError(`语音识别失败：${detail}`);
-        notify(`语音识别失败：${detail}`, "error");
+        appendAssistantError("语音识别失败，请重试。");
+        notify("语音识别失败，请重试。", "error");
       } finally {
         if (speakAudioAbortRef.current === ac) {
           speakAudioAbortRef.current = null;
@@ -4340,7 +4323,6 @@ export default function App() {
            microphoneModeEnabled={microphoneModeEnabled}
            onMicrophoneModeChange={setMicrophoneModeEnabled}
            avatar={currentAvatar}
-          modelLabel={selectedModelLabel}
           messages={messages}
           wakeSleeping={wakeSleeping}
           wakePrompt={exhibitionVoiceConfig?.wake_word.prompt}

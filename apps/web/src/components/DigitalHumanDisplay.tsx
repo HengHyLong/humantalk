@@ -46,7 +46,6 @@ type DigitalHumanDisplayProps = {
   microphoneModeEnabled: boolean;
   onMicrophoneModeChange: (enabled: boolean) => void;
   avatar: AvatarSummary | null;
-  modelLabel: string;
   messages: Message[];
   wakeSleeping?: boolean;
   wakePrompt?: string;
@@ -105,7 +104,6 @@ export function DigitalHumanDisplay({
                                        microphoneModeEnabled,
                                        onMicrophoneModeChange,
                                        avatar,
-                                      modelLabel,
                                       messages,
                                       wakeSleeping = false,
                                       wakePrompt = "",
@@ -156,26 +154,21 @@ export function DigitalHumanDisplay({
   const shouldStickToBottomRef = useRef(true);
   const live = connection === "live" || connection === "expiring";
   const english = isEnglishConversation(language);
-  const prewarmModelLabel = prewarmModel === "quicktalk"
-      ? "QuickTalk"
-      : prewarmModel === "wav2lip"
-          ? "Wav2Lip"
-          : "";
-  const prewarming = Boolean(prewarmModelLabel && prewarmState !== "ready");
+  const prewarming = Boolean(prewarmModel && prewarmState !== "ready");
   const loadingTitle = connection === "queued"
       ? (english ? "Waiting for an available session" : "正在等待可用会话")
       : prewarming
-          ? (english ? `Preparing ${prewarmModelLabel} digital human` : `正在预热 ${prewarmModelLabel} 数字人`)
+          ? (english ? "Preparing your digital human" : "正在准备数字人")
           : (english ? "Loading digital human" : "正在加载数字人");
   const loadingDetail = queueInfo?.position
       ? (english ? `Queue position: ${queueInfo.position}. Please wait.` : `当前排队第 ${queueInfo.position} 位，请耐心等待`)
       : prewarming
           ? (english
-              ? "The model and avatar assets are loading. The conversation will open automatically when ready."
-              : "正在加载模型和形象资产，完成后将自动进入对话，请耐心等待。")
+              ? "Please wait. The conversation will open automatically when ready."
+              : "请稍候，准备完成后将自动进入对话。")
           : (english
-              ? "Establishing the WebRTC video channel. The conversation will open automatically."
-              : "正在建立 WebRTC 视频通道，连接成功后将自动进入对话。");
+              ? "Connecting to your digital human. The conversation will open automatically."
+              : "正在连接数字人，连接成功后将自动进入对话。");
   const suggestions = suggestionItems ?? (english ? ["Venue navigation", "Book a meeting", "Conference services", "About the exhibition"] : ["展馆导航", "预约洽谈", "会议服务", "关于展览"]);
   const displaySubtitle = subtitle?.trim() || (messages.length === 0 && !wakeSleeping ? (english ? "You can ask me the following questions" : "你可以问我以下问题哦") : "");
   const latestVisibleMessage = messages[messages.length - 1];
@@ -734,15 +727,14 @@ export function DigitalHumanDisplay({
                   <h1>{english ? "Digital human failed to load" : "数字人加载失败"}</h1>
                   <p>
                     {english
-                        ? "Check the service status and try loading again."
-                        : "请检查数字人模型服务状态后重新加载。"}
+                        ? "Please try again later or ask the staff for help."
+                        : "请稍后重试，或联系现场工作人员。"}
                   </p>
                   <button type="button" className="digital-display-start-button" onClick={onStart}>
                     {english ? "Try again" : "重新加载"}
                   </button>
                   <div className="digital-display-start-meta">
                     <span>{avatar?.name ?? (english ? "Default digital human" : "默认数字人")}</span>
-                    <span>{modelLabel}</span>
                   </div>
                 </div>
             ) : null}
