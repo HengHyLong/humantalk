@@ -68,7 +68,9 @@ export function matchExhibitionEntities(text: string, entities: ExhibitionEntity
       }, 0);
       return { entity, score: exactLength > 0 ? 1 + exactLength / 100 : fuzzy };
     })
-    .filter((candidate) => candidate.score >= 0.66)
+    // Exact name/keyword matches score above 1. Fuzzy matches need a stronger
+    // signal so unrelated questions do not open an entity card by accident.
+    .filter((candidate) => candidate.score >= 0.8)
     .sort((left, right) => right.score - left.score)
     .slice(0, 3)
     .map((candidate) => candidate.entity);
