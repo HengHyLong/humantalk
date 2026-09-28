@@ -36,7 +36,7 @@ def test_dynamic_idle_frames_are_configured_for_forward_looping() -> None:
     assert runner._idle_playback_indices == [0, 1, 2]
 
 
-def test_quicktalk_multi_motion_templates_stay_on_one_clip_during_an_utterance() -> None:
+def test_quicktalk_multi_motion_templates_cycle_during_an_utterance() -> None:
     groups = [["talk-a-0", "talk-a-1"], ["talk-b-0", "talk-b-1"]]
     group_index = 0
     frame_index = 0
@@ -52,11 +52,25 @@ def test_quicktalk_multi_motion_templates_stay_on_one_clip_during_an_utterance()
     assert sequence == [
         "talk-a-0",
         "talk-a-1",
-        "talk-a-0",
-        "talk-a-1",
+        "talk-b-0",
+        "talk-b-1",
         "talk-a-0",
         "talk-a-1",
     ]
+
+
+def test_quicktalk_single_motion_template_keeps_ping_pong_loop() -> None:
+    group_index = frame_index = 0
+    sequence = []
+    for _ in range(7):
+        context, group_index, frame_index = next_motion_context(
+            [["frame-0", "frame-1", "frame-2"]],
+            group_index=group_index,
+            frame_index=frame_index,
+        )
+        sequence.append(context)
+
+    assert sequence == ["frame-0", "frame-1", "frame-2", "frame-1", "frame-0", "frame-1", "frame-2"]
 
 
 def test_quicktalk_ping_pong_does_not_duplicate_turnaround_frames() -> None:
