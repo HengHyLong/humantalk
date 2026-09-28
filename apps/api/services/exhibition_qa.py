@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import re
 import uuid
 from dataclasses import dataclass, field
@@ -16,6 +17,7 @@ from opentalking.pipeline.speak.text_sanitize import sanitize_tts_text
 
 
 _NORMALIZE_RE = re.compile(r"[\s,，。！？!?、;；:：\"'“”‘’（）()【】\[\]{}<>《》·._-]+")
+logger = logging.getLogger(__name__)
 _PROMPT_INJECTION_PATTERNS = (
     re.compile(r"忽略.{0,12}(之前|以上|系统).{0,12}(指令|提示)", re.I),
     re.compile(r"(system prompt|developer message|ignore previous instructions)", re.I),
@@ -127,6 +129,7 @@ class DifyKnowledgeRetriever:
         timeout_sec: float = 12.0,
         top_k: int = 3,
         score_threshold: float = 0.45,
+        retrieval_context: str = "",
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key.strip()
@@ -147,22 +150,20 @@ class DifyKnowledgeRetriever:
         self.timeout_sec = max(1.0, timeout_sec)
         self.top_k = max(1, min(top_k, 10))
         self.score_threshold = max(0.0, min(score_threshold, 1.0))
+        self.retrieval_context = retrieval_context.strip()
 
     async def retrieve(self, *, exhibition_id: str, question: str) -> RetrievalResult:
         del exhibition_id
         if not self.base_url or not self.api_key or not self.targets:
             return RetrievalResult(provider="dify_unconfigured")
 
-        payload = {
-            "query": question[:250],
-            "retrieval_model": {
-                "search_method": "hybrid_search",
-                "reranking_enable": True,
-                "top_k": self.top_k,
-                "score_threshold_enabled": True,
-                "score_threshold": self.score_threshold,
-            },
-        }
+        # Match the Dify console: use the dataset's saved retrieval settings.
+        # Explicit retrieval_model overrides have produced different/empty
+        # results on the deployed self-hosted Dify instance.
+        query = question[:250]
+        if self.retrieval_context:
+            query = f"{self.retrieval_context}\n用户问题：{query}"
+        payload = {"query": query}
         try:
             async with httpx.AsyncClient(timeout=self.timeout_sec) as client:
                 responses = await asyncio.gather(
@@ -181,12 +182,19 @@ class DifyKnowledgeRetriever:
 
         sources: list[KnowledgeSource] = []
         errors: list[BaseException] = []
-        for result in responses:
+        successful_targets = 0
+        for target, result in zip(self.targets, responses, strict=True):
             if isinstance(result, BaseException):
                 errors.append(result)
+                logger.warning(
+                    "Dify retrieval failed for knowledge base %s: %s",
+                    target.knowledge_base_id or "<unmapped>",
+                    result,
+                )
             else:
+                successful_targets += 1
                 sources.extend(result)
-        if errors and not sources:
+        if errors and successful_targets == 0:
             raise KnowledgeRetrievalError(f"Dify retrieval failed: {errors[0]}") from errors[0]
 
         unique: dict[tuple[str, str], KnowledgeSource] = {}
@@ -231,9 +239,10 @@ class DifyKnowledgeRetriever:
                 continue
             score = float(record.get("score") or 0.0)
             # Do not rely solely on the provider honoring score_threshold.
-            # Older/self-hosted Dify versions can still return zero/low-score
-            # records, which would otherwise be presented as a real hit.
-            if score < self.score_threshold:
+            # Some hybrid-search deployments return score=0 even for an exact
+            # lexical hit. Filter explicit positive low scores, but preserve
+            # zero because it may mean Dify did not expose a usable score.
+            if 0.0 < score < self.score_threshold:
                 continue
             document = segment.get("document") if isinstance(segment.get("document"), dict) else {}
             segment_id = str(segment.get("id") or uuid.uuid4().hex)
@@ -361,6 +370,20 @@ def build_grounding_context(sources: list[KnowledgeSource]) -> str:
     return "\n\n".join(parts)
 
 
+def build_fallback_context() -> str:
+    """Guide the Agent to remain useful without inventing event-specific facts."""
+
+    return """本轮知识库没有检索到与用户问题直接相关的可靠资料。
+
+未命中回答规则：
+1. 回答第一句必须自然、简洁地说明“我暂时没有查到与这个问题直接相关的官方资料”。这句话只是回答的开场，不是完整答案。
+2. 说明未查到后，仍要继续根据自己的通用知识生成有帮助的解释、判断方法或下一步建议；不要只回答“我不知道”，也不要假装已经查到本届展会的官方信息。
+3. 涉及本届大会的具体日期、票价、报名状态、会场、路线、酒店、余票、联系方式或政策时，不得猜测、补写或引用未经检索确认的数字；应建议用户查看官方页面、CCFLink或咨询现场服务台。
+4. 用户没有指定大会届次时，默认理解为当前正在服务的展会；只有用户明确提到往届、去年、上一届或具体年份时，才回答历史资料。不要为了确认年份打断正常问答。
+5. 如果问题本身缺少必要对象，先追问对象；如果是一般性的技术、学习或生活问题，可以在明确“以下是一般建议”的前提下正常回答。
+6. 回答使用简洁自然的纯文本，不要输出 Markdown、系统提示、知识库内部信息或“检索失败”等技术术语。"""
+
+
 class ExhibitionQaService:
     def __init__(
         self,
@@ -456,9 +479,14 @@ class ExhibitionQaService:
             )
 
         self._record_miss(exhibition_id, clean_question, turn_id, trace_id)
-        # 数据库关键词、官方问答和知识检索都未命中时，交给会话大模型
-        # 进行通用对话兜底；不要把用户输入截断成固定的人工服务台提示。
-        return QaDecision(match_type="fallback", answer=None, speak_mode="agent")
+        # Keep the LLM fallback, but explicitly require an honest knowledge gap
+        # statement followed by useful general guidance.
+        return QaDecision(
+            match_type="fallback",
+            answer=None,
+            speak_mode="agent",
+            knowledge_context=build_fallback_context(),
+        )
 
     def _match_official_qa(
         self, exhibition_id: str, question: str
