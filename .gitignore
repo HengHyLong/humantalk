@@ -94,3 +94,15 @@ docs/superpowers/
 site/
 
 /.pytest-llm-switch*/
+
+# Local pytest output
+/.pytest-*/
+/.run-local/
+/quicktalk-motion-test-tmp/
+
+# Runtime-created avatars and machine-specific quickstart settings
+/examples/avatars/custom-*/
+/examples/avatars/博览-女1/
+/examples/avatars/博览-男1/
+/scripts/quickstart/env.*
+!/scripts/quickstart/env.example
