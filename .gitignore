@@ -92,3 +92,13 @@ docs/superpowers/
 
 # MkDocs build output
 site/
+
+# Local pytest output
+/.pytest-*/
+/.run-local/
+/quicktalk-motion-test-tmp/
+
+# Runtime-created avatars and machine-specific quickstart settings
+/examples/avatars/custom-*/
+/scripts/quickstart/env.*
+!/scripts/quickstart/env.example
