@@ -129,7 +129,7 @@ class DifyKnowledgeRetriever:
         timeout_sec: float = 12.0,
         top_k: int = 3,
         score_threshold: float = 0.45,
-        retrieval_context: str = "",
+        retrieval_query: str | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key.strip()
@@ -150,7 +150,7 @@ class DifyKnowledgeRetriever:
         self.timeout_sec = max(1.0, timeout_sec)
         self.top_k = max(1, min(top_k, 10))
         self.score_threshold = max(0.0, min(score_threshold, 1.0))
-        self.retrieval_context = retrieval_context.strip()
+        self.retrieval_query = (retrieval_query or "").strip()
 
     async def retrieve(self, *, exhibition_id: str, question: str) -> RetrievalResult:
         del exhibition_id
@@ -160,9 +160,7 @@ class DifyKnowledgeRetriever:
         # Match the Dify console: use the dataset's saved retrieval settings.
         # Explicit retrieval_model overrides have produced different/empty
         # results on the deployed self-hosted Dify instance.
-        query = question[:250]
-        if self.retrieval_context:
-            query = f"{self.retrieval_context}\n用户问题：{query}"
+        query = (self.retrieval_query or question)[:250]
         payload = {"query": query}
         try:
             async with httpx.AsyncClient(timeout=self.timeout_sec) as client:

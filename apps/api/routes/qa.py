@@ -318,33 +318,149 @@ def _record_value(record: dict[str, object], *keys: str) -> str:
     return ""
 
 
-def _build_dify_retrieval_context(
-    store: object,
-    exhibition_id: str,
-    question: str,
-) -> str:
-    """Disambiguate generic exhibit references without biasing named entities."""
+_EVENT_NOUN = r"(?:博览会|展览会|大会|展会|会议|会展|论坛|展览|活动)"
+_EVENT_REFERENCE = re.compile(
+    rf"(?:这|那)(?:一)?(?:个|场|届|次)?{_EVENT_NOUN}"
+    r"|(?:这|那)(?:一)?(?:个|场|届|次)会"
+    rf"|(?:本|当)届(?:的)?(?:{_EVENT_NOUN}|会)?"
+    rf"|(?:本|当)(?:次|场)(?:的)?(?:{_EVENT_NOUN}|会)"
+    rf"|(?:当前|今年的?|你们(?:现在)?的?|咱们(?:现在)?的?"
+    rf"|我们(?:现在)?的?|贵)(?:{_EVENT_NOUN})"
+    rf"|(?:^|[，,。？?\s]|介绍(?:一下|下)?|说说|讲讲|聊聊|了解(?:一下)?"
+    rf"|请问|关于|咨询(?:一下)?|问问)(?:{_EVENT_NOUN})"
+)
+_EVENT_QUESTION = re.compile(
+    r"举办|举行|召开|开幕|闭幕|会期|议程|主办|承办|参会|参展|报名|门票|展馆|会场"
+    r"|(?:几号|何时|什么时候|啥时候)开(?:始|展|幕|会|办|[？?。]|$)"
+    r"|(?:几号|几点|什么时候|啥时候)(?:开始|结束)|(?:在哪|哪里|哪儿)办"
+    r"|开几天|持续几天|从.{0,8}开到|从几号到几号|几号到几号"
+)
+_EVENT_PRONOUN = re.compile(r"(?:本届|这届|本次|这次|此次|这场|它|这个|那场)")
+_EVENT_DETAIL_QUESTION = re.compile(r"主题|看点|亮点|日程|嘉宾|规模|参会人数")
+_NAMED_CODE = re.compile(r"(?<![A-Za-z0-9])[A-Za-z][A-Za-z0-9_-]*")
+_OTHER_ENTITY_REFERENCE = re.compile(
+    r"(?:这|那)(?:个|款|台|家|位)?"
+    r"(?:公司|企业|展商|展品|产品|设备|机器人|品牌|酒店|餐厅|学校|模型)"
+)
+_NON_EVENT_SUBJECT = re.compile(
+    r"天气|酒店|机票|航班|车次|火车|餐厅|商场|课程|电影|公司|企业|产品|展品|机器人"
+)
+_NON_CURRENT_REFERENCE = re.compile(
+    r"去年|前年|明年|往届|历届|上一届|上届|前一届|下一届|下届|"
+    r"过去|以前|历史|首届|第一届|其他(?:的)?(?:大会|展会|会议|活动)|别的(?:大会|展会|会议|活动)"
+)
 
-    if not any(term in question for term in ("展会", "大会", "本届", "这届", "本次会议")):
-        return ""
-    # A specific acronym, product/model name, or year is already a stronger
-    # query anchor. Do not inject the current exhibition and accidentally
-    # redirect questions such as “介绍一下 T1000” to the event itself.
-    if re.search(r"(?<![A-Za-z0-9])[A-Za-z]{2,}[A-Za-z0-9_-]*|\d{4}(?!\d)", question):
-        return ""
 
-    exhibition = getattr(store, "get_record")("exhibitions", exhibition_id) or {}
+def _current_exhibition_terms(exhibition: dict[str, object]) -> list[str]:
     name = _record_value(exhibition, "name", "title")
     code = _record_value(exhibition, "code", "shortName", "short_name")
     aliases = _clean_ids(exhibition.get("aliases"))
     terms = list(dict.fromkeys(value for value in (name, code, *aliases) if value))
-    if not terms:
-        return ""
-    return (
-        f"当前服务的展会是：{'、'.join(terms)}。"
-        "仅当用户问题中的展会或大会指代不明确时，才用此信息消歧；"
-        "不要覆盖问题中已经明确提到的其他对象。"
+    # The official Chinese name often has a shorter spoken form that is not
+    # explicitly listed in Admin (e.g. 中国计算机大会 -> 计算机大会).
+    if name.startswith("中国") and len(name[2:]) >= 4:
+        terms.append(name[2:])
+    return list(dict.fromkeys(terms))
+
+
+def _known_exhibition_codes(terms: list[str]) -> set[str]:
+    codes: set[str] = set()
+    for term in terms:
+        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", term):
+            continue
+        normalized = re.sub(r"[-_]", "", term).casefold()
+        codes.add(normalized)
+        root = re.sub(r"20\d{2}$", "", normalized)
+        if root.isalpha() and len(root) >= 3:
+            codes.add(root)
+    return codes
+
+
+def _mentions_current_exhibition(question: str, terms: list[str]) -> bool:
+    compact = re.sub(r"\s+", "", question).casefold()
+    for term in terms:
+        if re.search(r"[\u4e00-\u9fff]", term) and len(term) >= 4 and term.casefold() in compact:
+            return True
+    latin_terms = _known_exhibition_codes(terms)
+    return any(
+        re.sub(r"[-_]", "", token).casefold() in latin_terms
+        for token in _NAMED_CODE.findall(question)
     )
+
+
+def _build_dify_retrieval_query(
+    store: object,
+    exhibition_id: str,
+    question: str,
+) -> str | None:
+    """Resolve current-event references without changing the user's actual question."""
+    exhibition = getattr(store, "get_record")("exhibitions", exhibition_id) or {}
+    terms = _current_exhibition_terms(exhibition)
+    if not terms:
+        return None
+    current_years = set(re.findall(r"(?<!\d)20\d{2}(?!\d)", " ".join(terms)))
+    question_years = set(re.findall(r"(?<!\d)20\d{2}(?!\d)", question))
+    if question_years - current_years or _NON_CURRENT_REFERENCE.search(question):
+        return None
+    known_latin = _known_exhibition_codes(terms)
+    mentions_current = _mentions_current_exhibition(question, terms)
+    if any(
+        re.sub(r"[-_]", "", token).casefold() not in known_latin
+        and (not mentions_current or bool(re.search(r"\d", token)))
+        for token in _NAMED_CODE.findall(question)
+    ):
+        return None
+    if _OTHER_ENTITY_REFERENCE.search(question):
+        return None
+    event_reference = _EVENT_REFERENCE.search(question)
+    if not mentions_current and not event_reference and _NON_EVENT_SUBJECT.search(question):
+        return None
+    if not (
+        mentions_current
+        or event_reference
+        or re.search(r"(?:本届|这届)", question)
+        or (
+            _EVENT_PRONOUN.search(question)
+            and (_EVENT_QUESTION.search(question) or _EVENT_DETAIL_QUESTION.search(question))
+        )
+        or (_EVENT_QUESTION.search(question) and len(question.strip()) <= 30)
+    ):
+        return None
+
+    name = _record_value(exhibition, "name", "title")
+    code = _record_value(exhibition, "code", "shortName", "short_name")
+    if re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", code):
+        code = re.sub(r"[-_\s]", "", code)
+    subject = name or code or terms[0]
+    if code and code.casefold() not in re.sub(r"[-_\s]", "", subject).casefold():
+        subject = f"{subject}（{code}）"
+
+    if (
+        name
+        and name in question
+        and code
+        and code.casefold() in re.sub(r"[-_\s]", "", question).casefold()
+    ):
+        return question
+    for term in sorted(terms, key=len, reverse=True):
+        if len(term) < 4 or not re.search(r"[\u4e00-\u9fff]", term):
+            continue
+        if match := re.search(re.escape(term), question):
+            return question[: match.start()] + subject + question[match.end() :]
+    for match in _NAMED_CODE.finditer(question):
+        if re.sub(r"[-_]", "", match.group()).casefold() in known_latin:
+            return question[: match.start()] + subject + question[match.end() :]
+    if match := event_reference:
+        if re.match(r"(?:这|那|本|当|当前|今年|你们|咱们|我们|贵)", match.group()):
+            return question[: match.start()] + subject + question[match.end() :]
+        if noun := re.search(_EVENT_NOUN, match.group()):
+            start = match.start() + noun.start()
+            end = match.start() + noun.end()
+            return question[:start] + subject + question[end:]
+        return question[: match.start()] + subject + question[match.end() :]
+    if match := _EVENT_PRONOUN.search(question):
+        return question[: match.start()] + subject + question[match.end() :]
+    return subject + question
 
 
 def _record_exhibition_ids(record: dict[str, object]) -> list[str]:
@@ -573,7 +689,7 @@ async def query_exhibition_qa(
             base_url=dify_base_url,
             api_key=dify_key,
             targets=dify_targets,
-            retrieval_context=_build_dify_retrieval_context(
+            retrieval_query=_build_dify_retrieval_query(
                 store,
                 resolved_exhibition_id,
                 body.question,

@@ -68,6 +68,76 @@ def test_qa_prefers_agent_dify_connection_used_by_direct_rag() -> None:
     assert api_key == "agent-key"
 
 
+@pytest.mark.parametrize(
+    ("question", "expected"),
+    [
+        ("介绍一下CNCC", "介绍一下中国计算机大会（CNCC2026）"),
+        ("简单讲讲 cncc2026", "简单讲讲 中国计算机大会（CNCC2026）"),
+        ("CNCC-2026 的主题是什么？", "中国计算机大会（CNCC2026） 的主题是什么？"),
+        ("计算机大会从多久开到多久？", "中国计算机大会（CNCC2026）从多久开到多久？"),
+        ("这个大会在哪里举办？", "中国计算机大会（CNCC2026）在哪里举办？"),
+        ("这场会几号开始？", "中国计算机大会（CNCC2026）几号开始？"),
+        ("本届有什么看点？", "中国计算机大会（CNCC2026）有什么看点？"),
+        ("这届有多少人参加？", "中国计算机大会（CNCC2026）有多少人参加？"),
+        ("本次会议的主题是什么？", "中国计算机大会（CNCC2026）的主题是什么？"),
+        ("你们的展会什么时候开？", "中国计算机大会（CNCC2026）什么时候开？"),
+        ("我们现在的大会有什么亮点？", "中国计算机大会（CNCC2026）有什么亮点？"),
+        ("介绍一下大会", "介绍一下中国计算机大会（CNCC2026）"),
+        ("它在哪里举办？", "中国计算机大会（CNCC2026）在哪里举办？"),
+        ("这次有什么亮点？", "中国计算机大会（CNCC2026）有什么亮点？"),
+        ("什么时候开幕？", "中国计算机大会（CNCC2026）什么时候开幕？"),
+        ("这次几点开始？", "中国计算机大会（CNCC2026）几点开始？"),
+        ("这次从几号到几号？", "中国计算机大会（CNCC2026）从几号到几号？"),
+        ("在哪办？", "中国计算机大会（CNCC2026）在哪办？"),
+        ("什么时候举行？", "中国计算机大会（CNCC2026）什么时候举行？"),
+        ("CNCC由CCF主办吗？", "中国计算机大会（CNCC2026）由CCF主办吗？"),
+        ("介绍一下中国计算机大会（CNCC2026）", "介绍一下中国计算机大会（CNCC2026）"),
+    ],
+)
+def test_dify_query_resolves_current_event_in_spoken_questions(
+    question: str, expected: str
+) -> None:
+    class Store:
+        def get_record(self, kind: str, record_id: str):
+            assert (kind, record_id) == ("exhibitions", "expo-2026")
+            return {"name": "中国计算机大会", "code": "CNCC-2026"}
+
+    rewritten = qa_routes._build_dify_retrieval_query(Store(), "expo-2026", question)
+
+    assert rewritten == expected
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "介绍一下T1000",
+        "本次T1000多少钱？",
+        "介绍一下CCE2026展会",
+        "CNCC2025在哪里举办？",
+        "2025年中国计算机大会在哪里举办？",
+        "CNCC2026和T1000有什么关系？",
+        "今天成都天气怎么样？",
+        "这家公司有什么产品？",
+        "它有多高？",
+        "这会儿有空吗？",
+        "这次天气怎么样？",
+        "介绍一下上海车展",
+        "去年的大会在哪里举办？",
+        "下一届大会什么时候举办？",
+        "其他展会在哪里举办？",
+        "这个产品怎么报名？",
+        "酒店从几号到几号可以入住？",
+    ],
+)
+def test_dify_query_does_not_redirect_other_entities(question: str) -> None:
+    class Store:
+        def get_record(self, kind: str, record_id: str):
+            assert (kind, record_id) == ("exhibitions", "expo-2026")
+            return {"name": "中国计算机大会", "code": "CNCC-2026"}
+
+    assert qa_routes._build_dify_retrieval_query(Store(), "expo-2026", question) is None
+
+
 def test_qa_resolves_multiple_logical_knowledge_bases_for_one_exhibition() -> None:
     class MappingStore:
         def list_records(self, kind: str, *, exhibition_id: str | None = None):
@@ -350,11 +420,46 @@ async def test_dify_retriever_uses_official_dataset_retrieve_contract(monkeypatc
         "Authorization": "Bearer server-key",
         "Content-Type": "application/json",
     }
-    assert captured["json"]["query"] == "服务中心在哪里？"  # type: ignore[index]
-    assert captured["json"]["retrieval_model"]["score_threshold"] == 0.45  # type: ignore[index]
+    assert captured["json"] == {"query": "服务中心在哪里？"}
     assert len(result.sources) == 1
     assert result.sources[0].title == "服务指南.docx"
     assert result.sources[0].score == 0.93
+
+
+@pytest.mark.asyncio
+async def test_dify_retriever_sends_only_rewritten_search_query(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self):
+            return {"records": []}
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url, *, headers, json):
+            del url, headers
+            captured.update(json)
+            return FakeResponse()
+
+    monkeypatch.setattr(exhibition_qa_module.httpx, "AsyncClient", lambda **kwargs: FakeClient())
+    retriever = DifyKnowledgeRetriever(
+        base_url="https://dify.example/v1",
+        api_key="server-key",
+        dataset_id="dataset-1",
+        retrieval_query="介绍一下中国计算机大会（CNCC2026）",
+    )
+
+    await retriever.retrieve(exhibition_id="expo-2026", question="介绍一下CNCC")
+
+    assert captured == {"query": "介绍一下中国计算机大会（CNCC2026）"}
 
 
 @pytest.mark.asyncio
