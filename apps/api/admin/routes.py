@@ -17,6 +17,7 @@ import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, model_validator
+from pypinyin import lazy_pinyin
 
 from .security import current_user, decode_token, get_store, issue_tokens, password_hasher, verify_password
 from .monitoring import collect_runtime_monitor
@@ -87,6 +88,10 @@ class ShoppingQueryBody(BaseModel):
     text: str = Field(min_length=1, max_length=1000)
     session_id: str = Field(min_length=1, max_length=200)
     language: Literal["zh-CN", "en-US"] = "zh-CN"
+
+
+class EntityResolveBody(BaseModel):
+    text: str = Field(min_length=1, max_length=1000)
 
 
 class ShoppingRegistrationBody(BaseModel):
@@ -2761,6 +2766,33 @@ def _public_image_urls(item: dict[str, Any], *fallback_items: dict[str, Any] | N
     return []
 
 
+def _phonetic_exhibit_candidates(text: str, entities: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Rank exhibits in the current exhibition by their configured spoken terms."""
+    query = "".join(re.findall(r"[\u4e00-\u9fff]", text))
+    if len(query) < 4:
+        return []
+    ranked: list[dict[str, Any]] = []
+    for entity in entities:
+        if entity["kind"] != "exhibit":
+            continue
+        best = 0.0
+        for value in entity.get("fuzzy_keywords", []):
+            term = "".join(re.findall(r"[\u4e00-\u9fff]", str(value)))
+            if len(term) < 4 or len(term) > len(query):
+                continue
+            if term in query:
+                best = 1.0
+                break
+            target = "".join(lazy_pinyin(term))
+            for index in range(len(query) - len(term) + 1):
+                window = query[index:index + len(term)]
+                score = SequenceMatcher(None, "".join(lazy_pinyin(window)), target).ratio()
+                best = max(best, score)
+        if best >= 0.92:
+            ranked.append({"id": entity["id"], "name": entity["name"], "score": round(best, 4)})
+    return sorted(ranked, key=lambda item: (-item["score"], item["id"]))[:3]
+
+
 @public_router.get("/exhibitions/{exhibition_id}/entities")
 def public_exhibition_entities(exhibition_id: str, request: Request) -> dict[str, Any]:
     """Return display-safe event entities used by the Web keyword matcher."""
@@ -2863,6 +2895,17 @@ def public_exhibition_entities(exhibition_id: str, request: Request) -> dict[str
             keywords=[item.get("location"), item.get("speaker")], source=item,
         )
     return {"exhibition_id": exhibition_id, "items": items}
+
+
+@public_router.post("/exhibitions/{exhibition_id}/entities/resolve")
+def resolve_exhibition_entity(exhibition_id: str, body: EntityResolveBody, request: Request) -> dict[str, Any]:
+    entities = public_exhibition_entities(exhibition_id, request)["items"]
+    candidates = _phonetic_exhibit_candidates(body.text, entities)
+    if not candidates:
+        return {"status": "no_match", "candidates": []}
+    if len(candidates) > 1 and candidates[0]["score"] - candidates[1]["score"] < 0.04:
+        return {"status": "ambiguous", "candidates": candidates}
+    return {"status": "matched", "candidates": candidates[:1]}
 
 
 def _exhibit_for_survey_token(store: AdminStore, token: str) -> dict[str, Any]:
