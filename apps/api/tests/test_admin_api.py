@@ -540,6 +540,35 @@ def test_public_exhibition_entities_include_display_fields_and_image_fallbacks(t
         assert not any(detail["value"] == "13800138000" for item in items.values() for detail in item["details"])
 
 
+def test_phonetic_exhibit_resolution_handles_asr_error_and_ambiguity(tmp_path) -> None:
+    with _client(tmp_path) as client:
+        store = client.app.state.admin_store
+        store.save_record("exhibits", {
+            "id": "embodied-robot", "exhibitionId": "expo-test", "name": "具身机器人",
+        }, "expo-test")
+
+        resolved = client.post("/exhibitions/expo-test/entities/resolve", json={"text": "介绍一下巨声机器人"})
+        assert resolved.status_code == 200
+        assert resolved.json()["status"] == "matched"
+        assert resolved.json()["candidates"][0]["id"] == "embodied-robot"
+
+        unrelated = client.post("/exhibitions/expo-test/entities/resolve", json={"text": "介绍一下天气预报"})
+        assert unrelated.json()["status"] == "no_match"
+
+        store.save_record("exhibits", {
+            "id": "strict-robot", "exhibitionId": "expo-test", "name": "远程机器人", "fuzzyMatch": False,
+        }, "expo-test")
+        disabled = client.post("/exhibitions/expo-test/entities/resolve", json={"text": "介绍一下元成机器人"})
+        assert disabled.json()["status"] == "no_match"
+
+        store.save_record("exhibits", {
+            "id": "same-sound-robot", "exhibitionId": "expo-test", "name": "巨身机器人",
+        }, "expo-test")
+        ambiguous = client.post("/exhibitions/expo-test/entities/resolve", json={"text": "介绍一下巨声机器人"})
+        assert ambiguous.json()["status"] == "ambiguous"
+        assert {item["id"] for item in ambiguous.json()["candidates"]} == {"embodied-robot", "same-sound-robot"}
+
+
 def test_exhibit_survey_submission_creates_linked_lead(tmp_path) -> None:
     with _client(tmp_path) as client:
         headers = _login(client)

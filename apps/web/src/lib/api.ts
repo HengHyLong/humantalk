@@ -423,6 +423,19 @@ export async function listExhibitionEntities(exhibitionId?: string | null): Prom
   );
 }
 
+export type EntityResolveResult = {
+  status: "matched" | "ambiguous" | "no_match";
+  candidates: Array<{ id: string; name: string; score: number }>;
+};
+
+export async function resolveExhibitionEntity(exhibitionId: string | null | undefined, text: string): Promise<EntityResolveResult> {
+  const id = exhibitionId?.trim();
+  return apiPost<EntityResolveResult>(
+    `/exhibitions/${encodeURIComponent(id || "current")}/entities/resolve`,
+    { text },
+  );
+}
+
 export type NavigationQueryResponse = NavigationResult;
 
 export async function getExhibitionVoiceConfig(exhibitionId?: string | null): Promise<ExhibitionVoiceConfigResponse> {

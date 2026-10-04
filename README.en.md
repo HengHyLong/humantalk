@@ -55,6 +55,8 @@ More documentation:
 
 OpenTalking provides a Web service interface for managing the digital-human conversation pipeline. You can select or create avatars, configure voices, LLM, TTS, STT, and digital-human driver models, inspect model connection status, and validate real-time conversation, subtitles, and audio/video playback on the same page.
 
+For exhibition voice input, the Web app can resolve near-homophone STT errors against exhibit names and configured aliases in the current exhibition. Close candidates prompt the visitor to choose; a resolved exhibit uses its canonical name for the subsequent database query. Disable fuzzy matching on an exhibit to exclude it from this phonetic fallback.
+
 ![OpenTalking WebUI](docs/assets/images/WebUI.png)
 
 ### Demo Videos

@@ -277,8 +277,8 @@ body {
 .digital-display-chat-line { display: flex; max-width: 88%; align-items: flex-start; gap: 8px; color: rgba(245, 253, 255, .92); font-size: 12px; line-height: 1.65; }
 .digital-display-chat-line.has-entities { width: min(100%, 520px); max-width: 100%; flex-direction: column; }
 .digital-display-chat-line-copy { display: flex; min-width: 0; align-items: flex-start; gap: 8px; }
-.digital-display-chat-line.is-user { align-self: flex-start; }
-.digital-display-chat-line.is-assistant { align-self: flex-end; }
+.digital-display-chat-line.is-user { align-self: flex-end; }
+.digital-display-chat-line.is-assistant { align-self: flex-start; }
 .digital-display-chat-role { flex: 0 0 auto; border: 1px solid rgba(185, 237, 255, .34); border-radius: 999px; padding: 2px 7px; color: rgba(223, 248, 255, .9); background: rgba(2, 49, 112, .38); font-size: 9px; line-height: 1.45; }
 .digital-display-chat-line p { min-width: 0; margin: 0; border-radius: 10px; padding: 7px 10px; background: rgba(3, 60, 125, .34); }
 .digital-display-chat-line.is-user .digital-display-chat-line-copy p { background: rgba(66, 174, 226, .32); }

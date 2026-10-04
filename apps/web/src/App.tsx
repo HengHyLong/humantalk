@@ -44,6 +44,7 @@ import {
   queryExhibitionQa,
   queryExhibitionNavigation,
   queryExhibitionShopping,
+  resolveExhibitionEntity,
   transcribeSessionAudio,
   loadRuntimeConfig,
   uploadExportVideo,
@@ -150,6 +151,7 @@ type RecognizedTextOptions = {
   databaseShortcut?: DatabaseShortcut;
   displayText?: string;
   selectedEntityId?: string;
+  speechInput?: boolean;
 };
 
 type PendingShoppingRegistration = {
@@ -1080,6 +1082,7 @@ export default function App() {
   const pendingExhibitionFollowupRef = useRef<PendingExhibitionFollowup | null>(null);
   const [exhibitionFollowupStage, setExhibitionFollowupStage] = useState<PendingExhibitionFollowup["stage"] | null>(null);
   const pendingContentClarificationRef = useRef<PendingContentClarification | null>(null);
+  const pendingPhoneticCandidatesRef = useRef<ExhibitionEntityCard[] | null>(null);
   const wakeAwakeUntilRef = useRef(0);
   const wakeSleepTimerRef = useRef<number | null>(null);
   const [wakeSleeping, setWakeSleeping] = useState(false);
@@ -1127,6 +1130,7 @@ export default function App() {
     pendingExhibitionFollowupRef.current = null;
     setExhibitionFollowupStage(null);
     pendingContentClarificationRef.current = null;
+    pendingPhoneticCandidatesRef.current = null;
     setShoppingRegistration(null);
   }, [clearWakeSleepTimer, configuredExhibitionId, sessionId]);
   const [, setRuntimeStatus] = useState<HealthResponse | null>(null);
@@ -3021,6 +3025,18 @@ export default function App() {
   const routeRecognizedText = useCallback(async (rawText: string, options: RecognizedTextOptions = {}) => {
     const text = rawText.trim();
     if (!text || !sessionId) return;
+    let selectedEntityId = options.selectedEntityId;
+    const pendingPhonetic = pendingPhoneticCandidatesRef.current;
+    if (pendingPhonetic && selectedEntityId) pendingPhoneticCandidatesRef.current = null;
+    if (pendingPhonetic && !selectedEntityId) {
+      const chosen = selectExhibitionEntity(text, pendingPhonetic);
+      pendingPhoneticCandidatesRef.current = null;
+      if (chosen) selectedEntityId = chosen.id;
+      else if (/^(都不是|不是|取消|算了)$/.test(text)) {
+        enqueueSpeech("好的，请告诉我您想了解的展品名称。", text, [], true);
+        return;
+      }
+    }
     // A new visitor turn replaces any presentation left by the previous turn.
     setNavigationResult(null);
     setShoppingRegistration(null);
@@ -3030,9 +3046,38 @@ export default function App() {
     setVoiceTurnActive(true);
     const databaseShortcut = options.databaseShortcut;
     const displayText = options.displayText?.trim() || text;
-    const selectedEntity = options.selectedEntityId
-      ? exhibitionEntities.find((entity) => entity.id === options.selectedEntityId)
+    let selectedEntity = selectedEntityId
+      ? exhibitionEntities.find((entity) => entity.id === selectedEntityId)
       : undefined;
+    if (options.speechInput && !selectedEntity && !databaseShortcut && !pendingShoppingRegistrationRef.current
+      && !pendingExhibitionFollowupRef.current && !pendingContentClarificationRef.current
+      && classifyExplicitContentRequest(text) !== "route" && /[\p{Script=Han}]{4,}/u.test(text)) {
+      const normalized = normalizeEntityKeyword(text);
+      const hasExactTerm = exhibitionEntities.some((entity) => [entity.name, ...entity.keywords].some((term) => {
+        const keyword = normalizeEntityKeyword(term);
+        return keyword.length >= 4 && normalized.includes(keyword);
+      }));
+      if (!hasExactTerm) {
+        try {
+          const resolution = await resolveExhibitionEntity(configuredExhibitionId, text);
+          if (resolution.status === "matched") {
+            selectedEntity = exhibitionEntities.find((entity) => entity.id === resolution.candidates[0]?.id);
+          } else if (resolution.status === "ambiguous") {
+            const candidates = resolution.candidates
+              .map((candidate) => exhibitionEntities.find((entity) => entity.id === candidate.id))
+              .filter((entity): entity is ExhibitionEntityCard => Boolean(entity));
+            if (candidates.length > 1) {
+              pendingPhoneticCandidatesRef.current = candidates;
+              const choices = candidates.map((entity, index) => `第${["一", "二", "三"][index]}个${entity.name}`).join("，");
+              enqueueSpeech(`您想了解哪件展品？${choices}？`, text, [], true);
+              return;
+            }
+          }
+        } catch (error) {
+          console.warn("phonetic exhibit resolution failed", error);
+        }
+      }
+    }
     const matchedEntities = selectedEntity
       ? [selectedEntity, ...matchExhibitionEntities(text, exhibitionEntities).filter((entity) => entity.id !== selectedEntity.id)]
       : matchExhibitionEntities(text, exhibitionEntities);
@@ -3733,7 +3778,7 @@ export default function App() {
     const wakeConfig = exhibitionVoiceConfig?.wake_word;
     if (!wakeConfig?.enabled || !wakeConfig.words.length) {
       setVoiceTurnActive(true);
-      await routeRecognizedText(text);
+      await routeRecognizedText(text, { speechInput: true });
       return;
     }
 
@@ -3756,7 +3801,7 @@ export default function App() {
       }
       return;
     }
-    await routeRecognizedText(gate.text);
+    await routeRecognizedText(gate.text, { speechInput: true });
   }, [enqueueSpeech, exhibitionEntities, exhibitionVoiceConfig, isSpeaking, keepWakeSessionActiveUntil, routeRecognizedText]);
 
   const handleRealtimeVoiceAudio = useCallback(async (blob: Blob) => {
