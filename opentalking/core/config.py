@@ -319,6 +319,9 @@ def _legacy_env_mapping() -> dict[str, str]:
         "FLASHTALK_TTS_BOUNDARY_FADE_MS": "flashtalk_tts_boundary_fade_ms",
         "FLASHTALK_TTS_COALESCE_MIN_CHARS": "flashtalk_tts_coalesce_min_chars",
         "FLASHTALK_TTS_COALESCE_MAX_CHARS": "flashtalk_tts_coalesce_max_chars",
+        "FLASHTALK_FIRST_SEGMENT_MIN_CHARS": "flashtalk_first_segment_min_chars",
+        "FLASHTALK_FIRST_SEGMENT_MAX_CHARS": "flashtalk_first_segment_max_chars",
+        "FLASHTALK_FIRST_SEGMENT_WAIT_MS": "flashtalk_first_segment_wait_ms",
         "FLASHTALK_TTS_TAIL_FADE_MS": "flashtalk_tts_tail_fade_ms",
         "FLASHTALK_TTS_TRAILING_SILENCE_MS": "flashtalk_tts_trailing_silence_ms",
         "FLASHTALK_TTS_OPENER_ENABLE": "flashtalk_tts_opener_enable",
@@ -444,6 +447,9 @@ class Settings(BaseSettings):
     flashtalk_tts_coalesce_max_chars: int = 80
     flashtalk_tts_tail_fade_ms: float = 80.0
     flashtalk_tts_trailing_silence_ms: float = 320.0
+    flashtalk_first_segment_min_chars: int = Field(default=8, ge=1)
+    flashtalk_first_segment_max_chars: int = Field(default=20, ge=0)
+    flashtalk_first_segment_wait_ms: int = Field(default=600, ge=0)
     flashtalk_tts_opener_enable: bool = False
     flashtalk_tts_opener_preload: bool = False
     flashtalk_tts_opener_min_fill_ratio: float = 0.78
@@ -486,6 +492,8 @@ class Settings(BaseSettings):
     llm_base_url: str = ""
     llm_api_key: str = ""
     llm_model: str = "qwen-turbo"
+    # Provider-supported request options only; do not override routing/messages/stream.
+    llm_extra_body: dict[str, Any] = Field(default_factory=dict)
     llm_system_prompt: str = DEFAULT_LLM_SYSTEM_PROMPT
 
     #: edge | openai_compatible | xiaomi_mimo | dashscope | bailian | qwen | qwen_tts | cosyvoice | sambert | local_*（OPENTALKING_TTS_DEFAULT_PROVIDER）

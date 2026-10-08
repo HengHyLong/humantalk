@@ -886,7 +886,6 @@ function realtimeRecordingStartErrorMessage(error: unknown): string {
 
 export default function App() {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const audioRef = useRef<HTMLAudioElement>(null);
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const remoteStreamRef = useRef<MediaStream | null>(null);
   const realtimeRecorderRef = useRef<MediaRecorder | null>(null);
@@ -1781,22 +1780,6 @@ export default function App() {
       video.muted = true;
     }
   }, [conversationViewMode, remoteStream, workflow]);
-
-  useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    if (!remoteStream) {
-      audio.srcObject = null;
-      return;
-    }
-    audio.srcObject = remoteStream;
-    audio.muted = false;
-    audio.volume = 1;
-    void audio.play().catch(() => {});
-    return () => {
-      audio.srcObject = null;
-    };
-  }, [remoteStream]);
 
   useEffect(() => {
     return () => {
@@ -2930,7 +2913,6 @@ export default function App() {
   );
   return (
     <div className="min-h-screen bg-slate-100 text-slate-900 lg:h-screen lg:overflow-hidden">
-      <audio ref={audioRef} autoPlay playsInline className="hidden" />
       <TopBar
         connection={connection}
         workflow={workflow}

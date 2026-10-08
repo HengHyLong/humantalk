@@ -12,6 +12,7 @@
  */
 
 function num(envVal: string | undefined, fallback: number): number {
+  if (!envVal?.trim()) return fallback;
   const n = Number(envVal);
   return Number.isFinite(n) ? n : fallback;
 }
@@ -28,26 +29,26 @@ export type VoiceVadConfig = {
   bargeInAttackFrames: number;
 };
 
-export function getVoiceVadConfig(): VoiceVadConfig {
-  const speech = num(import.meta.env.VITE_VOICE_SPEECH_RMS, 0.022);
-  const silence = num(import.meta.env.VITE_VOICE_SILENCE_RMS, 0.014);
-  const softStart = num(import.meta.env.VITE_VOICE_SOFT_START_RMS, 0.016);
-  const barge = num(import.meta.env.VITE_VOICE_BARGE_SPEECH_RMS, 0.045);
+export function getVoiceVadConfig(env: Record<string, string | undefined> = import.meta.env ?? {}): VoiceVadConfig {
+  const speech = num(env.VITE_VOICE_SPEECH_RMS, 0.022);
+  const silence = num(env.VITE_VOICE_SILENCE_RMS, 0.014);
+  const softStart = num(env.VITE_VOICE_SOFT_START_RMS, 0.016);
+  const barge = num(env.VITE_VOICE_BARGE_SPEECH_RMS, 0.045);
   const speechClamped = Math.min(0.2, Math.max(0.005, speech));
   const softStartClamped = Math.min(0.2, Math.max(0.004, softStart));
   const bargeClamped = Math.min(0.2, Math.max(0.015, barge));
   return {
     speechRms: speechClamped,
     silenceRms: Math.min(0.2, Math.max(0.002, silence)),
-    silenceMs: Math.min(5000, Math.max(200, num(import.meta.env.VITE_VOICE_SILENCE_MS, 800))),
-    minSegmentMs: Math.min(10000, Math.max(200, num(import.meta.env.VITE_VOICE_MIN_SEGMENT_MS, 450))),
-    attackFrames: Math.min(30, Math.max(2, Math.floor(num(import.meta.env.VITE_VOICE_ATTACK_FRAMES, 2)))),
+    silenceMs: Math.min(5000, Math.max(200, num(env.VITE_VOICE_SILENCE_MS, 600))),
+    minSegmentMs: Math.min(10000, Math.max(200, num(env.VITE_VOICE_MIN_SEGMENT_MS, 450))),
+    attackFrames: Math.min(30, Math.max(2, Math.floor(num(env.VITE_VOICE_ATTACK_FRAMES, 2)))),
     softStartRms: Math.min(speechClamped, softStartClamped),
     softStartFrames: Math.min(
       45,
-      Math.max(4, Math.floor(num(import.meta.env.VITE_VOICE_SOFT_START_FRAMES, 12))),
+      Math.max(4, Math.floor(num(env.VITE_VOICE_SOFT_START_FRAMES, 12))),
     ),
     bargeInSpeechRms: Math.max(bargeClamped, speechClamped * 1.25),
-    bargeInAttackFrames: Math.min(40, Math.max(3, Math.floor(num(import.meta.env.VITE_VOICE_BARGE_ATTACK_FRAMES, 8)))),
+    bargeInAttackFrames: Math.min(40, Math.max(3, Math.floor(num(env.VITE_VOICE_BARGE_ATTACK_FRAMES, 8)))),
   };
 }

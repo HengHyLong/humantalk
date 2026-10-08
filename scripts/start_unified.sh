@@ -134,7 +134,11 @@ if [[ -n "$env_file" ]]; then
   fi
   export OPENTALKING_QUICKSTART_ENV="$env_file"
 else
-  env_file="${OPENTALKING_QUICKSTART_ENV:-$quickstart_dir/env}"
+  default_env_file="$quickstart_dir/env"
+  if [[ -f "$repo_root/.env" ]]; then
+    default_env_file="$repo_root/.env"
+  fi
+  env_file="${OPENTALKING_QUICKSTART_ENV:-${OPENTALKING_ENV_FILE:-$default_env_file}}"
 fi
 quickstart_source_env "$env_file"
 

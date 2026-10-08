@@ -38,7 +38,7 @@ test("unmatched questions default to exhibition content", () => {
   });
 });
 
-test("navigation intent tolerates one ASR character error in a configured alias", () => {
+test("navigation intent keeps a low-confidence short ASR alias in exhibition QA", () => {
   const config = normalizeExhibitionVoiceConfig({
     exhibition_id: "demo",
     keywords: { navigation: ["智造馆"], exhibition_content: [] },
@@ -46,8 +46,21 @@ test("navigation intent tolerates one ASR character error in a configured alias"
   });
 
   assert.deepEqual(matchVoiceIntent("请问智照馆怎么走？", config), {
+    intent: "exhibition_content",
+    keyword: null,
+  });
+});
+
+test("navigation intent tolerates a high-confidence ASR error in a configured alias", () => {
+  const config = normalizeExhibitionVoiceConfig({
+    exhibition_id: "demo",
+    keywords: { navigation: ["智能制造馆"], exhibition_content: [] },
+    navigation_fuzzy_keywords: ["智能制造馆"],
+  });
+
+  assert.deepEqual(matchVoiceIntent("请问智能制照馆怎么走？", config), {
     intent: "navigation",
-    keyword: "智造馆",
+    keyword: "智能制造馆",
   });
 });
 

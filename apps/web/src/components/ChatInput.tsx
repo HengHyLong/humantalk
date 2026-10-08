@@ -160,11 +160,11 @@ function pickRecorderMime(): string | undefined {
 }
 
 /** 流式 STT：在 VAD 攻击帧确认前保留最近 PCM，连接建立后先补发，减轻句首丢失 */
-const PCM_PREROLL_MAX_SAMPLES = 19200; // 1.2s @ 16kHz
+const PCM_PREROLL_MAX_SAMPLES = 6400; // 400ms @ 16kHz, protects the VAD attack window
 /** 给 STT 一个极短“起始缓冲”静音，降低首音节被截断概率 */
-const PCM_PREROLL_HEAD_SILENCE_SAMPLES = 1600; // 100ms @ 16kHz
+const PCM_PREROLL_HEAD_SILENCE_SAMPLES = 0; // preroll already contains the real onset
 
-function appendPcmPrerollChunk(pcmAb: ArrayBuffer, store: MutableRefObject<Int16Array>) {
+function appendPcmPrerollChunk(pcmAb: ArrayBuffer, store: MutableRefObject<Int16Array>, connecting = false) {
   const add = new Int16Array(pcmAb);
   if (add.length === 0) return;
   const cur = store.current;
@@ -172,7 +172,7 @@ function appendPcmPrerollChunk(pcmAb: ArrayBuffer, store: MutableRefObject<Int16
   merged.set(cur, 0);
   merged.set(add, cur.length);
   store.current =
-    merged.length > PCM_PREROLL_MAX_SAMPLES
+    !connecting && merged.length > PCM_PREROLL_MAX_SAMPLES
       ? merged.subarray(merged.length - PCM_PREROLL_MAX_SAMPLES)
       : merged;
 }
@@ -690,7 +690,8 @@ export function ChatInput({
             const input = e.inputBuffer.getChannelData(0);
             const pcm = downsampleFloat32To16kPcm(input, ctx.sampleRate);
             if (voiceModeRef.current && !uiRef.current.suspendListening && !pcmSendGateRef.current) {
-              appendPcmPrerollChunk(pcm, pcmPrerollRef);
+              // Once VAD starts a segment, retain its onset while WS connects.
+              appendPcmPrerollChunk(pcm, pcmPrerollRef, segmentConnectingRef.current);
             }
             if (uiRef.current.suspendListening) {
               pcmPrerollRef.current = new Int16Array(0);

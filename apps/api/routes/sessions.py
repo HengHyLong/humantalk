@@ -1442,6 +1442,7 @@ async def speak_audio_stream_ws(websocket: WebSocket, session_id: str) -> None:
                     except json.JSONDecodeError:
                         continue
                     if body.get("type") == "end":
+                        sq.input_ended_at = time.perf_counter()
                         sq.put(None)
                         return
         except WebSocketDisconnect:

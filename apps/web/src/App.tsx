@@ -75,6 +75,7 @@ import {
   getConfiguredExhibitionId,
   matchVoiceIntent,
   normalizeExhibitionVoiceConfig,
+  supportsDeferredVoiceSpeech,
 } from "./lib/exhibitionVoiceConfig";
 import { evaluateWakeWordGate } from "./lib/wakeWord";
 import { connectSse } from "./lib/sse";
@@ -981,7 +982,6 @@ function realtimeRecordingStartErrorMessage(error: unknown): string {
 
 export default function App() {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const audioRef = useRef<HTMLAudioElement>(null);
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const viduPlaybackRef = useRef<ViduPlaybackHandle | null>(null);
   const peerCloseChainRef = useRef<Promise<void>>(Promise.resolve());
@@ -1979,22 +1979,6 @@ export default function App() {
       video.muted = true;
     }
   }, [conversationViewMode, remoteStream, workflow]);
-
-  useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    if (!remoteStream) {
-      audio.srcObject = null;
-      return;
-    }
-    audio.srcObject = remoteStream;
-    audio.muted = false;
-    audio.volume = 1;
-    void audio.play().catch(() => {});
-    return () => {
-      audio.srcObject = null;
-    };
-  }, [remoteStream]);
 
   useEffect(() => {
     return () => {
@@ -4213,7 +4197,6 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-100 text-slate-900 lg:h-screen lg:overflow-hidden">
-      <audio ref={audioRef} autoPlay playsInline className="hidden" />
       {workflow !== "realtime" ? (
         <TopBar
           connection={connection}
@@ -4379,10 +4362,10 @@ export default function App() {
           onSuggestionSend={handleSuggestionSend}
            onInterrupt={handleInterrupt}
            onSpeakAudio={handleRealtimeVoiceAudio}
-           onSpeakAudioStreamResult={exhibitionVoiceConfig?.supports_deferred_speak ? handleSpeakAudioStreamResult : undefined}
-           onSpeakAudioStreamError={exhibitionVoiceConfig?.supports_deferred_speak ? handleSpeakAudioStreamError : undefined}
-           streamingAsrSessionId={exhibitionVoiceConfig?.supports_deferred_speak ? sessionId : null}
-           deferSpeak={Boolean(exhibitionVoiceConfig?.supports_deferred_speak)}
+           onSpeakAudioStreamResult={supportsDeferredVoiceSpeech(exhibitionVoiceConfig) ? handleSpeakAudioStreamResult : undefined}
+           onSpeakAudioStreamError={supportsDeferredVoiceSpeech(exhibitionVoiceConfig) ? handleSpeakAudioStreamError : undefined}
+           streamingAsrSessionId={supportsDeferredVoiceSpeech(exhibitionVoiceConfig) ? sessionId : null}
+           deferSpeak={supportsDeferredVoiceSpeech(exhibitionVoiceConfig)}
           voiceIntent={lastVoiceIntent}
           navigationResult={navigationResult}
           onCloseNavigation={() => setNavigationResult(null)}
@@ -4678,7 +4661,7 @@ export default function App() {
                 edgeVoice={edgeVoice}
                 qwenModel={qwenModel}
                 qwenVoice={qwenVoice}
-                deferSpeak={Boolean(exhibitionVoiceConfig?.supports_deferred_speak)}
+                deferSpeak={supportsDeferredVoiceSpeech(exhibitionVoiceConfig)}
               />
             </div>
             ) : null}

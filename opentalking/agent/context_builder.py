@@ -72,6 +72,7 @@ async def build_agent_context(
     query: str = "",
     store: AgentMemoryStore | None = None,
     knowledge_store: KnowledgeStore | None = None,
+    knowledge_context: str | None = None,
 ) -> str | None:
     memories = []
     if config.has_memory:
@@ -82,7 +83,9 @@ async def build_agent_context(
             limit=8,
         )
     knowledge_chunks = []
-    if config.has_knowledge and query.strip():
+    # A supplied context also represents a completed retrieval with no hits.
+    # Keep loading memories, but do not query the same datasets again.
+    if knowledge_context is None and config.has_knowledge and query.strip():
         kb_store = knowledge_store or default_knowledge_store()
         chunks = await kb_store.query_many(
             kb_ids=config.selected_knowledge_base_ids,
@@ -94,4 +97,5 @@ async def build_agent_context(
             for chunk in chunks
             if chunk.text.strip()
         ]
-    return build_agent_context_prompt(memories=memories, knowledge_chunks=knowledge_chunks)
+    context = build_agent_context_prompt(memories=memories, knowledge_chunks=knowledge_chunks)
+    return "\n\n".join(part for part in (context, (knowledge_context or "").strip()) if part) or None
