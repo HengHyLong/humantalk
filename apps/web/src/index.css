@@ -424,6 +424,16 @@ body {
     top: auto;
   }
 
+  .digital-display-chat-panel.is-conversation-hidden.is-presentation-hidden {
+    top: auto;
+  }
+
+  .digital-display-chat-panel:not(.is-conversation-hidden) .digital-display-chat-feed {
+    height: auto;
+    max-height: none;
+    flex: 1 1 0;
+  }
+
   .digital-display-chat-panel.is-presentation-hidden {
     top: 65%;
     right: 4%;
