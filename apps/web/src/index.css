@@ -412,6 +412,26 @@ body {
 }
 
 @media (orientation: portrait) {
+  .digital-display-chat-panel {
+    top: 65%;
+    right: 4%;
+    bottom: 10%;
+    left: 4%;
+    max-height: none;
+  }
+
+  .digital-display-chat-panel.is-conversation-hidden {
+    top: auto;
+  }
+
+  .digital-display-chat-panel.is-presentation-hidden {
+    top: 65%;
+    right: 4%;
+    bottom: 10%;
+    left: 4%;
+    max-height: none;
+  }
+
   .digital-display-chat-panel .digital-display-voice-trigger,
   .digital-display-chat-panel .digital-display-voice-break,
   .digital-display-chat-panel .digital-display-stop,
@@ -432,11 +452,11 @@ body {
 
   .digital-display-chat-panel .digital-display-stop,
   .digital-display-chat-panel .digital-display-voice-break {
-    top: calc(50% - 28px);
+    top: calc(50% - 84px);
   }
 
   .digital-display-chat-panel .digital-display-voice-trigger,
   .digital-display-chat-panel .digital-display-mode-toggle {
-    top: calc(50% + 28px);
+    top: calc(50% - 28px);
   }
 }
