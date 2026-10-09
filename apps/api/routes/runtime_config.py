@@ -754,16 +754,31 @@ def _refresh_live_runners(request: Request, settings: Any) -> int:
             runner._llm_api_key = settings.llm_api_key
             runner._llm_model = settings.llm_model
             runner._llm_system_prompt = settings.llm_system_prompt
-            runner._llm_client = None
+            # Update the existing client so its connection pool remains owned by
+            # the runner and is closed with the session.
+            client = getattr(runner, "_llm_client", None)
+            if client is not None:
+                client.base_url = settings.llm_base_url.rstrip("/")
+                client.api_key = settings.llm_api_key
+                client.model = settings.llm_model
+                client.extra_body = dict(getattr(settings, "llm_extra_body", {}) or {})
             count += 1
         if hasattr(runner, "llm"):
             from opentalking.providers.llm.openai_compatible.adapter import OpenAICompatibleLLMClient
 
-            runner.llm = OpenAICompatibleLLMClient(
-                base_url=settings.llm_base_url,
-                api_key=settings.llm_api_key,
-                model=settings.llm_model,
-            )
+            if isinstance(runner.llm, OpenAICompatibleLLMClient):
+                runner.llm.base_url = settings.llm_base_url.rstrip("/")
+                runner.llm.api_key = settings.llm_api_key
+                runner.llm.model = settings.llm_model
+                runner.llm.extra_body = dict(getattr(settings, "llm_extra_body", {}) or {})
+            else:
+                runner.llm = OpenAICompatibleLLMClient(
+                    base_url=settings.llm_base_url,
+                    api_key=settings.llm_api_key,
+                    model=settings.llm_model,
+                    reuse_connections=True,
+                    extra_body=getattr(settings, "llm_extra_body", {}),
+                )
             count += 1
     return count
 

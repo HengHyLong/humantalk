@@ -106,3 +106,7 @@ site/
 /examples/avatars/博览-男1/
 /scripts/quickstart/env.*
 !/scripts/quickstart/env.example
+
+# Server deployment scratch files and previous frontend builds
+/.deploy/
+/apps/web/dist.before-*/

@@ -4,6 +4,7 @@ import asyncio
 import fractions
 import json
 import logging
+import math
 import os
 import time
 from dataclasses import dataclass
@@ -131,7 +132,7 @@ class _NvencH264Encoder(H264Encoder):
         super().__init__()
         self._nvenc_failed = False
         self._active_codec_name: str | None = None
-        self._codec_created_at = 0.0
+        self._bitrate_updated_at = 0.0
 
     def _create_nvenc_codec(self, frame: "av.VideoFrame") -> Any:
         codec = _create_codec_context("h264_nvenc", "w")
@@ -140,22 +141,34 @@ class _NvencH264Encoder(H264Encoder):
         codec.bit_rate = self.target_bitrate
         codec.pix_fmt = "yuv420p"
         codec.framerate = fractions.Fraction(aiortc_h264.MAX_FRAME_RATE, 1)
-        codec.time_base = fractions.Fraction(1, aiortc_h264.MAX_FRAME_RATE)
-        codec.options = {
+        codec.time_base = fractions.Fraction(1, 90000)
+        codec.gop_size = aiortc_h264.MAX_FRAME_RATE * 2
+        options = {
             "preset": os.environ.get("OPENTALKING_WEBRTC_NVENC_PRESET", "p1").strip() or "p1",
             "tune": os.environ.get("OPENTALKING_WEBRTC_NVENC_TUNE", "ull").strip() or "ull",
             "zerolatency": "1",
             "bf": "0",
+            # aiortc timestamps output with the current input frame. NVENC
+            # must return that same frame, rather than buffering older frames.
+            "surfaces": "1",
+            "delay": "0",
+            "rc-lookahead": "0",
+            # Bound keyframe bursts so receivers can assemble a complete frame
+            # without overflowing their RTP jitter buffer.
+            "rc": "cbr",
+            "maxrate": str(self.target_bitrate),
+            "bufsize": str(self.target_bitrate * 2 // aiortc_h264.MAX_FRAME_RATE),
             "gpu": os.environ.get("OPENTALKING_WEBRTC_NVENC_DEVICE", "0").strip() or "0",
         }
+        codec.options = options.copy()
         codec.open()
-        self._codec_created_at = time.monotonic()
+        self._bitrate_updated_at = time.monotonic()
         self._active_codec_name = "h264_nvenc"
         log.info(
             "WebRTC H.264 encoder active: codec=h264_nvenc device=%s preset=%s "
             "resolution=%dx%d bitrate=%d",
-            codec.options.get("gpu", "0"),
-            codec.options.get("preset", "p1"),
+            options["gpu"],
+            options["preset"],
             frame.width,
             frame.height,
             self.target_bitrate,
@@ -165,8 +178,13 @@ class _NvencH264Encoder(H264Encoder):
     def _should_recreate_codec(self, frame: "av.VideoFrame") -> bool:
         if self.codec is None:
             return True
-        if frame.width != self.codec.width or frame.height != self.codec.height:
-            return True
+        return frame.width != self.codec.width or frame.height != self.codec.height
+
+    def _should_update_bitrate(self) -> bool:
+        if self.codec is None:
+            return False
+        # Keep the existing environment settings for update thresholds; bitrate
+        # changes no longer require recreating the NVENC context.
         current_bitrate = int(self.codec.bit_rate or 0)
         if current_bitrate <= 0:
             return True
@@ -184,7 +202,7 @@ class _NvencH264Encoder(H264Encoder):
             "OPENTALKING_WEBRTC_NVENC_RECREATE_COOLDOWN_SECONDS",
             5.0,
         )
-        return time.monotonic() - self._codec_created_at >= cooldown
+        return time.monotonic() - self._bitrate_updated_at >= cooldown
 
     def _encode_frame(
         self,
@@ -200,6 +218,14 @@ class _NvencH264Encoder(H264Encoder):
                 self.buffer_data = b""
                 self.buffer_pts = None
                 self.codec = self._create_nvenc_codec(frame)
+                force_keyframe = True
+
+            if self._should_update_bitrate():
+                # FFmpeg NVENC supports dynamic bitrate changes. Reopening the
+                # CUDA encoder here stalls audio as well as video sending.
+                assert self.codec is not None
+                self.codec.bit_rate = self.target_bitrate
+                self._bitrate_updated_at = time.monotonic()
 
             frame.pict_type = (
                 av.video.frame.PictureType.I
@@ -565,6 +591,10 @@ class _BufferedNumpyVideoTrack(MediaStreamTrack):
         self._timeline_base_ms: float | None = None
         self._prev_source_ts_ms: float | None = None
         self._next_pts_ms = 0
+        self._pts_base_ms = 0
+        self._last_pts_ms: int | None = None
+        self._clock_generation = 0
+        self._send_pending = False
         self._shared_clock = shared_clock
         self._session_id = session_id
         self._debug_frames = os.environ.get("OPENTALKING_RTC_DEBUG_FRAMES", "").strip().lower() in {"1", "true", "yes", "on"}
@@ -575,6 +605,7 @@ class _BufferedNumpyVideoTrack(MediaStreamTrack):
         await self._queue.put(frame)
 
     def reset_clock(self) -> None:
+        self._clock_generation += 1
         self._timeline_start = None
         self._timeline_base_ms = None
         self._prev_source_ts_ms = None
@@ -587,6 +618,9 @@ class _BufferedNumpyVideoTrack(MediaStreamTrack):
         if item is None:
             raise asyncio.CancelledError
 
+        self._send_pending = True
+        generation = self._clock_generation
+
         frame_ts_ms = max(0.0, float(item.timestamp_ms))
         if self._timeline_start is None or self._timeline_base_ms is None:
             shared_start = self._shared_clock.start_time if self._shared_clock is not None else None
@@ -596,6 +630,7 @@ class _BufferedNumpyVideoTrack(MediaStreamTrack):
                     self._shared_clock.start_time = shared_start
             self._timeline_start = shared_start
             self._timeline_base_ms = frame_ts_ms
+            self._pts_base_ms = self._next_pts_ms
 
         shared_start = self._shared_clock.start_time if self._shared_clock is not None else None
         if shared_start is not None and self._timeline_start != shared_start:
@@ -623,8 +658,17 @@ class _BufferedNumpyVideoTrack(MediaStreamTrack):
         if now < target:
             await asyncio.sleep(target - now)
 
+        if generation != self._clock_generation:
+            # Speech can replace idle media while recv() is waiting for pacing.
+            # Do not stamp that stale frame onto the new speech timeline.
+            self._send_pending = False
+            return await self.recv()
+
         vf = VideoFrame.from_ndarray(item.data, format="bgr24")
-        vf.pts = self._next_pts_ms
+        pts_ms = self._pts_base_ms + int(round(frame_ts_ms - self._timeline_base_ms))
+        if self._last_pts_ms is not None:
+            pts_ms = max(self._last_pts_ms + 1, pts_ms)
+        vf.pts = pts_ms
         vf.time_base = fractions.Fraction(1, 1000)
         if self._debug_frames:
             arr = np.asarray(item.data)
@@ -637,21 +681,17 @@ class _BufferedNumpyVideoTrack(MediaStreamTrack):
                     "RTC video recv: n=%d ts=%.1f pts=%d q=%d shape=%s mean=%.2f dmean=%.2f",
                     self._debug_recv_count,
                     frame_ts_ms,
-                    self._next_pts_ms,
+                    pts_ms,
                     self._queue.qsize(),
                     tuple(arr.shape),
                     mean,
                     delta,
                 )
 
-        if self._prev_source_ts_ms is None:
-            delta_ms = int(round(1000.0 / max(1.0, self._fps)))
-        else:
-            delta_ms = int(round(frame_ts_ms - self._prev_source_ts_ms))
-            if delta_ms <= 0:
-                delta_ms = int(round(1000.0 / max(1.0, self._fps)))
         self._prev_source_ts_ms = frame_ts_ms
-        self._next_pts_ms += max(1, delta_ms)
+        self._last_pts_ms = pts_ms
+        self._next_pts_ms = pts_ms + max(1, int(round(1000.0 / max(1.0, self._fps))))
+        self._send_pending = False
         return vf
 
 
@@ -720,6 +760,8 @@ class _BufferedPCM16AudioTrack(MediaStreamTrack):
         self._queue: asyncio.Queue[np.ndarray | None] = asyncio.Queue(maxsize=512)
         self._time_base = fractions.Fraction(1, sample_rate)
         self._next_pts = 0
+        self._clock_generation = 0
+        self._send_pending = False
         frame_ms = float(os.environ.get("OPENTALKING_RTC_AUDIO_FRAME_MS", "20.0"))
         self._frame_samples = max(1, int(round(self.sample_rate * frame_ms / 1000.0)))
         self._buffer = np.zeros((0,), dtype=np.int16)
@@ -734,6 +776,7 @@ class _BufferedPCM16AudioTrack(MediaStreamTrack):
         await self._queue.put(samples)
 
     def reset_clock(self) -> None:
+        self._clock_generation += 1
         self._start_time = None
         self._clock_start_pts = self._next_pts
         self._seen_audio = False
@@ -764,6 +807,8 @@ class _BufferedPCM16AudioTrack(MediaStreamTrack):
             return await self.recv()
 
         n = min(self._frame_samples, int(self._buffer.shape[0]))
+        self._send_pending = True
+        generation = self._clock_generation
         samples = self._buffer[:n]
         self._buffer = self._buffer[n:]
 
@@ -801,12 +846,17 @@ class _BufferedPCM16AudioTrack(MediaStreamTrack):
         if now < target:
             await asyncio.sleep(target - now)
 
+        if generation != self._clock_generation:
+            self._send_pending = False
+            return await self.recv()
+
         frame = AudioFrame(format="s16", layout="mono", samples=n)
         frame.planes[0].update(samples.tobytes())
         frame.sample_rate = self.sample_rate
         frame.pts = pts
         frame.time_base = self._time_base
         self._next_pts += n
+        self._send_pending = False
         return frame
 
 
@@ -856,6 +906,16 @@ class WebRTCSession:
         """Reset pacing wall-clock so next frame/audio is sent immediately.
         Does NOT reset PTS counters — keeps the RTP stream continuous."""
         self._shared_clock.start_time = None
+        if self.mode != "legacy":
+            # A cleared queue or partial final video frame can leave the two
+            # RTP counters at different media times. Join the next turn at one
+            # common point, advancing counters only (never rewinding either).
+            base_ms = max(
+                self.video._next_pts_ms,
+                math.ceil(self.audio._next_pts * 1000 / self.audio.sample_rate),
+            )
+            self.video._next_pts_ms = base_ms
+            self.audio._next_pts = math.ceil(base_ms * self.audio.sample_rate / 1000)
         self.video.reset_clock()
         self.audio.reset_clock()
         self.draining = False
@@ -889,10 +949,12 @@ class WebRTCSession:
 
     def playback_drain_timeout_seconds(self) -> float:
         queue_duration = self.buffered_audio_duration_ms() / 1000.0
+        video_duration = self.video._queue.qsize() / max(1.0, float(self.video._fps))
+        queue_duration = max(queue_duration, video_duration)
         return min(30.0, max(1.0, queue_duration + 2.0))
 
     async def wait_for_playback_drain(self) -> None:
-        """Wait until queued audio has been handed to the WebRTC sender.
+        """Wait until queued audio and video reach the WebRTC senders.
 
         Producers can finish synthesizing before the browser has consumed the
         audio queue.  Publishing ``speech.ended`` at that point makes clients
@@ -901,7 +963,17 @@ class WebRTCSession:
         so a disconnected peer cannot block a session forever.
         """
         audio_queue = self.audio._queue
-        buffered = getattr(self.audio, "_buffer", None)
+        def media_drained() -> bool:
+            # recv() replaces the PCM array while consuming it; always inspect
+            # its current value, including frames already waiting for pacing.
+            buffered = getattr(self.audio, "_buffer", None)
+            return (
+                audio_queue.empty()
+                and int(getattr(buffered, "size", 0) or 0) == 0
+                and self.video._queue.empty()
+                and not getattr(self.audio, "_send_pending", False)
+                and not getattr(self.video, "_send_pending", False)
+            )
         # Queue items are not guaranteed to be 20 ms. FlashTalk normally puts
         # one proportional audio slice per video frame (40-50 ms), while other
         # producers may enqueue a complete chunk. Derive the deadline from the
@@ -909,18 +981,19 @@ class WebRTCSession:
         timeout = self.playback_drain_timeout_seconds()
         deadline = asyncio.get_running_loop().time() + timeout
         while asyncio.get_running_loop().time() < deadline:
-            buffered_samples = int(getattr(buffered, "size", 0) or 0)
-            if audio_queue.empty() and buffered_samples == 0:
+            if media_drained():
                 # Let the sender take the final frame before the event is
                 # observed by the browser.
                 await asyncio.sleep(0.08)
-                if audio_queue.empty() and int(getattr(buffered, "size", 0) or 0) == 0:
+                if media_drained():
                     return
             await asyncio.sleep(0.02)
 
     async def handle_offer(self, sdp: str, type_: str) -> RTCSessionDescription:
-        await self.pc.setRemoteDescription(RTCSessionDescription(sdp=sdp, type=type_))
+        # aiortc selects common codecs while applying the remote offer. Setting
+        # preferences afterwards leaves VP8 first and bypasses H.264 NVENC.
         _configure_video_codec_preferences(self.pc)
+        await self.pc.setRemoteDescription(RTCSessionDescription(sdp=sdp, type=type_))
         answer = await self.pc.createAnswer()
         await self.pc.setLocalDescription(answer)
         negotiated_codec = _first_video_codec_from_sdp(self.pc.localDescription.sdp)

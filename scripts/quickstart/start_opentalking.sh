@@ -7,7 +7,11 @@ default_home="$(cd -- "$repo_root/.." && pwd)"
 # shellcheck disable=SC1091
 source "$script_dir/_helpers.sh"
 
-env_file="${OPENTALKING_QUICKSTART_ENV:-$script_dir/env}"
+default_env_file="$script_dir/env"
+if [[ -f "$repo_root/.env" ]]; then
+  default_env_file="$repo_root/.env"
+fi
+env_file="${OPENTALKING_QUICKSTART_ENV:-${OPENTALKING_ENV_FILE:-$default_env_file}}"
 quickstart_source_env "$env_file"
 
 usage() {

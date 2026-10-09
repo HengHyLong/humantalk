@@ -83,6 +83,137 @@ def test_flashtalk_idle_frames_wait_for_speech_tail_to_drain() -> None:
     assert queued == []
 
 
+def test_idle_tick_keeps_audio_and_video_timelines_advancing() -> None:
+    runner = FlashTalkRunner.__new__(FlashTalkRunner)
+    runner.webrtc = SimpleNamespace(draining=False, audio=SimpleNamespace(sample_rate=16000))
+    runner._playback_draining = False
+    runner._quicktalk_idle_video = None
+    runner._idle_frames = [np.zeros((4, 4, 3), dtype=np.uint8)]
+    runner._idle_playback_indices = [0]
+    runner._idle_frame_idx = 0
+    runner._av_ts_ms = 0.0
+    runner.flashtalk = SimpleNamespace(fps=25.0)
+    runner._ensure_media_clock_started = lambda: None
+    frames, audio = [], []
+
+    async def video_put(frame):
+        frames.append(frame)
+
+    async def audio_put(samples):
+        audio.append(samples)
+
+    runner._video_put_safe = video_put
+    runner._audio_put_safe = audio_put
+    asyncio.run(runner._idle_tick())
+    asyncio.run(runner._idle_tick())
+
+    assert [frame.timestamp_ms for frame in frames] == [0.0, 40.0]
+    assert sum(samples.size for samples in audio) == 1280
+    assert all(not np.any(samples) for samples in audio)
+
+
+def test_quicktalk_idle_prefers_configured_idle_clip_over_talk_template(tmp_path) -> None:
+    idle = tmp_path / "idle.mp4"
+    talk = tmp_path / "talk.mp4"
+    idle.touch()
+    talk.touch()
+    runner = FlashTalkRunner.__new__(FlashTalkRunner)
+    runner._quicktalk_manifest_metadata = lambda: {
+        "motion_clips": {"idle": [{"path": "idle.mp4"}], "talk": [{"path": "talk.mp4"}]}
+    }
+    runner._resolve_avatar_relative_path = lambda path: tmp_path / path
+    runner._quicktalk_template_video = lambda: talk
+
+    assert runner._quicktalk_idle_video_path() == idle
+
+
+def test_initial_video_frame_uses_configured_idle_playback() -> None:
+    runner = FlashTalkRunner.__new__(FlashTalkRunner)
+    runner.webrtc = SimpleNamespace(draining=False)
+    runner._quicktalk_idle_video = object()
+    ticks = []
+
+    async def idle_tick():
+        ticks.append(True)
+
+    runner._idle_tick = idle_tick
+    asyncio.run(runner._queue_initial_video_frame())
+
+    assert ticks == [True]
+
+
+@pytest.mark.parametrize("samples", [0, 7680, 7701, 19680])
+def test_quicktalk_tail_preserves_audio_without_playing_model_padding(samples) -> None:
+    runner = FlashTalkRunner.__new__(FlashTalkRunner)
+    runner.model_type = "quicktalk"
+    runner.webrtc = None
+    pcm = np.ones(samples, dtype=np.int16)
+    chunks = runner._speech_tail_chunks(
+        pcm, sample_rate=16000, chunk_samples=7680, trailing_silence_ms=320,
+    )
+    if samples == 0:
+        assert chunks == []
+        return
+    playback = np.concatenate(chunks)
+    assert np.array_equal(playback[:samples], pcm)
+    assert playback.size % 320 == 0
+    assert 0 <= playback.size - samples < 320
+    assert not np.any(playback[samples:])
+
+
+def test_other_models_keep_their_silence_and_complete_model_blocks() -> None:
+    runner = FlashTalkRunner.__new__(FlashTalkRunner)
+    runner.model_type = "flashtalk"
+    chunks = runner._speech_tail_chunks(
+        np.ones(7701, dtype=np.int16), sample_rate=16000,
+        chunk_samples=7680, trailing_silence_ms=320,
+    )
+    assert len(chunks) == 2
+    assert all(chunk.size == 7680 for chunk in chunks)
+
+
+@pytest.mark.asyncio
+async def test_quicktalk_model_padding_does_not_extend_playback_frames() -> None:
+    runner = FlashTalkRunner.__new__(FlashTalkRunner)
+    runner.model_type = "quicktalk"
+    runner.session_id = "tail-test"
+    runner.webrtc = None
+    runner._generate_lock = asyncio.Lock()
+    inputs = []
+
+    async def generate(pcm):
+        inputs.append(pcm)
+        return list(range(12))
+
+    runner.flashtalk = SimpleNamespace(audio_chunk_samples=7680, generate=generate)
+    frames = await runner._generate_flashtalk_frames(np.ones(960, dtype=np.int16))
+    assert inputs[0].size == 7680
+    assert np.all(inputs[0][:960] == 1)
+    assert not np.any(inputs[0][960:])
+    assert frames == [0, 1]
+
+
+def test_streaming_tts_tail_keeps_last_phoneme_and_only_short_silence_margin() -> None:
+    voice = np.full(3200, 1000, dtype=np.int16)
+    source = np.concatenate([voice, np.zeros(8000, dtype=np.int16)])
+    tail = synthesis_runner._StreamingSilenceTail(16000)
+    output = np.concatenate([tail.push(source[start:start + 277]) for start in range(0, source.size, 277)])
+    assert np.array_equal(output[:voice.size], voice)
+    assert output.size == voice.size + 960
+    assert not np.any(output[voice.size:])
+
+
+def test_streaming_tts_tail_preserves_internal_pauses_and_does_not_delay_voice() -> None:
+    tail = synthesis_runner._StreamingSilenceTail(16000)
+    first = np.full(1600, -32768, dtype=np.int16)
+    pause = np.zeros(16000, dtype=np.int16)
+    last = np.full(1600, 1000, dtype=np.int16)
+    a = tail.push(first)
+    assert np.array_equal(a, first)
+    output = np.concatenate([a, tail.push(pause), tail.push(last)])
+    assert np.array_equal(output, np.concatenate([first, pause, last]))
+
+
 def test_speech_ended_keeps_idle_blocked_until_playback_is_drained(monkeypatch) -> None:
     runner = FlashTalkRunner.__new__(FlashTalkRunner)
     runner.session_id = "sess_drain"

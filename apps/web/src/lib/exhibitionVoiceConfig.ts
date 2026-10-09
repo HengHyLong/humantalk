@@ -5,6 +5,13 @@ export type VoiceIntentMatch = {
   keyword: string | null;
 };
 
+export function supportsDeferredVoiceSpeech(
+  config: Pick<ExhibitionVoiceConfig, "supports_deferred_speak"> | null | undefined,
+): boolean {
+  // Session STT supports deferred speech independently of navigation config.
+  return config?.supports_deferred_speak !== false;
+}
+
 export function getConfiguredExhibitionId(): string | null {
   if (typeof window !== "undefined") {
     const fromUrl = new URLSearchParams(window.location.search).get("exhibitionId")?.trim();

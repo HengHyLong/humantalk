@@ -12,7 +12,10 @@
     "client_renderer": {
       "type": "light2d",
       "config": "light2d/avatar.json",
-      "recommended_for": ["mock"]
-    }
+      "recommended_for": [
+        "mock"
+      ]
+    },
+    "hidden": true
   }
 }

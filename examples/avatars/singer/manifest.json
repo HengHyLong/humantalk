@@ -203,6 +203,7 @@
     "frame_metadata_missing_count": 0,
     "preprocessed": true,
     "preprocess_version": 1,
-    "person_mode": "single"
+    "person_mode": "single",
+    "hidden": true
   }
 }

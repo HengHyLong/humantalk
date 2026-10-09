@@ -367,18 +367,19 @@ class SessionRunner:
         # to a stale idle template that visibly snaps the mouth closed.
         self._last_speech_frame: VideoFrameData | None = None
 
-    async def _build_agent_context(self, query: str = "") -> str | None:
+    async def _build_agent_context(self, query: str = "", *, knowledge_context: str | None = None) -> str | None:
         if not self.agent_config.agent_enabled:
-            return None
+            return knowledge_context
         try:
             return await build_agent_context(
                 config=self.agent_config,
                 avatar_id=self.persona_id or self.avatar_id,
                 query=query,
+                knowledge_context=knowledge_context,
             )
         except Exception:
             log.warning("Failed to build agent context: session=%s", self.session_id, exc_info=True)
-            return None
+            return knowledge_context
 
     async def _save_agent_turn(self, *, user_text: str, assistant_text: str) -> None:
         if not self.agent_config.has_memory:
@@ -1739,6 +1740,8 @@ class SessionRunner:
                 base_url=self._llm_base_url,
                 api_key=self._llm_api_key,
                 model=self._llm_model,
+                reuse_connections=True,
+                extra_body=get_settings().llm_extra_body,
             )
         return self._llm_client
 
@@ -1799,11 +1802,7 @@ class SessionRunner:
                     else prompt_text
                 )
                 conversation.add_user(prompt_text)
-                agent_context = await self._build_agent_context(prompt_text)
-                if knowledge_context:
-                    agent_context = "\n\n".join(
-                        item for item in (agent_context, knowledge_context.strip()) if item
-                    )
+                agent_context = await self._build_agent_context(prompt_text, knowledge_context=knowledge_context)
                 base_messages = list(conversation.get_messages())
                 if memory_prompt:
                     for idx in range(len(base_messages) - 1, -1, -1):
@@ -2179,4 +2178,6 @@ class SessionRunner:
             self._render_executor = None
         if self.webrtc:
             await self.webrtc.close()
+        if self._llm_client is not None and hasattr(self._llm_client, "aclose"):
+            await self._llm_client.aclose()
         await set_session_state(self.redis, self.session_id, "closed")

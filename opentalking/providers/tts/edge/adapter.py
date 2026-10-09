@@ -5,6 +5,7 @@ import contextlib
 import io
 import logging
 import os
+import time
 from typing import AsyncIterator
 
 import edge_tts
@@ -79,9 +80,15 @@ def _split_pcm_chunks(pcm: np.ndarray, sr: int, chunk_ms: float) -> list[AudioCh
 async def _edge_audio_stream(text: str, voice: str) -> AsyncIterator[bytes]:
     for attempt in range(3):
         try:
+            started = time.perf_counter()
+            first_audio = True
             communicate = edge_tts.Communicate(text, voice)
             async for event in communicate.stream():
                 if event["type"] == "audio" and event.get("data"):
+                    if first_audio:
+                        log.info("Edge TTS first MP3: chars=%d request_ms=%.0f attempt=%d", len(text),
+                                 (time.perf_counter() - started) * 1000, attempt)
+                        first_audio = False
                     yield event["data"]
             return
         except Exception:
@@ -145,6 +152,7 @@ async def _stream_decode_audio_to_pcm_chunks(
 ) -> AsyncIterator[AudioChunk]:
     """Decode incoming compressed/container audio through ffmpeg into PCM chunks."""
     chunk_bytes = max(2, int(target_sr * (chunk_ms / 1000.0)) * 2)
+    decode_started = time.perf_counter()
     if chunk_bytes % 2:
         chunk_bytes += 1
     read_size = max(4096, min(chunk_bytes, 65536))
@@ -195,6 +203,9 @@ async def _stream_decode_audio_to_pcm_chunks(
                 chunk = _pcm_bytes_to_chunk(bytes(pcm_buffer[:chunk_bytes]), target_sr)
                 del pcm_buffer[:chunk_bytes]
                 if chunk is not None:
+                    if not yielded_audio:
+                        log.info("TTS decode first PCM: request_ms=%.0f chunk_ms=%.0f",
+                                 (time.perf_counter() - decode_started) * 1000, chunk_ms)
                     yielded_audio = True
                     yield chunk
         if len(pcm_buffer) % 2:

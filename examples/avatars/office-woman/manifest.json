@@ -205,6 +205,7 @@
       0.75,
       0.555
     ],
-    "person_mode": "single"
+    "person_mode": "single",
+    "hidden": true
   }
 }
