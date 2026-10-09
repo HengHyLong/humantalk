@@ -35,6 +35,39 @@ class FakeRetriever:
         return self.result
 
 
+@pytest.mark.parametrize("question", ["中国计算机大会在哪里举办？", "计算机大会在哪举办", "请问中国计算机大会的会场地址"])
+async def test_location_variants_read_published_faq_without_retrieval(tmp_path, question):
+    store = _store(tmp_path)
+    store.save_record("qa", {
+        "id": "location", "exhibitionId": "expo-2026", "status": "published",
+        "question": "中国计算机大会的举办地点？", "answer": "请以本届官方公告为准。",
+    }, "expo-2026")
+
+    class NoRetrieval:
+        async def retrieve(self, **kwargs):
+            pytest.fail("a published FAQ should bypass retrieval and LLM")
+
+    decision = await ExhibitionQaService(store=store, retriever=NoRetrieval()).query(
+        exhibition_id="expo-2026", question=question, turn_id="t", trace_id="trace",
+    )
+    assert decision.speak_mode == "direct"
+    assert decision.answer == "请以本届官方公告为准。"
+
+
+@pytest.mark.parametrize("question", ["2025年中国计算机大会在哪里举办", "去年中国计算机大会在哪里举办", "中国计算机大会在哪里举办、什么时候举办"])
+async def test_faq_does_not_substitute_current_location_for_other_year_or_multiple_intents(tmp_path, question):
+    store = _store(tmp_path)
+    store.save_record("qa", {
+        "id": "location", "exhibitionId": "expo-2026", "status": "published",
+        "question": "中国计算机大会在哪里举办", "answer": "本届地点。",
+    }, "expo-2026")
+    decision = await ExhibitionQaService(store=store, retriever=FakeRetriever()).query(
+        exhibition_id="expo-2026", question=question, turn_id="t", trace_id="trace",
+    )
+    assert decision.speak_mode == "agent"
+    assert decision.answer is None
+
+
 def _store(tmp_path) -> AdminStore:
     store = AdminStore(tmp_path / "admin.sqlite3", initialize_defaults=False)
     store.save_record(
@@ -420,6 +453,7 @@ async def test_dify_retriever_uses_official_dataset_retrieve_contract(monkeypatc
         "Authorization": "Bearer server-key",
         "Content-Type": "application/json",
     }
+    # Honor the dataset's saved retrieval settings, as on the deployed Dify.
     assert captured["json"] == {"query": "服务中心在哪里？"}
     assert len(result.sources) == 1
     assert result.sources[0].title == "服务指南.docx"
