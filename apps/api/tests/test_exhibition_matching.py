@@ -33,6 +33,10 @@ class Store:
     ("介绍S01", "S-01", True, True), ("介绍S_01", "S-01", True, True),
     ("XS01", "S-01", True, False), ("CNCC2026", "CNCC-2026", True, True),
     ("不要介绍具身科学", "具身科学", False, False),
+    ("POINT-REAL-ENTRY", "POINT-REAL-ENTRY", True, True),
+    ("point_real_entry", "POINT-REAL-ENTRY", True, True),
+    ("pointrealentry", "POINT-REAL-ENTRY", True, True),
+    ("XPOINT-REAL-ENTRY", "POINT-REAL-ENTRY", True, False),
 ])
 def test_identifier_boundaries(question, value, code, hit):
     assert bool(occurrences(question, value, code=code)) is hit
@@ -69,6 +73,9 @@ def test_route_origin_destination_and_conflicts():
     valid = lookup(store, "expo", "从东门到科技展台")
     assert valid.reason == "route_valid" and valid.origin_id == "east" and valid.destination_id == "booth"
     assert database_answer(valid, "从东门到科技展台", "zh-CN")
+    store.data["points"][2]["code"] = "POINT-REAL-BOOTH"
+    coded = lookup(store, "expo", "怎么去POINT-REAL-BOOTH", origin_point_id="east")
+    assert coded.reason == "route_valid" and coded.destination_id == "booth"
     assert lookup(store, "expo", "从西门到科技展台").reason == "route_missing_from_origin"
     unknown = lookup(store, "expo", "从酒店到科技展台")
     assert unknown.reason == "route_origin_unknown" and service_answer(unknown, "zh-CN")

@@ -18,7 +18,7 @@ def occurrences(question: str, value: str, *, code: bool = False) -> list[tuple[
         if compact.isdigit() and normalize(question) != compact and not re.search(
                 r"展位|编号|型号|点位|编码|booth|model|code", question, re.I):
             return []
-        groups = re.findall(r"[a-z]+|\d+|[^a-z\d]+", compact)
+        groups = re.findall(r"[a-z]+|\d+|[^a-z\d\-_\s]+", value.lower())
         pattern = r"(?<![a-z0-9])" + r"[-_\s]*".join(re.escape(g) for g in groups) + r"(?![a-z0-9])"
         return [(m.start(), m.end()) for m in re.finditer(pattern, question, re.I) if not negated(m.start())]
     chars, offsets = [], []

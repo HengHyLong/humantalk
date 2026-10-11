@@ -257,15 +257,15 @@ def lookup(store: Any, exhibition_id: str, question: str, *, selected_entity_id:
             # Only the destination point identifies the destination. Matching any
             # intermediate point can send a visitor to an unrelated endpoint.
             destination = route_points[-1] if route_points else {}
-            destination_terms = terms(destination)
+            destination_terms = [term for _, term in term_fields(destination)]
             for entity_id in (destination.get("exhibitorId"), destination.get("exhibitId")):
                 if str(entity_id or "") in by_id:
-                    destination_terms += terms(by_id[str(entity_id)][1])
+                    destination_terms += [term for _, term in term_fields(by_id[str(entity_id)][1])]
             destination_exhibit = by_id.get(str(destination.get("exhibitId") or ""))
             if destination_exhibit:
                 parent = exhibitors.get(str(destination_exhibit[1].get("exhibitorId") or ""))
                 if parent:
-                    destination_terms += terms(parent)
+                    destination_terms += [term for _, term in term_fields(parent)]
             score = rank(destination_question, route, destination_terms)
             title_target = re.search(r"(?:终端至|到|至|\bto\s+)(.+)$", str(route.get("name", "")), re.I)
             if title_target and occurrences(destination_question, title_target[1]):
