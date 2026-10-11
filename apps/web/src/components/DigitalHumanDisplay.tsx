@@ -10,6 +10,7 @@ import type {
 import { buildApiUrl } from "../lib/api";
 import { isEnglishConversation, type ConversationLanguage } from "../lib/conversationLanguage";
 import { selectCurrentEntityPresentation } from "../lib/entityPresentation";
+import { selectCurrentConversation } from "../lib/currentConversation";
 import type { TtsProviderExtended } from "../constants/ttsBailian";
 import type { ConnectionStatus, ExhibitionEntityCard as ExhibitionEntityCardData, Message } from "../types";
 import { ChatInput } from "./ChatInput";
@@ -21,6 +22,7 @@ import type { VideoDriverState } from "./VideoAvatar";
 
 const PRESENTATION_AUTO_CLOSE_MS = 90_000;
 const CONVERSATION_IDLE_HIDE_MS = 90_000;
+const SIDE_CONTROLS_IDLE_HIDE_MS = 30_000;
 
 function navigationImageUrl(value: string): string {
   const url = value.trim();
@@ -145,6 +147,8 @@ export function DigitalHumanDisplay({
   const [conversationActivity, setConversationActivity] = useState(0);
   const [conversationVisible, setConversationVisible] = useState(true);
   const [quickActionsOpen, setQuickActionsOpen] = useState(false);
+  const [sideControlsVisible, setSideControlsVisible] = useState(true);
+  const [sideControlsActivity, setSideControlsActivity] = useState(0);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [latestRoundHeight, setLatestRoundHeight] = useState<number | null>(null);
   const [lightboxImage, setLightboxImage] = useState<{ src: string; alt: string } | null>(null);
@@ -153,6 +157,11 @@ export function DigitalHumanDisplay({
   const latestRoundRef = useRef<HTMLDivElement>(null);
   const shouldStickToBottomRef = useRef(true);
   const live = connection === "live" || connection === "expiring";
+  useEffect(() => {
+    if (!sideControlsVisible) return;
+    const timer = window.setTimeout(() => setSideControlsVisible(false), SIDE_CONTROLS_IDLE_HIDE_MS);
+    return () => window.clearTimeout(timer);
+  }, [sideControlsVisible, sideControlsActivity]);
   const english = isEnglishConversation(language);
   const prewarming = Boolean(prewarmModel && prewarmState !== "ready");
   const loadingTitle = connection === "queued"
@@ -194,11 +203,8 @@ export function DigitalHumanDisplay({
       && !(latestVisibleMessage?.role === "assistant" && latestVisibleMessage.text.trim() === subtitle.trim()),
   );
   const latestConversationMessage = messages[messages.length - 1];
-  const conversationRounds = messages.reduce<Message[][]>((rounds, message) => {
-    if (message.role === "user" || rounds.length === 0) rounds.push([message]);
-    else rounds[rounds.length - 1].push(message);
-    return rounds;
-  }, []);
+  const currentConversation = selectCurrentConversation(messages);
+  const conversationRounds = currentConversation.length ? [currentConversation] : [];
   const conversationActivityKey = [
     messages.length,
     latestConversationMessage?.id ?? "",
@@ -321,7 +327,14 @@ export function DigitalHumanDisplay({
   };
 
   return (
-      <main className="digital-display-root">
+      <main
+          className={`digital-display-root ${sideControlsVisible ? "" : "is-side-controls-hidden"}`}
+          onClickCapture={(event) => {
+            if ((event.target as HTMLElement).closest("button")) {
+              setSideControlsActivity((value) => value + 1);
+            }
+          }}
+      >
         <div className="digital-display-shell">
           <SceneStage
               videoRef={videoRef}
@@ -341,6 +354,17 @@ export function DigitalHumanDisplay({
               className="digital-display-stage"
           >
             <div className="digital-display-grid" aria-hidden />
+            <button
+                type="button"
+                className="digital-display-sidebar-toggle"
+                onClick={() => setSideControlsVisible((visible) => !visible)}
+                aria-expanded={sideControlsVisible}
+                aria-label={sideControlsVisible
+                    ? (english ? "Hide side controls" : "收起侧栏")
+                    : (english ? "Show side controls" : "展开侧栏")}
+            >
+              <span aria-hidden>{sideControlsVisible ? "›" : "‹"}</span>
+            </button>
             {/*<div className="digital-display-orbit digital-display-orbit-one" aria-hidden />*/}
             {/*<div className="digital-display-orbit digital-display-orbit-two" aria-hidden />*/}
 
@@ -412,7 +436,7 @@ export function DigitalHumanDisplay({
             >
               {!conversationVisible && !presentationActive ? (
                   <button type="button" className="digital-display-chat-reveal" onClick={revealConversation}>
-                    {english ? "Show conversation" : "查看历史对话"}
+                    {english ? "Show conversation" : "查看当前对话"}
                   </button>
               ) : null}
               <div className="digital-display-chat-heading">
@@ -485,7 +509,7 @@ export function DigitalHumanDisplay({
                         </div>
                       </article>
                   ) : null}
-                  {messages.length === 0 && displaySubtitle ? (
+                  {messages.length === 0 && displaySubtitle && !showLiveSubtitle ? (
                       <div className="digital-display-chat-empty">{displaySubtitle}</div>
                   ) : null}
                   {conversationRounds.map((round, roundIndex) => {
@@ -496,7 +520,7 @@ export function DigitalHumanDisplay({
                             ref={isLatestRound ? latestRoundRef : undefined}
                             className={`digital-display-chat-round ${isLatestRound ? "is-latest" : ""}`}
                         >
-                          {round.map((message) => (
+                          {round.filter((message) => !(showLiveSubtitle && message.role === "assistant")).map((message) => (
                               <div key={message.id} className={`digital-display-chat-line ${message.role === "user" ? "is-user" : "is-assistant"} ${message.relatedEntities?.length ? "has-entities" : ""}`}>
                                 <div className="digital-display-chat-line-copy">
                                   <span className="digital-display-chat-role">{message.role === "user" ? (english ? "Me" : "我") : (english ? "Digital Human" : "数字人")}</span>

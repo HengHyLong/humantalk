@@ -1065,9 +1065,9 @@ export default function App() {
   const [conversationLanguage, setConversationLanguage] = useState<ConversationLanguage>("zh-CN");
   const englishConversation = isEnglishConversation(conversationLanguage);
   const [isSpeaking, setIsSpeaking] = useState(false);
-  /** 用户一句话提交后，直到数字人回答结束前暂停连续语音监听。 */
+  /** 用户一句话提交后，直到数字人回答结束前暂停连续语音聆听。 */
   const [voiceTurnActive, setVoiceTurnActive] = useState(false);
-  const [microphoneModeEnabled, setMicrophoneModeEnabled] = useState(false);
+  const [microphoneModeEnabled, setMicrophoneModeEnabled] = useState(true);
   const [videoState, setVideoState] = useState<VideoDriverState>("welcome");
   const [currentSubtitle, setCurrentSubtitle] = useState("");
   const welcomedVideoSessionRef = useRef<string | null>(null);
@@ -1516,7 +1516,7 @@ export default function App() {
       clearWakeSleepTimer();
       wakeAwakeUntilRef.current = 0;
       setWakeSleeping(false);
-      setExhibitionConfigNotice("展会导航配置暂不可用，普通展品问答仍可使用。");
+      setExhibitionConfigNotice(null);
     }
   }, [clearWakeSleepTimer, configuredExhibitionId]);
 

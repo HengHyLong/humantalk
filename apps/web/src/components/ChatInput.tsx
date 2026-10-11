@@ -137,9 +137,9 @@ interface ChatInputProps {
   /** 流式 STT 后端是否支持识别完成后由前端决定是否 speak。 */
   deferSpeak?: boolean;
   language?: ConversationLanguage;
-  /** 外层切换到语音输入后自动开启麦克风监听。 */
+  /** 外层切换到语音输入后自动开启麦克风聆听。 */
   autoStartVoice?: boolean;
-  /** 用户主动结束监听时通知外层恢复键盘输入。系统错误不应切回键盘面板。 */
+  /** 用户主动结束聆听时通知外层恢复键盘输入。系统错误不应切回键盘面板。 */
   onVoiceModeChange?: (active: boolean) => void;
   /** 禁止数字人播报期间抢话，避免扬声器回声被再次送入 STT。 */
   suspendBargeInWhileSpeaking?: boolean;
@@ -794,7 +794,7 @@ export function ChatInput({
     uploadLockRef.current = false;
     await discardActiveSegment();
     onInterrupt();
-    // 停止按钮结束整个连续监听，外层随后切回键盘输入。
+    // 停止按钮结束整个连续聆听，外层随后切回键盘输入。
     await teardownVoicePipeline();
     onVoiceModeChangeRef.current?.(false);
   }, [discardActiveSegment, onInterrupt, teardownVoicePipeline]);
@@ -836,17 +836,17 @@ export function ChatInput({
         : listeningState === "processing"
           ? "正在处理"
           : listeningState === "error"
-            ? "监听异常"
+            ? "聆听异常"
             : voiceMode
-              ? "正在监听"
+              ? "正在聆听"
               : "语音输入";
   const listeningHint = suspendListening
-    ? "已暂停监听，回答结束后自动恢复"
+    ? "已暂停聆听，回答结束后自动恢复"
     : voiceMode
       ? listeningState === "error"
         ? "下一句话会自动重试"
-        : "静音自动分句，识别后继续监听"
-      : "点击开启长期监听";
+        : "静音自动分句，识别后继续聆听"
+      : "点击开启长期聆听";
 
   if (compact) {
     return (
@@ -862,7 +862,7 @@ export function ChatInput({
           <button
             type="button"
             className={`digital-display-voice-trigger ${voiceMode ? "is-active" : ""}`}
-            aria-label={voiceMode ? "停止长期监听" : "开始长期监听"}
+            aria-label={voiceMode ? "停止长期聆听" : "开始长期聆听"}
             disabled={ftAudioBusy}
             onClick={(event) => {
               event.preventDefault();
@@ -873,7 +873,7 @@ export function ChatInput({
               void toggleVoiceMode();
             }}
           >
-            {voiceMode ? "停止监听" : "开始监听"}
+            {voiceMode ? "停止聆听" : "开始聆听"}
           </button>
         ) : null}
         <button

@@ -43,7 +43,7 @@ export function ExhibitionSelectionStage({
   useAutoDismiss(open, () => setOpen(false));
 
   return (
-    <main className="flex min-h-screen w-full items-center justify-center bg-[radial-gradient(circle_at_top,#164e63_0%,#082f49_35%,#020617_100%)] px-5 py-8 text-white">
+    <main className="exhibition-selection-stage flex min-h-screen w-full items-center justify-center bg-[radial-gradient(circle_at_top,#164e63_0%,#082f49_35%,#020617_100%)] px-5 py-8 text-white">
       <section className="w-full max-w-2xl rounded-3xl border border-cyan-300/30 bg-slate-950/75 p-6 shadow-2xl shadow-cyan-950/40 backdrop-blur-xl sm:p-10">
         <div className="mb-8 text-center">
           <p className="text-sm font-semibold tracking-[0.35em] text-cyan-300">SICHUAN EXPO · DIGITAL HUMAN</p>
@@ -131,7 +131,7 @@ export function ExhibitionSelectionStage({
                 </p>
                 {selected.bound_stt_provider ? (
                   <p className={`text-xs ${selected.bound_stt_runtime_ready === false ? "text-amber-300" : "text-cyan-200"}`}>
-                    语音监听：{[selected.bound_stt_provider, selected.bound_stt_model].filter(Boolean).join(" / ")}
+                    语音聆听：{[selected.bound_stt_provider, selected.bound_stt_model].filter(Boolean).join(" / ")}
                     {selected.bound_stt_runtime_ready === false ? `（未就绪：${selected.bound_stt_availability_error || "请先配置语音识别运行时"}）` : ""}
                   </p>
                 ) : null}

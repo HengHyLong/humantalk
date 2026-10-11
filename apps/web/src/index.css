@@ -28,7 +28,7 @@ body {
   position: relative;
   width: 100%;
   height: 100dvh;
-  min-height: 640px;
+  min-height: min(640px, 100dvh);
   max-width: none;
   margin: 0 auto;
   overflow: hidden;
@@ -188,11 +188,11 @@ body {
 @keyframes digital-display-spin { to { transform: rotate(360deg); } }
 @keyframes digital-display-loading-progress { 0% { transform: translateX(-120%); } 55%, 100% { transform: translateX(280%); } }
 
-.digital-display-chat-panel { position: absolute; z-index: 20; right: 3%; bottom: 2%; left: 3%; display: flex; max-height: min(46vh, 520px); min-height: 0; flex-direction: column; gap: 10px; border: 1px solid rgba(159, 228, 255, .4); border-radius: 18px; padding: 15px; background: rgba(7, 111, 188, .16); box-shadow: 0 16px 32px rgba(0, 22, 72, .12); transition: border-color .2s ease, background .2s ease, box-shadow .2s ease; }
-.digital-display-chat-panel.is-conversation-hidden { border-color: transparent; padding-top: 4px; background: transparent; box-shadow: none; }
+.digital-display-chat-panel { position: absolute; z-index: 20; right: 3%; top: 60dvh; bottom: auto; left: 3%; display: flex; box-sizing: border-box; height: auto; max-height: calc(40dvh - max(8px, env(safe-area-inset-bottom, 0px))); min-height: 10dvh; flex-direction: column; gap: 10px; border: 1px solid rgba(159, 228, 255, .4); border-radius: 18px; padding: 15px; background: rgba(7, 111, 188, .16); box-shadow: 0 16px 32px rgba(0, 22, 72, .12); transition: border-color .2s ease, background .2s ease, box-shadow .2s ease; }
+.digital-display-chat-panel.is-conversation-hidden { top: auto; bottom: max(8px, env(safe-area-inset-bottom, 0px)); height: auto; border-color: transparent; padding-top: 4px; background: transparent; box-shadow: none; }
 .digital-display-chat-panel.is-conversation-hidden .digital-display-chat-heading,
 .digital-display-chat-panel.is-conversation-hidden .digital-display-chat-feed { display: none; }
-.digital-display-chat-panel.is-presentation-hidden { right: 5%; bottom: 3%; left: 5%; max-height: none; border-color: rgba(159, 228, 255, .25); padding: 6px; background: rgba(2, 30, 76, .34); box-shadow: 0 12px 28px rgba(1, 16, 58, .18); }
+.digital-display-chat-panel.is-presentation-hidden { right: 5%; left: 5%; border-color: rgba(159, 228, 255, .25); padding: 6px; background: rgba(2, 30, 76, .34); box-shadow: 0 12px 28px rgba(1, 16, 58, .18); }
 .digital-display-chat-panel.is-subtitle-active { display: flex; }
 .digital-display-chat-panel.is-presentation-hidden .digital-display-chat-input { border-color: rgba(181, 232, 255, .4); background: rgba(2, 30, 76, .72); }
 .digital-display-chat-panel.is-presentation-hidden .digital-display-chat-input::before { align-self: center; flex: 0 0 auto; color: rgba(218, 247, 255, .84); content: attr(data-prompt); font-size: 10px; font-weight: 700; white-space: nowrap; }
@@ -246,7 +246,7 @@ body {
 .digital-display-image-lightbox-close:focus-visible { outline: 2px solid #8ceaff; outline-offset: 3px; }
 .digital-display-chat-heading { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; color: rgba(230, 249, 255, .8); font-size: 10px; letter-spacing: .16em; }
 .digital-display-chat-state { color: rgba(185, 240, 255, .88); font-size: 9px; letter-spacing: .08em; }
-.digital-display-chat-feed { position: relative; display: flex; height: var(--digital-display-latest-round-height, auto); max-height: min(27vh, 300px); min-height: 0; flex: 0 1 auto; flex-direction: column; gap: 8px; overflow-y: auto; padding: 2px 3px; scrollbar-width: thin; scrollbar-color: rgba(183, 237, 255, .5) transparent; transition: height .2s ease; }
+.digital-display-chat-feed { position: relative; display: flex; height: auto; min-height: 0; flex: 0 1 auto; flex-direction: column; gap: 8px; overflow-y: auto; padding: 2px 3px; scrollbar-width: thin; scrollbar-color: rgba(183, 237, 255, .5) transparent; transition: height .2s ease; }
 .digital-display-chat-feed-content { display: flex; min-height: 0; flex-direction: column; gap: 8px; }
 .digital-display-chat-round { display: flex; flex: 0 0 auto; flex-direction: column; gap: 8px; }
 .digital-display-scroll-bottom { position: sticky; bottom: 4px; z-index: 4; display: inline-flex; align-self: center; align-items: center; gap: 5px; border: 1px solid rgba(177, 235, 255, .48); border-radius: 999px; padding: 6px 11px; color: #e7faff; background: rgba(2, 45, 98, .9); box-shadow: 0 7px 18px rgba(0, 18, 58, .28); font-size: 10px; cursor: pointer; backdrop-filter: blur(8px); }
@@ -352,7 +352,7 @@ body {
 
 @media (max-width: 760px) {
   .digital-display-shell { height: 100dvh; min-height: 580px; }
-  .digital-display-chat-panel { bottom: max(8px, env(safe-area-inset-bottom, 0px)); }
+  .digital-display-chat-panel { bottom: auto; }
   .digital-display-quick-actions { top: 78px; left: 14px; gap: 8px; }
   .digital-display-quick-actions-trigger { width: 44px; height: 44px; }
   .digital-display-quick-actions-menu { min-width: 104px; padding: 8px; }
@@ -408,16 +408,13 @@ body {
   .exhibition-product-list-track { gap: 8px; }
   .exhibition-product-list-image,
   .exhibition-product-list-item-placeholder { height: clamp(78px, 14vh, 116px); }
-  .digital-display-chat-panel.is-presentation-hidden { right: 4%; bottom: 2%; left: 4%; }
+  .digital-display-chat-panel.is-presentation-hidden { right: 4%; left: 4%; }
 }
 
 @media (orientation: portrait) {
   .digital-display-chat-panel {
-    top: 65%;
     right: 4%;
-    bottom: 10%;
     left: 4%;
-    max-height: none;
   }
 
   .digital-display-chat-panel.is-conversation-hidden {
@@ -428,18 +425,9 @@ body {
     top: auto;
   }
 
-  .digital-display-chat-panel:not(.is-conversation-hidden) .digital-display-chat-feed {
-    height: auto;
-    max-height: none;
-    flex: 1 1 0;
-  }
-
   .digital-display-chat-panel.is-presentation-hidden {
-    top: 65%;
     right: 4%;
-    bottom: 10%;
     left: 4%;
-    max-height: none;
   }
 
   .digital-display-chat-panel .digital-display-voice-trigger,
@@ -469,4 +457,150 @@ body {
   .digital-display-chat-panel .digital-display-mode-toggle {
     top: calc(50% - 28px);
   }
+}
+
+
+/* Large portrait kiosks: 1440 x 2560 and comparable displays. */
+@media (orientation: portrait) and (min-width: 1000px) and (min-height: 1500px) {
+  .digital-display-root, .exhibition-selection-stage { --kiosk-body: 30px; --kiosk-caption: 30px; --kiosk-small: 30px; --kiosk-touch: clamp(100px, 7.5vw, 144px); --kiosk-gap: clamp(20px, 1.7vw, 32px); font-size: var(--kiosk-body); }
+  .digital-display-header { top: 48px; left: 48px; right: 48px; gap: 32px; }
+  .digital-display-brand { gap: 24px; }
+  .digital-display-brand-mark { width: 90px; height: 90px; font-size: 44px; }
+  .digital-display-brand strong, .digital-display-voice-copy strong { font-size: var(--kiosk-body); }
+  .digital-display-brand small, .digital-display-status, .digital-display-start-meta, .digital-display-eyebrow { font-size: var(--kiosk-small); }
+  .digital-display-status-dot, .digital-display-voice-copy > span { width: 18px; height: 18px; }
+  .digital-display-watermark { display: none; }
+  .digital-display-languages { top: 190px; right: 48px; width: 220px; border-radius: 24px; }
+  .digital-display-languages button, .digital-display-ghost-button, .digital-display-suggestions button, .digital-display-chat-reveal, .digital-display-scroll-bottom, .digital-display-start-button, .digital-display-start-meta button { min-height: var(--kiosk-touch); padding: 20px 32px; font-size: var(--kiosk-body); }
+  .digital-display-quick-actions { top: 190px; left: 48px; gap: 24px; }
+  .digital-display-quick-actions-trigger { width: var(--kiosk-touch); height: var(--kiosk-touch); }
+  .digital-display-quick-actions-trigger > span { grid-template-columns: repeat(2, 12px); gap: 10px; }
+  .digital-display-quick-actions-trigger i { width: 12px; height: 12px; }
+  .digital-display-quick-actions-menu { min-width: 300px; padding: 20px; gap: 16px; border-radius: 28px; }
+  .digital-display-quick-actions-menu button { min-height: var(--kiosk-touch); padding: 20px 32px; font-size: var(--kiosk-body); }
+  .digital-display-start-card, .digital-display-loading { width: min(82vw, 1180px); padding: 64px; border-radius: 36px; }
+  .digital-display-start-card h1 { font-size: 30px; }
+  .digital-display-start-card p:not(.digital-display-eyebrow), .digital-display-loading > span:not(.digital-display-loader) { font-size: var(--kiosk-body); }
+  .digital-display-loading strong { font-size: var(--kiosk-caption); }
+  .digital-display-loader { width: 100px; height: 100px; border-width: 8px; margin-bottom: 36px; }
+  .digital-display-loading-track { height: 8px; margin-top: 40px; }
+  .digital-display-chat-panel { padding: 32px; gap: var(--kiosk-gap); border-radius: 36px; }
+  .digital-display-chat-heading, .digital-display-chat-state { font-size: var(--kiosk-small); }
+  .digital-display-chat-feed-content, .digital-display-chat-round { gap: var(--kiosk-gap); }
+  .digital-display-chat-line { max-width: 100%; gap: 20px; font-size: var(--kiosk-caption); line-height: 1.55; }
+  .digital-display-chat-line.has-entities { width: 100%; }
+  .digital-display-chat-line-copy { gap: 20px; }
+  .digital-display-chat-line p { padding: 20px 26px; border-radius: 24px; overflow-wrap: anywhere; }
+  .digital-display-chat-role { padding: 10px 18px; font-size: var(--kiosk-small); }
+  .digital-display-chat-empty, .digital-display-wake-prompt { font-size: var(--kiosk-caption); }
+  .digital-display-chat-notice { padding: 20px 24px; font-size: var(--kiosk-small); }
+  .digital-display-chat-input { gap: 20px; padding: 20px; border-radius: 24px; }
+  .digital-display-chat-input input { min-height: var(--kiosk-touch); padding: 20px 24px; font-size: var(--kiosk-body); }
+  .digital-display-voice-copy { gap: 20px; }
+  .digital-display-voice-copy small { margin-top: 8px; font-size: var(--kiosk-small); }
+  .digital-display-send { min-height: var(--kiosk-touch); padding: 20px 32px; font-size: var(--kiosk-body); }
+  .digital-display-chat-panel .digital-display-voice-trigger, .digital-display-chat-panel .digital-display-voice-break, .digital-display-chat-panel .digital-display-stop, .digital-display-chat-panel .digital-display-mode-toggle { width: 220px; height: var(--kiosk-touch); right: 48px; padding: 20px; border-radius: 24px; font-size: var(--kiosk-body); }
+  .digital-display-chat-panel .digital-display-stop, .digital-display-chat-panel .digital-display-voice-break { top: calc(50% - 210px); }
+  .digital-display-chat-panel .digital-display-voice-trigger, .digital-display-chat-panel .digital-display-mode-toggle { top: calc(50% - 70px); }
+  .digital-display-chat-panel.is-presentation-hidden { padding: 20px; }
+  .digital-display-chat-panel.is-presentation-hidden .digital-display-chat-input::before { font-size: var(--kiosk-small); }
+  .digital-display-presentation-stack, .digital-display-presentation-stack.is-registration { top: 44%; bottom: 12%; width: 92%; }
+  .digital-display-presentation-stack .digital-display-live-subtitle { max-height: 15dvh; margin-bottom: 24px; }
+  .digital-display-live-subtitle { gap: 20px; }
+  .digital-display-live-subtitle span { padding: 10px 18px; font-size: var(--kiosk-small); }
+  .digital-display-live-subtitle p { padding: 24px 32px; font-size: var(--kiosk-caption); text-align: left; overflow-wrap: anywhere; }
+  .digital-display-presentation-stack .digital-display-waist-panel { max-height: none; padding: 24px; gap: 24px; border-radius: 32px; }
+  .digital-display-waist-panel .digital-display-navigation-card, .digital-display-waist-panel .exhibition-entity-card.is-immersive { width: 100%; max-height: none; min-height: 0; flex: 1 1 0; overflow-y: auto; }
+  .digital-display-waist-panel .digital-display-navigation-card img { height: 22dvh; max-height: none; }
+  .digital-display-waist-panel .exhibition-entity-card.is-immersive .exhibition-entity-card-image { height: 22dvh; min-height: 22dvh; flex: 0 0 auto; }
+  .digital-display-waist-panel .exhibition-entity-card.is-immersive .exhibition-entity-card-image img { height: 100%; max-height: none; }
+  .exhibition-entity-card-copy { padding: 32px; }
+  .exhibition-entity-card-heading { gap: 20px; flex-wrap: wrap; }
+  .exhibition-entity-card-close + .exhibition-entity-card-copy .exhibition-entity-card-heading { padding-right: 100px; }
+  .exhibition-entity-card-heading strong { font-size: var(--kiosk-caption); white-space: normal; }
+  .exhibition-entity-card-heading span { padding: 10px 18px; font-size: var(--kiosk-small); }
+  .exhibition-entity-card-copy > p { margin-top: 20px; font-size: var(--kiosk-body); }
+  .exhibition-entity-card dl { margin-top: 24px; gap: 16px; }
+  .exhibition-entity-card dl div { padding: 12px 20px; gap: 12px; }
+  .exhibition-entity-card dt, .exhibition-entity-card dd { font-size: var(--kiosk-small); }
+  .exhibition-entity-card-select, .exhibition-entity-card-register { min-height: var(--kiosk-touch); margin: 24px 20px 0 0; padding: 20px 32px; border: 1px solid #aee8ff; border-radius: 24px; color: #efffff; background: #075583; font-size: var(--kiosk-body); }
+  .digital-display-navigation-copy { padding: 32px; font-size: var(--kiosk-body); }
+  .digital-display-navigation-copy strong { font-size: var(--kiosk-caption); }
+  .digital-display-navigation-copy ol { padding-left: 48px; }
+  .digital-display-card-close, .exhibition-entity-card-close, .digital-display-registration-card > button, .digital-display-image-lightbox-close { top: 24px; right: 24px; width: var(--kiosk-touch); height: var(--kiosk-touch); font-size: 64px; }
+  .digital-display-image-lightbox { padding: 5dvh 4vw; }
+  .digital-display-image-lightbox img { width: 100%; height: 100%; min-height: 0; object-fit: contain; }
+  .digital-display-presentation-stack .digital-display-waist-panel.is-registration { width: 100%; }
+  .digital-display-waist-panel.is-registration .digital-display-registration-card { grid-template-columns: minmax(0, 1fr); gap: 32px; padding: 48px; text-align: center; }
+  .digital-display-waist-panel.is-registration .digital-display-registration-card > img { width: min(48vw, 600px); max-width: none; max-height: none; }
+  .digital-display-waist-panel.is-registration .digital-display-registration-card strong { padding: 0; font-size: var(--kiosk-caption); }
+  .digital-display-waist-panel.is-registration .digital-display-registration-card p, .digital-display-waist-panel.is-registration .digital-display-registration-card a { font-size: var(--kiosk-body); overflow-wrap: anywhere; }
+  .exhibition-product-list { width: 100%; min-width: 0; padding: 28px; }
+  .exhibition-product-list-header { padding-bottom: 28px; gap: 24px; }
+  .exhibition-product-list-header strong { font-size: var(--kiosk-caption); }
+  .exhibition-product-list-count { padding: 12px 20px; font-size: var(--kiosk-small); }
+  .exhibition-product-list-track { gap: 28px; }
+  .exhibition-product-list-image, .exhibition-product-list-item-placeholder { height: 15dvh; font-size: var(--kiosk-body); }
+  .exhibition-product-list-image img { object-fit: contain; }
+  .exhibition-product-list-item > strong { padding: 24px; font-size: var(--kiosk-body); }
+  .exhibition-selection-stage { padding: 64px; }
+  .exhibition-selection-stage > section { max-width: 1200px; padding: 64px; border-radius: 40px; }
+  .exhibition-selection-stage h1 { margin-top: 32px; font-size: 30px; }
+  .exhibition-selection-stage p, .exhibition-selection-stage label { max-width: none; font-size: var(--kiosk-body); line-height: 1.7; }
+  .exhibition-selection-stage button { min-height: var(--kiosk-touch); padding: 28px 32px; font-size: var(--kiosk-body); }
+  .exhibition-selection-stage button span { font-size: inherit; white-space: normal; overflow-wrap: anywhere; }
+  .exhibition-selection-stage button span span + span { font-size: var(--kiosk-small); }
+  .exhibition-selection-stage #exhibition-options { max-height: 30dvh; padding: 20px; }
+  .exhibition-selection-stage section > div { margin-top: 32px; }
+}
+
+
+/* Reduce kiosk action buttons to 70% of their previous size. */
+@media (orientation: portrait) and (min-width: 1000px) and (min-height: 1500px) {
+  .digital-display-root,
+  .exhibition-selection-stage { --kiosk-button-touch: calc(var(--kiosk-touch) * .7); }
+  .digital-display-root button:not(.digital-display-zoom-trigger):not(.exhibition-product-list-item),
+  .exhibition-selection-stage button {
+    min-height: var(--kiosk-button-touch);
+    padding: 14px 22.4px;
+    border-radius: 16.8px;
+    font-size: 21px;
+  }
+  .digital-display-languages { width: 154px; border-radius: 16.8px; }
+  .digital-display-root button.digital-display-quick-actions-trigger:not(.digital-display-zoom-trigger):not(.exhibition-product-list-item) { width: var(--kiosk-button-touch); height: var(--kiosk-button-touch); border-radius: 50%; }
+  .digital-display-quick-actions-trigger > span { grid-template-columns: repeat(2, 8.4px); gap: 7px; }
+  .digital-display-quick-actions-trigger i { width: 8.4px; height: 8.4px; }
+  .digital-display-quick-actions-menu { min-width: 210px; padding: 14px; gap: 11.2px; border-radius: 19.6px; }
+  .digital-display-root .digital-display-chat-panel button:is(.digital-display-voice-trigger, .digital-display-voice-break, .digital-display-stop, .digital-display-mode-toggle) { width: 154px; height: var(--kiosk-button-touch); padding: 14px; }
+  .digital-display-root button:is(.digital-display-card-close, .exhibition-entity-card-close, .digital-display-image-lightbox-close):not(.digital-display-zoom-trigger):not(.exhibition-product-list-item),
+  .digital-display-root .digital-display-registration-card > button:not(.digital-display-zoom-trigger):not(.exhibition-product-list-item) { width: var(--kiosk-button-touch); height: var(--kiosk-button-touch); padding: 0; font-size: 44.8px; }
+  .digital-display-root button.digital-display-start-button,
+  .exhibition-selection-stage section > button { display: block; width: 70%; margin-left: auto; margin-right: auto; }
+  .exhibition-selection-stage button span span + span { font-size: 21px; }
+}
+
+
+/* Listening status and a second 30% reduction for language controls. */
+@media (orientation: portrait) and (min-width: 1000px) and (min-height: 1500px) {
+  .digital-display-voice-copy strong,
+  .digital-display-voice-copy small { font-size: 25px; }
+  .digital-display-languages { width: 107.8px; border-radius: 11.76px; }
+  .digital-display-root .digital-display-languages button:not(.digital-display-zoom-trigger):not(.exhibition-product-list-item) {
+    min-height: calc(var(--kiosk-touch) * .49);
+    padding: 9.8px 15.68px;
+    border-radius: 11.76px;
+    font-size: 14.7px;
+  }
+}
+
+
+.digital-display-sidebar-toggle { position: absolute; top: 50%; right: 0; z-index: 45; display: grid; width: 32px; height: 88px; place-items: center; border: 1px solid rgba(181, 232, 255, .45); border-radius: 16px 0 0 16px; padding: 0; color: #e7faff; background: rgba(2, 45, 98, .88); font-size: 28px; cursor: pointer; transform: translateY(-50%); }
+.digital-display-languages { transition: opacity .2s ease, transform .2s ease; }
+.digital-display-root.is-side-controls-hidden .digital-display-languages { visibility: hidden; opacity: 0; pointer-events: none; transform: translateX(160%); }
+.digital-display-root.is-side-controls-hidden :is(.digital-display-voice-trigger, .digital-display-voice-break, .digital-display-stop, .digital-display-mode-toggle) { visibility: hidden; pointer-events: none; }
+@media (orientation: portrait) {
+  .digital-display-root.is-side-controls-hidden :is(.digital-display-voice-trigger, .digital-display-voice-break, .digital-display-stop, .digital-display-mode-toggle) { transform: translate(160%, -50%); }
+}
+@media (orientation: portrait) and (min-width: 1000px) and (min-height: 1500px) {
+  .digital-display-root button.digital-display-sidebar-toggle:not(.digital-display-zoom-trigger):not(.exhibition-product-list-item) { width: 36px; height: 108px; min-height: 0; padding: 0; border-radius: 16.8px 0 0 16.8px; font-size: 30px; }
 }
