@@ -108,3 +108,11 @@ def test_invalid_route_points_are_rejected():
     for ids in (["east"], ["east", "missing"], ["east", "east"]):
         assert route_issues({"pointIds": ids}, points)
     assert route_issues({"pointIds": ["east", "west"], "spokenText": "从此处直走50米，到东门。然后前往西门。"}, points) == ["route_speech_origin_conflict"]
+
+
+def test_audit_allows_point_and_route_to_share_destination_name():
+    store = Store()
+    store.data["routes"][0]["aliases"] = ["科技展台"]
+    assert not any(i["code"] == "duplicate_match_term" for i in audit_configuration(store, "expo"))
+    store.data["exhibits"].append({"id": "duplicate", "name": "机器人"})
+    assert any(i["code"] == "duplicate_match_term" for i in audit_configuration(store, "expo"))

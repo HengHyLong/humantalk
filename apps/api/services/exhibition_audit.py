@@ -33,12 +33,16 @@ def audit_configuration(store, exhibition_id: str, config: dict | None = None) -
                 issues.append({"code": "introduction_missing", "severity": "warning", "id": rid,
                                "message": "未配置介绍或播报文案，介绍问题将交给 Dify 并限制无依据的补充。"})
             for field, value in term_fields(record):
-                terms.setdefault(normalize(value), {})[rid] = {"id": rid, "field": field, "value": value}
+                terms.setdefault(normalize(value), {})[rid] = {"id": rid, "field": field, "value": value, "kind": kind}
             if "![" in str(record.get("description", "")):
                 issues.append({"code": "speech_image_markup", "severity": "info", "id": rid,
                                "message": "简介含图片标记；播报已自动清理，原图和原始内容保留。"})
     for term, owners in terms.items():
-        if len(owners) > 1:
-            issues.append({"code": "duplicate_match_term", "severity": "warning", "term": term,
-                           "records": list(owners.values()), "message": "关键词对应多个对象，回答需要澄清或多实体处理。"})
+        # A point and its navigation route may deliberately share a destination
+        # name. Only collisions within the same intent are ambiguous.
+        for navigation in (False, True):
+            group = [r for r in owners.values() if (r["kind"] == "routes") == navigation]
+            if len(group) > 1:
+                issues.append({"code": "duplicate_match_term", "severity": "warning", "term": term,
+                               "records": group, "message": "同一意图的关键词对应多个对象，回答需要澄清或多实体处理。"})
     return issues
