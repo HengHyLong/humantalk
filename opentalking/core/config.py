@@ -527,7 +527,12 @@ class Settings(BaseSettings):
     agent_lightrag_language: str = Field(default="Chinese")
     agent_lightrag_chunk_fallback_enabled: bool = Field(default=False)
 
-    # Exhibition Q&A: published QA -> Dify/local retrieval -> Agent response.
+    # v2.6 app API credentials, separate from the dataset/knowledge credentials.
+    dify_chat_base_url: str = Field(default="")
+    dify_chat_api_key: str = Field(default="", repr=False)
+    dify_chat_timeout_sec: float = Field(default=60.0, ge=5, le=180)
+    dify_chat_top_k: int = Field(default=5, ge=1, le=8)
+    # Dataset API configuration (not used for answer generation).
     dify_base_url: str = Field(default="https://api.dify.ai/v1")
     dify_api_key: str = Field(default="")
     dify_default_dataset_id: str = Field(default="")

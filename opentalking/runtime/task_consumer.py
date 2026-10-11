@@ -531,6 +531,12 @@ async def handle_worker_task(
     sid = task.get("session_id")
     if not sid or not cmd:
         return
+    if cmd == "speak" and task.get("dify_turn_token"):
+        latest = await r.get(f"opentalking:dify:turn:{sid}")
+        if isinstance(latest, bytes):
+            latest = latest.decode()
+        if latest != task["dify_turn_token"]:
+            return
     if cmd == "init":
         if sid in runners:
             return

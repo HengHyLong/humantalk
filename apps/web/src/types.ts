@@ -32,7 +32,7 @@ export interface Message {
   qa?: {
     turnId: string;
     traceId?: string;
-    matchType?: "official_qa" | "rag" | "clarification" | "fallback" | "retrieval_error" | "blocked";
+    matchType?: "database" | "dify" | "official_qa" | "rag" | "clarification" | "fallback" | "retrieval_error" | "blocked";
     sources?: Array<{ id: string; title: string; excerpt: string; score: number }>;
   };
 }

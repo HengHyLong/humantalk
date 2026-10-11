@@ -24,6 +24,8 @@ export function ChatBubble({ message }: ChatBubbleProps) {
           <div className="flex max-w-full flex-wrap items-center gap-2 text-[11px] text-slate-500">
             <span className="rounded-full bg-cyan-50 px-2 py-1 font-medium text-cyan-700">
               {{
+                database: "展会资料",
+                dify: "智能问答",
                 official_qa: "官方问答",
                 rag: "知识库",
                 clarification: "需要补充",

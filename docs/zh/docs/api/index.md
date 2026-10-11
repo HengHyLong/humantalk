@@ -39,8 +39,12 @@ multipart 上传（`multipart/form-data`）。
 
 ## 端点汇总
 
+v2.6 展会问答通过 `POST /exhibitions/{exhibition_id}/qa/query` 分流：明确的数据库关键词命中直接播报，其余问题使用 Dify。`POST /runtime-config/dify/test` 测试已保存的智能体连接，需要管理员 `system:llm:write` 权限；`POST /runtime-config/apply` 修改 Dify 配置时也需要该权限。详细配置参见 [Dify 问答分流](../../developer-guide/dify-chat-v26.md)。
+
 | 方法 | 路径 | 分组 |
 |------|------|------|
+| `POST` | `/exhibitions/{exhibition_id}/qa/query` | 展会问答 |
+| `POST` | `/runtime-config/dify/test` | Dify 配置 |
 | `GET` | `/health` | 健康检查与模型 |
 | `GET` | `/healthz` | 健康检查与模型 |
 | `GET` | `/queue/status` | 健康检查与模型 |

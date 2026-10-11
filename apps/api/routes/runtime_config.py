@@ -8,10 +8,12 @@ from pathlib import Path
 from typing import Any, Optional
 
 import httpx
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Depends
 from pydantic import BaseModel, Field
 
 from apps.api.core.config import get_settings
+from apps.api.admin.security import bearer, current_user, require_permission
+from apps.api.services.dify_chat import DifyChatClient, DifyChatError
 from apps.api.services.vidu_service import ViduSessionManager
 from opentalking.providers.memory.factory import close_cached_memory_provider
 from opentalking.providers.stt.factory import (
@@ -30,6 +32,10 @@ _ENV_PATH = Path(os.environ.get("OPENTALKING_ENV_FILE") or Path(__file__).resolv
 _ENV_REF_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)")
 
 _RUNTIME_ENV_KEYS = {
+    "OPENTALKING_DIFY_CHAT_BASE_URL",
+    "OPENTALKING_DIFY_CHAT_API_KEY",
+    "OPENTALKING_DIFY_CHAT_TIMEOUT_SEC",
+    "OPENTALKING_DIFY_CHAT_TOP_K",
     "DASHSCOPE_API_KEY",
     "OPENTALKING_LLM_PROVIDER",
     "OPENTALKING_LLM_BASE_URL",
@@ -113,6 +119,10 @@ _RUNTIME_ENV_KEYS = {
 
 
 class RuntimeConfigPayload(BaseModel):
+    dify_chat_base_url: Optional[str] = Field(default=None, max_length=2048)
+    dify_chat_api_key: Optional[str] = Field(default=None, max_length=4096)
+    dify_chat_timeout_sec: Optional[float] = Field(default=None, ge=5, le=180)
+    dify_chat_top_k: Optional[int] = Field(default=None, ge=1, le=8)
     llm_base_url: Optional[str] = Field(default=None, max_length=2048)
     llm_model: Optional[str] = Field(default=None, max_length=256)
     llm_api_key: Optional[str] = Field(default=None, max_length=4096)
@@ -528,6 +538,12 @@ def _current_payload(settings: Any | None = None) -> dict[str, Any]:
     )
     llm_key = _env_value(values, "OPENTALKING_LLM_API_KEY", _settings_value(settings, "llm_api_key"))
     return {
+        "dify_chat": {
+            "base_url": _env_value(values, "OPENTALKING_DIFY_CHAT_BASE_URL", _settings_value(settings, "dify_chat_base_url")),
+            "api_key_set": bool(_env_value(values, "OPENTALKING_DIFY_CHAT_API_KEY", _settings_value(settings, "dify_chat_api_key"))),
+            "timeout_sec": float(_env_value(values, "OPENTALKING_DIFY_CHAT_TIMEOUT_SEC", _settings_value(settings, "dify_chat_timeout_sec", "60"))),
+            "top_k": int(_env_value(values, "OPENTALKING_DIFY_CHAT_TOP_K", _settings_value(settings, "dify_chat_top_k", "5"))),
+        },
         "llm": {
             "base_url": _env_value(values, "OPENTALKING_LLM_BASE_URL", _settings_value(settings, "llm_base_url")).rstrip("/"),
             "model": _env_value(values, "OPENTALKING_LLM_MODEL", _settings_value(settings, "llm_model", "qwen-flash")),
@@ -551,6 +567,17 @@ def _current_payload(settings: Any | None = None) -> dict[str, Any]:
 def _build_updates(payload: RuntimeConfigPayload) -> dict[str, str]:
     updates: dict[str, str] = {}
     sync_key = ""
+    if payload.dify_chat_base_url is not None:
+        value = _strip(payload.dify_chat_base_url).rstrip("/")
+        if value and not re.match(r"^https?://[^/]+(?:/.*)?$", value):
+            raise HTTPException(status_code=400, detail="Dify URL must use http or https")
+        updates["OPENTALKING_DIFY_CHAT_BASE_URL"] = value
+    if value := _strip(payload.dify_chat_api_key):
+        updates["OPENTALKING_DIFY_CHAT_API_KEY"] = value
+    if payload.dify_chat_timeout_sec is not None:
+        updates["OPENTALKING_DIFY_CHAT_TIMEOUT_SEC"] = str(payload.dify_chat_timeout_sec)
+    if payload.dify_chat_top_k is not None:
+        updates["OPENTALKING_DIFY_CHAT_TOP_K"] = str(payload.dify_chat_top_k)
 
     if any(
         value is not None
@@ -790,6 +817,9 @@ async def get_runtime_config(request: Request) -> dict[str, Any]:
 
 @router.post("/apply")
 async def apply_runtime_config(payload: RuntimeConfigPayload, request: Request) -> dict[str, Any]:
+    if any(name.startswith("dify_chat_") for name in payload.model_fields_set):
+        auth = current_user(request, await bearer(request))
+        require_permission("system:llm:write")(request, auth)
     updates = _build_updates(payload)
     unknown = set(updates) - _RUNTIME_ENV_KEYS
     if unknown:
@@ -806,4 +836,18 @@ async def apply_runtime_config(payload: RuntimeConfigPayload, request: Request) 
     result["applied"] = True
     result["requires_new_session"] = refreshed_runners == 0
     result["live_runners_refreshed"] = refreshed_runners
+    return result
+
+
+@router.post("/dify/test", dependencies=[Depends(require_permission("system:llm:write"))])
+async def test_dify_connection(request: Request) -> dict[str, Any]:
+    settings = request.app.state.settings
+    client = DifyChatClient(settings.dify_chat_base_url, settings.dify_chat_api_key)
+    try:
+        result = await client.parameters()
+    except DifyChatError as exc:
+        raise HTTPException(status_code=502, detail={"code": exc.code}) from exc
+    required = {"exhibition_id", "locale", "retrieval_status", "retrieval_context"}
+    result["missing_variables"] = sorted(required - set(result["input_variables"]))
+    result["compatible"] = result["mode"] == "advanced-chat" and not result["missing_variables"]
     return result

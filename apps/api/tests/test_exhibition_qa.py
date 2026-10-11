@@ -763,140 +763,38 @@ async def test_retrieval_error_and_blocked_input_do_not_create_business_miss(tmp
     assert store.list_records("miss_pool", exhibition_id="expo-2026") == []
 
 
-def test_public_qa_route_returns_turn_trace_and_enqueues_grounded_agent(tmp_path, monkeypatch) -> None:
+@pytest.mark.parametrize("model", ["mock", "vidu"])
+def test_public_qa_route_returns_turn_trace_and_delivers_dify_answer(tmp_path, monkeypatch, model):
+    from apps.api.services.dify_chat import DifyChatClient, ChatReply
+    from opentalking.core.in_memory_redis import InMemoryRedis
     store = _store(tmp_path)
-    settings = SimpleNamespace(
-        admin_sqlite_path=str(tmp_path / "admin.sqlite3"),
-        admin_initialize_defaults=False,
-        dify_api_key="",
-        dify_default_dataset_id="",
-        dify_dataset_map="{}",
-        qa_fuzzy_threshold=0.74,
-        qa_human_channel="请咨询服务台。",
-    )
     app = FastAPI()
-    app.state.settings = settings
+    app.state.settings = SimpleNamespace(dify_chat_base_url="https://dify.test/v1", dify_chat_api_key="app-test")
     app.state.admin_store = store
-    app.state.redis = object()
+    app.state.redis = InMemoryRedis()
     app.include_router(qa_routes.router)
-
+    queued = []
     async def fake_get_session(redis, session_id):
-        del redis
-        return {"session_id": session_id}
-
-    queued: list[dict[str, object]] = []
-
+        return {"session_id": session_id, "model": model, "state": "ready"}
+    async def fake_chat(self, **kwargs):
+        assert kwargs["question"] == "服务中心在哪里？"
+        return ChatReply("服务中心位于 A4 馆一楼。", "conversation")
     async def fake_speak(redis, session_id, text, **kwargs):
-        del redis
-        queued.append({"session_id": session_id, "text": text, **kwargs})
-
-    class RouteRetriever(FakeRetriever):
-        pass
-
+        queued.append({"text": text, **kwargs})
+    async def fake_vidu(**kwargs):
+        queued.append(kwargs)
     monkeypatch.setattr(qa_routes.session_service, "get_session", fake_get_session)
     monkeypatch.setattr(qa_routes.session_service, "speak", fake_speak)
-    monkeypatch.setattr(
-        qa_routes,
-        "LocalKnowledgeRetriever",
-        lambda store, ids: RouteRetriever(
-            RetrievalResult(
-                provider="local",
-                sources=[KnowledgeSource("s1", "指南", "服务中心位于 A4 一楼。", 0.9)],
-            )
-        ),
-    )
-
-    with TestClient(app) as client:
-        response = client.post(
-            "/exhibitions/expo-2026/qa/query",
-            json={
-                "session_id": "sess-test",
-                "turn_id": "turn-route",
-                "question": "服务中心在哪里？",
-            },
-        )
-
-    assert response.status_code == 200
-    body = response.json()
-    assert body["match_type"] == "rag"
-    assert body["turn_id"] == "turn-route"
-    assert body["trace_id"].startswith("trace-")
-    assert queued[0]["direct"] is False
-    assert "服务中心" in str(queued[0]["knowledge_context"])
-
-
-def test_public_qa_route_generates_and_delivers_vidu_answer_without_worker(
-    tmp_path,
-    monkeypatch,
-) -> None:
-    store = _store(tmp_path)
-    settings = SimpleNamespace(
-        admin_sqlite_path=str(tmp_path / "admin.sqlite3"),
-        admin_initialize_defaults=False,
-        dify_api_key="",
-        dify_default_dataset_id="",
-        dify_dataset_map="{}",
-        qa_fuzzy_threshold=0.74,
-        qa_human_channel="请咨询服务台。",
-        llm_base_url="https://llm.example/v1",
-        llm_api_key="llm-secret",
-        llm_model="test-model",
-        llm_system_prompt="你是会展助手。",
-    )
-    app = FastAPI()
-    app.state.settings = settings
-    app.state.admin_store = store
-    app.state.redis = object()
-    app.include_router(qa_routes.router)
-
-    async def fake_get_session(redis, session_id):
-        del redis
-        return {"session_id": session_id, "model": "vidu", "state": "ready"}
-
-    generated: list[dict[str, object]] = []
-    delivered: list[dict[str, object]] = []
-
-    async def fake_generate(**kwargs):
-        generated.append(kwargs)
-        return "服务中心位于 A4 馆一楼。"
-
-    async def fake_deliver(**kwargs):
-        delivered.append(kwargs)
-
-    async def unexpected_worker_speak(*_args, **_kwargs):
-        raise AssertionError("Vidu Q&A must not enqueue the regular synthesis worker")
-
-    monkeypatch.setattr(qa_routes.session_service, "get_session", fake_get_session)
-    monkeypatch.setattr(qa_routes.session_service, "speak", unexpected_worker_speak)
-    monkeypatch.setattr(qa_routes, "_generate_vidu_answer", fake_generate)
-    monkeypatch.setattr(qa_routes, "_speak_vidu_answer", fake_deliver)
-    monkeypatch.setattr(
-        qa_routes,
-        "LocalKnowledgeRetriever",
-        lambda store, ids: FakeRetriever(
-            RetrievalResult(
-                provider="local",
-                sources=[KnowledgeSource("s1", "指南", "服务中心位于 A4 馆一楼。", 0.9)],
-            )
-        ),
-    )
-
-    response = TestClient(app).post(
-        "/exhibitions/expo-2026/qa/query",
-        json={
-            "session_id": "sess-vidu",
-            "turn_id": "turn-vidu",
-            "question": "服务中心在哪里？",
-            "locale": "zh-CN",
-        },
-    )
-
+    monkeypatch.setattr(DifyChatClient, "chat", fake_chat)
+    monkeypatch.setattr(qa_routes, "_speak_vidu_answer", fake_vidu)
+    response = TestClient(app).post("/exhibitions/expo-2026/qa/query", json={
+        "session_id": "sess-test", "turn_id": "turn-route", "question": "服务中心在哪里？"})
     assert response.status_code == 200, response.json()
     payload = response.json()
-    assert payload["match_type"] == "rag"
-    assert payload["speak_mode"] == "agent"
+    assert payload["turn_id"] == "turn-route"
+    assert payload["trace_id"].startswith("trace-")
+    assert payload["speak_mode"] == "direct"
     assert payload["answer"] == "服务中心位于 A4 馆一楼。"
-    assert generated[0]["session_id"] == "sess-vidu"
-    assert "服务中心" in str(generated[0]["knowledge_context"])
-    assert delivered[0]["session_id"] == "sess-vidu"
-    assert delivered[0]["text"] == "服务中心位于 A4 馆一楼。"
+    assert queued[0]["text"] == payload["answer"]
+    if model != "vidu":
+        assert queued[0]["direct"] is True

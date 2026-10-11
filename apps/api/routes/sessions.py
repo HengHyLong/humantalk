@@ -777,6 +777,10 @@ async def create_session(body: CreateSessionRequest, request: Request) -> Create
         agent_enabled = bool(body.agent_enabled or memory_enabled or knowledge_enabled)
 
     custom = _session_customizations(request).get(avatar_id, {})
+    # Dify owns memory/retrieval/model calls for visitor conversations in v2.6.
+    agent_enabled = False
+    memory_enabled = False
+    knowledge_enabled = False
     persona_prompt = persona_defaults.llm_system_prompt if persona_defaults is not None else None
     exhibition_role_prompt = (body.exhibition_role_prompt or "").strip()
     llm_system_prompt = exhibition_role_prompt or persona_prompt or (body.llm_system_prompt or "").strip() or custom.get("llm_system_prompt")
@@ -1135,6 +1139,19 @@ async def speak(session_id: str, body: SpeakRequest, request: Request) -> dict[s
     s = await session_service.get_session(r, session_id)
     if not s:
         raise HTTPException(status_code=404, detail="session not found")
+    if not body.direct:
+        from apps.api.routes.qa import QaQueryRequest, query_exhibition_qa
+
+        result = await query_exhibition_qa("current", QaQueryRequest(
+            session_id=session_id, turn_id=f"turn-{uuid.uuid4().hex}", question=body.text,
+            locale=body.language, voice=body.voice, tts_provider=body.tts_provider,
+            tts_model=body.tts_model,
+        ), request)
+        return {"session_id": session_id, "status": result.status}
+    from apps.api.services.dify_chat import turns_for, turn_key
+
+    await r.set(turn_key(session_id), uuid.uuid4().hex, ex=3600)
+    await turns_for(request.app).cancel(session_id)
     if (s.get("model") or "").strip().lower() == "vidu":
         text = body.text.strip()
         if not text:
@@ -1306,15 +1323,8 @@ async def speak_audio(
         tts_model=tts_model,
     )
     if not defer_speak:
-        await session_service.speak(
-            r,
-            session_id,
-            stripped,
-            language=language,
-            voice=v,
-            tts_provider=eff_prov,
-            tts_model=tm,
-        )
+        await speak(session_id, SpeakRequest(text=stripped, language=language, voice=v,
+                                            tts_provider=eff_prov, tts_model=tm), request)
     return {"session_id": session_id, "status": "transcribed" if defer_speak else "queued", "text": stripped}
 
 
@@ -1505,15 +1515,12 @@ async def speak_audio_stream_ws(websocket: WebSocket, session_id: str) -> None:
         return
 
     if not defer_speak:
-        await session_service.speak(
-            r,
-            session_id,
-            stripped,
-            language=language,
-            voice=v,
-            tts_provider=eff_prov,
-            tts_model=tm,
-        )
+        from apps.api.routes.qa import QaQueryRequest, query_exhibition_qa
+
+        await query_exhibition_qa("current", QaQueryRequest(
+            session_id=session_id, turn_id=f"turn-{uuid.uuid4().hex}", question=stripped,
+            locale=language, voice=v, tts_provider=eff_prov, tts_model=tm,
+        ), websocket)
     await websocket.send_json({"session_id": session_id, "status": "transcribed" if defer_speak else "queued", "text": stripped})
 
 
@@ -1523,6 +1530,10 @@ async def interrupt(session_id: str, request: Request) -> dict[str, str]:
     s = await session_service.get_session(r, session_id)
     if not s:
         raise HTTPException(status_code=404, detail="session not found")
+    from apps.api.services.dify_chat import turns_for, turn_key
+
+    await r.set(turn_key(session_id), uuid.uuid4().hex, ex=3600)
+    await turns_for(request.app).cancel(session_id)
     if (s.get("model") or "").strip().lower() == "vidu":
         await session_service.update_session_state(r, session_id, "ready")
         await publish_event(r, session_id, "speech.ended", {})
@@ -1744,6 +1755,10 @@ async def delete_session(session_id: str, request: Request) -> dict[str, str]:
     s = await session_service.get_session(r, session_id)
     if not s:
         raise HTTPException(status_code=404, detail="session not found")
+    from apps.api.services.dify_chat import turns_for, turn_key
+
+    await r.set(turn_key(session_id), uuid.uuid4().hex, ex=3600)
+    await turns_for(request.app).cancel(session_id)
     if (s.get("model") or "").strip().lower() == "vidu":
         await _vidu_manager(request).close(session_id)
         await _await_result(r.delete(f"opentalking:vidu:dialogue:{session_id}"))
@@ -1762,6 +1777,10 @@ async def release_session(session_id: str, request: Request) -> dict[str, str]:
         # Browser unload notifications may be duplicated. Treat a repeated
         # release as successful so cleanup remains idempotent.
         return {"session_id": session_id, "status": "closed"}
+    from apps.api.services.dify_chat import turns_for, turn_key
+
+    await r.set(turn_key(session_id), uuid.uuid4().hex, ex=3600)
+    await turns_for(request.app).cancel(session_id)
     if (s.get("model") or "").strip().lower() == "vidu":
         await _vidu_manager(request).close(session_id)
         await _await_result(r.delete(f"opentalking:vidu:dialogue:{session_id}"))

@@ -454,6 +454,8 @@ export async function queryExhibitionNavigation(
 }
 
 export type QaMatchType =
+  | "database"
+  | "dify"
   | "official_qa"
   | "rag"
   | "clarification"
@@ -475,6 +477,7 @@ export type ExhibitionQaQueryRequest = {
   session_id: string;
   turn_id: string;
   question: string;
+  selected_entity_id?: string;
   knowledge_base_ids?: string[];
   locale?: string;
   voice?: string;
@@ -487,7 +490,7 @@ export type ExhibitionQaQueryResponse = {
   exhibition_id: string;
   turn_id: string;
   trace_id: string;
-  status: "queued";
+  status: "queued" | "cancelled";
   match_type: QaMatchType;
   speak_mode: "direct" | "agent";
   answer?: string | null;
@@ -496,6 +499,9 @@ export type ExhibitionQaQueryResponse = {
   sources: QaSource[];
   score?: number | null;
   error_code?: string | null;
+  related_entities?: ExhibitionEntityCard[];
+  navigation?: NavigationResult | null;
+  retrieval_status?: string;
 };
 
 export async function queryExhibitionQa(

@@ -5,6 +5,7 @@ import json
 import logging
 import re
 import uuid
+import time
 from pathlib import Path
 from typing import Literal
 
@@ -15,20 +16,15 @@ from apps.api.admin.security import get_store
 from apps.api.services import session_service
 from apps.api.services.vidu_service import ViduServiceError, ViduSessionManager
 from apps.api.services.exhibition_qa import (
-    DifyKnowledgeRetriever,
-    AdminKnowledgeRetriever,
     DifyKnowledgeTarget,
-    ExhibitionQaService,
-    LocalKnowledgeRetriever,
     KnowledgeRetrievalError,
     RetrievalResult,
     parse_dataset_map,
     parse_dataset_ids_map,
 )
-from opentalking.agent.context_builder import default_knowledge_store
-from opentalking.pipeline.speak.text_sanitize import sanitize_tts_text
-from opentalking.providers.llm.openai_compatible.adapter import OpenAICompatibleLLMClient
 from opentalking.runtime.bus import publish_event
+from apps.api.services.dify_chat import DifyChatClient, DifyChatError, turns_for, turn_key, same_turn, save_context
+from apps.api.services.exhibition_lookup import lookup, database_answer
 
 
 router = APIRouter(prefix="/exhibitions", tags=["exhibition-qa"])
@@ -53,6 +49,7 @@ class QaQueryRequest(BaseModel):
     tts_provider: str | None = None
     tts_model: str | None = None
     knowledge_base_ids: list[str] | None = Field(default=None, max_length=16)
+    selected_entity_id: str | None = Field(default=None, max_length=128)
 
 
 class QaSourceResponse(BaseModel):
@@ -70,9 +67,9 @@ class QaQueryResponse(BaseModel):
     exhibition_id: str
     turn_id: str
     trace_id: str
-    status: Literal["queued"] = "queued"
+    status: Literal["queued", "cancelled"] = "queued"
     match_type: Literal[
-        "official_qa", "rag", "clarification", "fallback", "retrieval_error", "blocked"
+        "official_qa", "rag", "clarification", "fallback", "retrieval_error", "blocked", "database", "dify"
     ]
     speak_mode: Literal["direct", "agent"]
     answer: str | None = None
@@ -81,6 +78,9 @@ class QaQueryResponse(BaseModel):
     sources: list[QaSourceResponse] = Field(default_factory=list)
     score: float | None = None
     error_code: str | None = None
+    related_entities: list[dict] = Field(default_factory=list)
+    navigation: dict | None = None
+    retrieval_status: str | None = None
 
 
 def _setting(settings: object, name: str, default: object) -> object:
@@ -134,65 +134,6 @@ async def _save_vidu_history(
         log.warning("Failed to save Vidu dialogue history: session=%s", session_id, exc_info=True)
 
 
-async def _generate_vidu_answer(
-    *,
-    settings: object,
-    redis_client: object,
-    session_id: str,
-    question: str,
-    locale: str,
-    knowledge_context: str | None,
-) -> str:
-    base_url = str(_setting(settings, "llm_base_url", "") or "").strip()
-    api_key = str(_setting(settings, "llm_api_key", "") or "").strip()
-    model = str(_setting(settings, "llm_model", "") or "qwen-turbo").strip()
-    if not base_url:
-        raise RuntimeError("LLM is not configured")
-
-    system_prompt = str(
-        _setting(
-            settings,
-            "llm_system_prompt",
-            "你是专业、友好的会展数字人助手。",
-        )
-        or "你是专业、友好的会展数字人助手。"
-    ).strip()
-    language_prompt = (
-        "Please answer in concise, natural English."
-        if locale == "en-US"
-        else "请使用简洁、自然的中文回答。"
-    )
-    messages: list[dict[str, str]] = [
-        {
-            "role": "system",
-            "content": f"{system_prompt}\n{language_prompt}\n只输出适合语音播报的纯文本，不要使用 Markdown、链接或表情符号。",
-        }
-    ]
-    if knowledge_context:
-        messages.append({"role": "system", "content": knowledge_context.strip()})
-    history = await _load_vidu_history(redis_client, session_id)
-    messages.extend(history)
-    messages.append({"role": "user", "content": question.strip()})
-
-    client = OpenAICompatibleLLMClient(base_url=base_url, api_key=api_key, model=model)
-    parts: list[str] = []
-    async for delta in client.chat_stream(messages):
-        parts.append(delta)
-    answer = sanitize_tts_text("".join(parts)).strip()
-    if not answer:
-        raise RuntimeError("LLM returned an empty answer")
-    await _save_vidu_history(
-        redis_client,
-        session_id,
-        [
-            *history,
-            {"role": "user", "content": question.strip()},
-            {"role": "assistant", "content": answer},
-        ],
-    )
-    return answer
-
-
 def _get_vidu_manager(request: Request) -> ViduSessionManager:
     manager = getattr(request.app.state, "vidu_sessions", None)
     if not isinstance(manager, ViduSessionManager):
@@ -201,9 +142,11 @@ def _get_vidu_manager(request: Request) -> ViduSessionManager:
     return manager
 
 
-async def _finish_vidu_answer(redis_client: object, session_id: str, text: str) -> None:
+async def _finish_vidu_answer(redis_client: object, session_id: str, text: str, turn_token: str | None = None) -> None:
     duration = min(30.0, max(2.5, len(text.strip()) / 5.5 + 1.2))
     await asyncio.sleep(duration)
+    if turn_token and not await same_turn(redis_client, session_id, turn_token):
+        return
     record = await session_service.get_session(redis_client, session_id)
     if not record or str(record.get("state") or "") in {"closed", "closing", "error"}:
         return
@@ -217,7 +160,10 @@ async def _speak_vidu_answer(
     redis_client: object,
     session_id: str,
     text: str,
+    turn_token: str | None = None,
 ) -> None:
+    if turn_token and not await same_turn(redis_client, session_id, turn_token):
+        return
     await session_service.update_session_state(redis_client, session_id, "speaking")
     await publish_event(redis_client, session_id, "speech.started", {"text": text, "direct": True})
     await publish_event(redis_client, session_id, "subtitle.chunk", {"text": text})
@@ -232,7 +178,7 @@ async def _speak_vidu_answer(
             {"code": "VIDU_SEND_FAILED", "message": "数字人播报暂时不可用"},
         )
         raise
-    asyncio.create_task(_finish_vidu_answer(redis_client, session_id, text))
+    asyncio.create_task(_finish_vidu_answer(redis_client, session_id, text, turn_token))
 
 
 def _resolve_dify_connection(settings: object) -> tuple[str, str]:
@@ -655,178 +601,108 @@ def _resolve_local_kb_ids(store: object, exhibition_id: str) -> list[str]:
 
 
 @router.post("/{exhibition_id}/qa/query", response_model=QaQueryResponse)
-async def query_exhibition_qa(
-    exhibition_id: str,
-    body: QaQueryRequest,
-    request: Request,
-) -> QaQueryResponse:
+async def query_exhibition_qa(exhibition_id: str, body: QaQueryRequest, request: Request) -> QaQueryResponse:
+    """v2.6: exact database hit -> speech; other questions -> Dify -> speech."""
+    from apps.api.admin.routes import public_exhibition_entities
+
     store = get_store(request)
-    resolved_exhibition_id = _resolve_exhibition_id(store, exhibition_id)
-    if not store.get_record("exhibitions", resolved_exhibition_id):
+    exhibition_id = _resolve_exhibition_id(store, exhibition_id)
+    if not store.get_record("exhibitions", exhibition_id):
         raise HTTPException(status_code=404, detail="exhibition not found")
-
-    redis_client = getattr(request.app.state, "redis", None)
-    session: dict[str, object] | None = None
-    if redis_client is not None:
-        session = await session_service.get_session(redis_client, body.session_id)
-        if not session:
-            raise HTTPException(status_code=404, detail="session not found")
-
-    settings = getattr(request.app.state, "settings", object())
-    explicit_kb_ids = list(body.knowledge_base_ids or [])
-    dify_targets = _resolve_query_dify_targets(
-        settings,
-        store,
-        resolved_exhibition_id,
-        explicit_kb_ids,
-        session,
-    )
-    dify_base_url, dify_key = _resolve_dify_connection(settings)
-    if bool(dify_targets) != bool(dify_key):
-        retriever = _MisconfiguredRetriever()
-    elif dify_targets and dify_key:
-        retriever = DifyKnowledgeRetriever(
-            base_url=dify_base_url,
-            api_key=dify_key,
-            targets=dify_targets,
-            retrieval_query=_build_dify_retrieval_query(
-                store,
-                resolved_exhibition_id,
-                body.question,
-            ),
-            timeout_sec=float(_setting(settings, "dify_timeout_sec", 12.0)),
-            top_k=int(_setting(settings, "qa_retrieval_top_k", 3)),
-            score_threshold=float(_setting(settings, "qa_retrieval_score_threshold", 0.55)),
-        )
-    else:
-        local_kb_ids = _resolve_local_kb_ids(store, resolved_exhibition_id)
-        imported_documents = store.list_records("documents", exhibition_id=resolved_exhibition_id)
-        # Event-import packages may contain published document text but no
-        # separately built vector index. Prefer that deterministic local
-        # fallback whenever such documents are present; otherwise retain the
-        # existing KnowledgeStore behavior for explicitly bound local KBs.
-        retriever = (
-            AdminKnowledgeRetriever(store)
-            if imported_documents
-            else LocalKnowledgeRetriever(default_knowledge_store(), local_kb_ids)
-        )
-
+    r = request.app.state.redis
+    session = await session_service.get_session(r, body.session_id)
+    if not session or session.get("state") in {"closed", "closing", "error"}:
+        raise HTTPException(status_code=404, detail="session not found")
+    settings = request.app.state.settings
     trace_id = str(getattr(request.state, "trace_id", "") or f"trace-{uuid.uuid4().hex[:16]}")
-    service = ExhibitionQaService(
-        store=store,
-        retriever=retriever,
-        fuzzy_threshold=float(_setting(settings, "qa_fuzzy_threshold", 0.74)),
-        human_channel=str(
-            _setting(
-                settings,
-                "qa_human_channel",
-                "请前往现场服务台或咨询工作人员获取帮助。",
-            )
-        ),
-    )
-    decision = await service.query(
-        exhibition_id=resolved_exhibition_id,
-        question=body.question,
-        turn_id=body.turn_id,
-        trace_id=trace_id,
-    )
+    token = uuid.uuid4().hex
+    manager = turns_for(request.app)
+    await r.set(turn_key(body.session_id), token, ex=3600)
+    await manager.cancel(body.session_id)
+    if str(session.get("model") or "").lower() != "vidu":
+        await session_service.interrupt(r, body.session_id)
+    client = DifyChatClient(str(getattr(settings, "dify_chat_base_url", "")),
+                            str(getattr(settings, "dify_chat_api_key", "")),
+                            float(getattr(settings, "dify_chat_timeout_sec", 60)))
+    if not await same_turn(r, body.session_id, token):
+        return QaQueryResponse(session_id=body.session_id, exhibition_id=exhibition_id, turn_id=body.turn_id,
+                               trace_id=trace_id, status="cancelled", match_type="dify", speak_mode="direct")
+    scope = f"opentalking:dify:context:{body.session_id}:{exhibition_id}:{client.identity}"
+    cached = await r.get(scope)
+    try:
+        previous = json.loads(cached) if cached else {}
+    except (ValueError, TypeError):
+        previous = {}
+    started = time.perf_counter()
+    try:
+        result = lookup(store, exhibition_id, body.question, selected_entity_id=body.selected_entity_id,
+                        previous_ids=previous.get("entity_ids", []), top_k=int(getattr(settings, "dify_chat_top_k", 5)))
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="entity not found in exhibition") from exc
+    except Exception:
+        log.exception("Database lookup failed: trace=%s", trace_id)
+        from apps.api.services.exhibition_lookup import LookupResult
+        result = LookupResult(status="error")
+    lookup_ms = round((time.perf_counter() - started) * 1000)
+    context = json.dumps(result.context(), ensure_ascii=False)
+    if len(context) > 16000:
+        # Drop trailing candidates as whole records; never truncate JSON.
+        while len(context) > 16000 and result.items:
+            result.items.pop()
+            context = json.dumps(result.context(), ensure_ascii=False)
+    error_code = None
+    user = f"humantalk-{body.session_id}"
+    async def is_current() -> bool:
+        return await same_turn(r, body.session_id, token)
 
-    response_answer = decision.answer
-    speech_text = decision.answer if decision.speak_mode == "direct" else body.question
-    if redis_client is not None and speech_text:
-        is_vidu = str((session or {}).get("model") or "").strip().lower() == "vidu"
-        if is_vidu:
-            try:
-                if decision.speak_mode == "agent":
-                    response_answer = await _generate_vidu_answer(
-                        settings=settings,
-                        redis_client=redis_client,
-                        session_id=body.session_id,
-                        question=body.question,
-                        locale=body.locale,
-                        knowledge_context=decision.knowledge_context,
-                    )
-                elif response_answer:
-                    history = await _load_vidu_history(redis_client, body.session_id)
-                    await _save_vidu_history(
-                        redis_client,
-                        body.session_id,
-                        [
-                            *history,
-                            {"role": "user", "content": body.question.strip()},
-                            {"role": "assistant", "content": response_answer},
-                        ],
-                    )
-                if response_answer:
-                    await _speak_vidu_answer(
-                        request=request,
-                        redis_client=redis_client,
-                        session_id=body.session_id,
-                        text=response_answer,
-                    )
-            except ViduServiceError as exc:
-                log.exception(
-                    "Vidu Q&A delivery failed: session=%s trace_id=%s",
-                    body.session_id,
-                    trace_id,
-                )
-                raise HTTPException(
-                    status_code=502,
-                    detail={"code": "VIDU_QA_DELIVERY_FAILED"},
-                ) from exc
-            except Exception as exc:  # noqa: BLE001
-                log.exception(
-                    "Vidu Q&A generation failed: session=%s trace_id=%s",
-                    body.session_id,
-                    trace_id,
-                )
-                await session_service.update_session_state(redis_client, body.session_id, "ready")
-                await publish_event(
-                    redis_client,
-                    body.session_id,
-                    "error",
-                    {"code": "QA_GENERATION_FAILED", "message": "问答服务暂时不可用，请稍后重试"},
-                )
-                raise HTTPException(
-                    status_code=502,
-                    detail={"code": "QA_GENERATION_FAILED"},
-                ) from exc
-        else:
-            await session_service.speak(
-                redis_client,
-                body.session_id,
-                speech_text,
-                voice=body.voice,
-                tts_provider=body.tts_provider,
-                tts_model=body.tts_model,
-                direct=decision.speak_mode == "direct",
-                knowledge_context=decision.knowledge_context,
-                turn_id=body.turn_id,
-                trace_id=trace_id,
-            )
-
-    return QaQueryResponse(
-        session_id=body.session_id,
-        exhibition_id=resolved_exhibition_id,
-        turn_id=body.turn_id,
-        trace_id=trace_id,
-        match_type=decision.match_type,  # type: ignore[arg-type]
-        speak_mode=decision.speak_mode,  # type: ignore[arg-type]
-        answer=response_answer,
-        need_clarification=decision.need_clarification,
-        clarification_question=decision.clarification_question,
-        sources=[
-            QaSourceResponse(
-                id=source.id,
-                title=source.title,
-                excerpt=source.content[:300],
-                score=source.score,
-                document_id=source.document_id,
-                knowledge_base_id=source.knowledge_base_id,
-                namespace_id=source.namespace_id,
-            )
-            for source in decision.sources
-        ],
-        score=decision.score,
-        error_code=decision.error_code,
-    )
+    answer = database_answer(result, body.question, body.locale)
+    used_database = bool(answer)
+    reply = None
+    try:
+        if not used_database:
+            reply = await manager.run(body.session_id, client.chat(
+                question=body.question,
+                inputs={"exhibition_id": exhibition_id, "locale": body.locale,
+                        "retrieval_status": result.status, "retrieval_context": context},
+                user=user, conversation_id=previous.get("conversation_id", ""), is_current=is_current))
+            answer = reply.answer
+    except asyncio.CancelledError:
+        return QaQueryResponse(session_id=body.session_id, exhibition_id=exhibition_id, turn_id=body.turn_id,
+                               trace_id=trace_id, status="cancelled", match_type="dify", speak_mode="direct")
+    except DifyChatError as exc:
+        error_code = exc.code
+        answer = ("The Q&A service is temporarily unavailable. Please try again later or ask the staff."
+                  if body.locale == "en-US" else "问答服务暂时不可用，请稍后重试或咨询现场工作人员。")
+        reply = None
+    if not await same_turn(r, body.session_id, token):
+        return QaQueryResponse(session_id=body.session_id, exhibition_id=exhibition_id, turn_id=body.turn_id,
+                               trace_id=trace_id, status="cancelled", match_type="dify", speak_mode="direct")
+    if reply or used_database:
+        await save_context(r, body.session_id, token, scope,
+                           json.dumps({"conversation_id": reply.conversation_id if reply else previous.get("conversation_id", ""),
+                                       "entity_ids": result.entity_ids}, ensure_ascii=False))
+    visible = public_exhibition_entities(exhibition_id, request)["items"]
+    related = [item for item in visible if item["id"] in result.entity_ids]
+    navigation = result.route if not error_code else None
+    if navigation:
+        navigation.update(language=body.locale, spoken_text=answer, subtitle_text=answer)
+        related = []
+    if str(session.get("model") or "").lower() == "vidu":
+        await _speak_vidu_answer(request=request, redis_client=r, session_id=body.session_id, text=answer, turn_token=token)
+    else:
+        await session_service.speak(r, body.session_id, answer, language=body.locale,
+                                    voice=body.voice, tts_provider=body.tts_provider, tts_model=body.tts_model,
+                                    direct=True, turn_id=body.turn_id, trace_id=trace_id,
+                                    interrupt_first=False, turn_token=token)
+    match_type = "retrieval_error" if error_code else "clarification" if result.status == "multiple" else "database" if used_database else "dify"
+    store.save_record("knowledge_hits", {"id": f"hit-{uuid.uuid4().hex}", "exhibitionId": exhibition_id,
+                      "question": body.question, "answer": answer, "turnId": body.turn_id, "traceId": trace_id,
+                      "provider": "database" if used_database else "dify_chat", "matchType": match_type, "retrievalStatus": result.status,
+                      "sourceIds": result.entity_ids, "lookupMs": lookup_ms,
+                      "totalMs": round((time.perf_counter() - started) * 1000), "errorCode": error_code}, exhibition_id)
+    return QaQueryResponse(session_id=body.session_id, exhibition_id=exhibition_id, turn_id=body.turn_id,
+                           trace_id=trace_id, match_type=match_type, speak_mode="direct", answer=answer,
+                           error_code=error_code, need_clarification=result.status == "multiple",
+                           clarification_question=answer if result.status == "multiple" else None,
+                           related_entities=related if not error_code else [], navigation=navigation,
+                           retrieval_status=result.status)

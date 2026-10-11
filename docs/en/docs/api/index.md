@@ -41,8 +41,12 @@ Identifier formats:
 
 ## Endpoint summary
 
+v2.6 routes exhibition questions through `POST /exhibitions/{exhibition_id}/qa/query`: exact database keyword hits speak directly; other questions use Dify. `POST /runtime-config/dify/test` checks saved application connectivity and requires administrator `system:llm:write` permission. Updating Dify fields through `POST /runtime-config/apply` requires the same permission. See [Dify answer routing](../../developer-guide/dify-chat-v26.md).
+
 | Method | Path | Group |
 |--------|------|-------|
+| `POST` | `/exhibitions/{exhibition_id}/qa/query` | Exhibition Q&A |
+| `POST` | `/runtime-config/dify/test` | Dify configuration |
 | `GET` | `/health` | Health and Models |
 | `GET` | `/healthz` | Health and Models |
 | `GET` | `/queue/status` | Health and Models |

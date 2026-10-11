@@ -284,9 +284,12 @@ async def speak(
     knowledge_context: str | None = None,
     turn_id: str | None = None,
     trace_id: str | None = None,
+    interrupt_first: bool = True,
+    turn_token: str | None = None,
 ) -> None:
     # 新用户输入前先打断，避免上一条仍在推理/播报时排队等到结束才生效
-    await interrupt(r, sid)
+    if interrupt_first:
+        await interrupt(r, sid)
     task: dict[str, Any] = {
         "cmd": "speak",
         "session_id": sid,
@@ -310,7 +313,23 @@ async def speak(
         task["turn_id"] = turn_id
     if trace_id:
         task["trace_id"] = trace_id
-    await _push_task(r, task)
+    if turn_token:
+        from apps.api.services.dify_chat import turn_key, same_turn
+        from opentalking.core.in_memory_redis import InMemoryRedis
+
+        task["dify_turn_token"] = turn_token
+        # Atomic check + enqueue prevents an old completion overtaking a new turn.
+        if isinstance(r, InMemoryRedis):
+            if await same_turn(r, sid, turn_token):
+                await _push_task(r, task)
+        else:
+            await r.eval(
+                "if redis.call('GET', KEYS[1]) == ARGV[1] then "
+                "return redis.call('RPUSH', KEYS[2], ARGV[2]) else return 0 end",
+                2, turn_key(sid), TASK_QUEUE, turn_token, json.dumps(task, ensure_ascii=False),
+            )
+    else:
+        await _push_task(r, task)
 
 
 async def interrupt(r: redis.Redis, sid: str) -> None:

@@ -222,6 +222,7 @@ export type RuntimeConfigMem0 = {
 };
 
 export type RuntimeConfigResponse = {
+  dify_chat?: { base_url: string; api_key_set: boolean; timeout_sec: number; top_k: number };
   llm: RuntimeConfigLlm;
   stt: RuntimeConfigStt;
   tts: RuntimeConfigTts;
@@ -232,6 +233,10 @@ export type RuntimeConfigResponse = {
 };
 
 export type RuntimeConfigApplyInput = {
+  dify_chat_base_url?: string;
+  dify_chat_api_key?: string;
+  dify_chat_timeout_sec?: number;
+  dify_chat_top_k?: number;
   llm_base_url?: string;
   llm_model?: string;
   llm_api_key?: string;
@@ -260,7 +265,23 @@ export async function loadRuntimeConfig(): Promise<RuntimeConfigResponse> {
 }
 
 export async function applyRuntimeConfig(input: RuntimeConfigApplyInput): Promise<RuntimeConfigResponse> {
-  return apiPost<RuntimeConfigResponse>("/runtime-config/apply", input);
+  const response = await fetch(buildApiUrl("/runtime-config/apply"), {
+    method: "POST", headers: adminRuntimeHeaders(), body: JSON.stringify(input),
+  });
+  await throwIfNotOk(response);
+  return response.json();
+}
+
+function adminRuntimeHeaders(): Record<string, string> {
+  let token = "";
+  try { token = JSON.parse(window.localStorage.getItem("opentalking-admin-session") || "{}").token || ""; } catch { /* no session */ }
+  return { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) };
+}
+
+export async function testDifyConnection(): Promise<{ name: string; compatible: boolean; missing_variables: string[] }> {
+  const response = await fetch(buildApiUrl("/runtime-config/dify/test"), { method: "POST", headers: adminRuntimeHeaders() });
+  await throwIfNotOk(response);
+  return response.json();
 }
 
 export type ExportVideoKind = "realtime_dialogue" | "video_clone" | "video_creation";

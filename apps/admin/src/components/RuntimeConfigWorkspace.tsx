@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { DifyConfig } from "./DifyConfig";
 import type { RuntimeConfigApplyInput, RuntimeConfigResponse } from "../lib/api";
 import type { TtsProviderExtended } from "../constants/ttsBailian";
 
@@ -329,6 +330,7 @@ export function RuntimeConfigWorkspace({
   return (
     <main className="min-h-0 flex-1 overflow-y-auto bg-slate-100">
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-4 p-4 lg:p-6">
+        <DifyConfig config={runtimeConfig} onApply={onRuntimeConfigApply} applying={runtimeConfigApplying} />
         <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(20rem,0.9fr)]">
           <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm shadow-slate-200/60">
             <div className="mb-4 flex items-center justify-between gap-2">
