@@ -83,6 +83,11 @@ def test_route_followup_keeps_route_id_and_checks_origin_again():
     result = lookup(store, "expo", "第二条路线", previous_route_ids=["absent", "r"], origin_point_id="east")
     assert result.route_ids == ["r"] and result.route["route_id"] == "r"
     assert lookup(store, "expo", "怎么去具身科学", origin_point_id="west").route is None
+    pending = lookup(store, "expo", "怎么去科技展台")
+    assert pending.destination_id == "booth"
+    continued = lookup(store, "expo", "我在东门", pending_destination_id=pending.destination_id)
+    assert continued.reason == "route_valid" and continued.route_ids == ["r"]
+    assert lookup(store, "expo", "介绍东门", pending_destination_id="booth").intent == "intro"
 
 
 def test_listing_truncation_translation_and_image_cleanup():

@@ -641,7 +641,8 @@ async def query_exhibition_qa(exhibition_id: str, body: QaQueryRequest, request:
         result = lookup(store, exhibition_id, body.question, selected_entity_id=body.selected_entity_id,
                         previous_ids=previous.get("entity_ids", []), top_k=int(getattr(settings, "dify_chat_top_k", 5)),
                         origin_point_id=body.origin_point_id, previous_route_ids=previous.get("route_ids", []),
-                        previous_origin_id=previous.get("destination_id", ""))
+                        previous_origin_id=previous.get("destination_id", ""),
+                        pending_destination_id=previous.get("destination_id", "") if previous.get("routing_reason") == "route_origin_required" else "")
     except ValueError as exc:
         raise HTTPException(status_code=404, detail="entity not found in exhibition") from exc
     except Exception:
@@ -713,7 +714,7 @@ async def query_exhibition_qa(exhibition_id: str, body: QaQueryRequest, request:
         await save_context(r, body.session_id, token, scope,
                            json.dumps({"conversation_id": reply.conversation_id if reply else previous.get("conversation_id", ""),
                                        "entity_ids": result.entity_ids, "route_ids": result.route_ids,
-                                       "destination_id": result.destination_id}, ensure_ascii=False))
+                                       "destination_id": result.destination_id, "routing_reason": result.reason}, ensure_ascii=False))
     navigation = result.route if not error_code and result.reason == "route_valid" else None
     if navigation:
         navigation.update(language=body.locale, spoken_text=answer, subtitle_text=answer)

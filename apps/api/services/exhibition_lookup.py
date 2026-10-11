@@ -128,7 +128,8 @@ class LookupResult:
 
 def lookup(store: Any, exhibition_id: str, question: str, *, selected_entity_id: str | None = None,
            previous_ids: list[str] | None = None, top_k: int = 5, origin_point_id: str | None = None,
-           previous_route_ids: list[str] | None = None, previous_origin_id: str = "") -> LookupResult:
+           previous_route_ids: list[str] | None = None, previous_origin_id: str = "",
+           pending_destination_id: str = "") -> LookupResult:
     top_k = max(1, min(top_k, 8))
     query = normalize(question)
     raw = {kind: [r for r in store.list_records(kind, exhibition_id=exhibition_id) if published(r)]
@@ -139,6 +140,17 @@ def lookup(store: Any, exhibition_id: str, question: str, *, selected_entity_id:
     by_id = {str(r["id"]): (kind, r) for kind, r in content}
     by_id.update({str(r["id"]): ("route", r) for r in raw["routes"]})
     intent = classify(question)
+    destination_override = ""
+    if intent == "unknown" and pending_destination_id in points:
+        # A short answer to "where are you starting?" continues the pending route.
+        origin_answers = [p for p in points.values() if rank(question, p)[0] == 1]
+        if len(origin_answers) == 1:
+            point = origin_answers[0]
+            short = re.sub(r"我现在在|我在|现在在|这里是|从|出发|在", "", query)
+            if short in terms(point):
+                origin_point_id = str(point["id"])
+                destination_override = str(points[pending_destination_id].get("name") or "")
+                intent = "route"
     config = store.get_record("runtime_configs", exhibition_id) or {}
     if intent == "unknown" and any(occurrences(question, str(word)) for word in (config.get("keywords") or {}).get("navigation", [])):
         intent = "route"
@@ -182,8 +194,9 @@ def lookup(store: Any, exhibition_id: str, question: str, *, selected_entity_id:
         candidates = []
     listing = intent == "list"
     generic = bool(re.fullmatch(r"(?:当前展会|本展会|展会|请|请问|都|全部|所有|有|哪些|什么|列出|展商|展品|产品|场馆|的|？|\?|。|\s)+", question))
+    generic = generic or bool(re.fullmatch(r"(?:what|which|list|all|the|current|this|at|are|available|exhibition|exhibitors|exhibits|products|venues|please|[?!.\s])+", question, re.I))
     if not candidates and listing and generic:
-        kind = "exhibitor" if "展商" in question or "exhibitor" in question.lower() else "exhibit" if "展品" in question or "exhibit" in question.lower() else "venue" if "场馆" in question else ""
+        kind = "exhibitor" if "展商" in question or "exhibitor" in question.lower() else "exhibit" if "展品" in question or "产品" in question or re.search(r"exhibit|product", question, re.I) else "venue" if "场馆" in question or "venue" in question.lower() else ""
         candidates = [(k, r) for k, r in content if k == kind]
     if intent == "unknown" and (selected or any(query in terms(r) for _, r in candidates)):
         intent = "intro"
@@ -223,6 +236,7 @@ def lookup(store: Any, exhibition_id: str, question: str, *, selected_entity_id:
     if route_intent:
         origin, destination_question = resolve_origin(question, points, origin_point_id,
                                                      config, previous_origin_id)
+        destination_question = destination_override or destination_question
         if origin.startswith("!"):
             result.reason = origin[1:]
             return result
@@ -274,6 +288,8 @@ def lookup(store: Any, exhibition_id: str, question: str, *, selected_entity_id:
             elif ranked_routes:
                 result.reason = "route_origin_required"
                 result.route_ids = [str(row[1]["id"]) for row in ranked_routes[:top_k]]
+                destinations = {str(row[1]["pointIds"][-1]) for row in ranked_routes}
+                result.destination_id = next(iter(destinations)) if len(destinations) == 1 else ""
                 return result
         had_routes = bool(ranked_routes)
         if origin:
@@ -348,7 +364,8 @@ def database_answer(result: LookupResult, question: str, locale: str) -> str:
     if result.intent == "list" and len(result.items) > 1:
         if locale == "en-US" and any(re.search(r"[\u4e00-\u9fff]", str(i.get("name", ""))) for i in result.items):
             return ""
-        return "当前展会有：" + "、".join(str(i.get("name", "")) for i in result.items) + "。"
+        names = [str(i.get("name", "")) for i in result.items]
+        return "Available at this exhibition: " + ", ".join(names) + "." if locale == "en-US" else "当前展会有：" + "、".join(names) + "。"
     if len(result.items) != 1:
         return ""
     item = result.items[0]

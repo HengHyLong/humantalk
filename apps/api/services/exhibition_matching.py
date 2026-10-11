@@ -53,7 +53,7 @@ def classify(question: str) -> str:
         return "comparison"
     if re.search(r"价格|多少钱|收费|成立|优点|缺点|推荐|为什么|原因|几个|多少|预约|预订|price|cost|pros|cons|recommend|why|how many|founded|book", question, re.I):
         return "knowledge"
-    if re.search(r"有哪些|有什么|列出|list|which exhibitors|what exhibitors|what exhibits", question, re.I):
+    if re.search(r"有哪些|有什么|列出|\blist\b|(?:which|what) (?:exhibitors|exhibits|products|venues)", question, re.I):
         return "list"
     if re.search(r"在哪|哪里|展位|位置|地址|where|location|booth|address", question, re.I):
         return "location"
