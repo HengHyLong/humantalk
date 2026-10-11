@@ -1431,6 +1431,10 @@ def _validate_record(store: AdminStore, kind: str, data: dict[str, Any], record_
             raise HTTPException(status_code=400, detail={"code": "ROUTE_KEYWORD_INVALID", "detail": "单个路线关键词或别名不能超过 100 个字符"})
         data["spokenText"] = str(data.get("spokenText") or data.get("spoken_text") or "").strip()[:4000]
         data["fuzzyMatch"] = bool(data.get("fuzzyMatch", data.get("fuzzy_match", True)))
+        from apps.api.services.exhibition_matching import route_issues
+        issues = route_issues(data, {str(p["id"]): p for p in store.list_records("points", exhibition_id=exhibition_id)})
+        if issues:
+            raise HTTPException(status_code=400, detail={"code": "ROUTE_CONFIG_CONFLICT", "detail": "路线名称、终点或点位配置不一致", "issues": issues})
     if kind == "exhibits":
         exhibitor = _record(store, "exhibitors", str(data.get("exhibitorId")))
         if _event_exhibition_id(exhibitor) != exhibition_id:
@@ -2079,6 +2083,14 @@ def save_runtime_config(record_id: str, request: Request, body: RecordBody, auth
     _require(store, auth, "event:exhibition")
     _record(store, "exhibitions", record_id)
     before = store.get_record("runtime_configs", record_id)
+    errors = _runtime_keyword_errors(body.data)
+    if errors:
+        raise HTTPException(status_code=400, detail="；".join(errors))
+    terminal = body.data.get("terminalPointId")
+    if terminal:
+        point = store.get_record("points", str(terminal))
+        if not point or _event_exhibition_id(point) != record_id or point.get("status") in {"inactive", "offline", "deleted", "cancelled"}:
+            raise HTTPException(status_code=400, detail="终端起点必须属于本展会且可用")
     saved = store.save_record("runtime_configs", {**body.data, "id": record_id, "exhibitionId": record_id}, record_id)
     _audit(request, auth, action="update", resource_type="runtime_config", resource_id=record_id, before=before, after=saved)
     return saved
@@ -2089,10 +2101,23 @@ def validate_runtime_config(record_id: str, request: Request, body: RecordBody, 
     store = get_store(request)
     _require(store, auth, "event:exhibition")
     _record(store, "exhibitions", record_id)
+    errors = _runtime_keyword_errors(body.data)
+    from apps.api.services.exhibition_audit import audit_configuration
+    issues = audit_configuration(store, record_id, body.data)
+    errors.extend(issue["message"] for issue in issues if issue["severity"] == "error")
+    return {"valid": not errors, "errors": errors, "issues": issues}
+
+
+def _runtime_keyword_errors(data: dict) -> list[str]:
+    keywords = data.get("keywords") or {}
+    if not isinstance(keywords, dict):
+        return ["keywords 必须是对象"]
     errors = []
-    if not isinstance(body.data.get("keywords", {}).get("navigation", []), list):
-        errors.append("keywords.navigation 必须是数组")
-    return {"valid": not errors, "errors": errors}
+    for key in ("navigation", "exhibition_content"):
+        words = keywords.get(key, [])
+        if not isinstance(words, list) or len(words) > 30 or any(not isinstance(w, str) or not w.strip() or len(w) > 100 for w in words):
+            errors.append(f"keywords.{key} 必须是最多 30 项的非空字符串数组，每项最多 100 字")
+    return errors
 
 
 INTERACTION_RESOURCES = {"welcome-configs": "interaction_welcome", "explain-flows": "interaction_explain", "shopping-strategies": "interaction_shopping"}

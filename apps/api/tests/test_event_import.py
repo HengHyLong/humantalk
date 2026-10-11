@@ -122,8 +122,18 @@ def test_import_validates_relations_before_commit(tmp_path) -> None:
         assert any("展商" in item["message"] for item in response.json()["errors"])
 
 
-def test_imports_knowledge_materials_and_public_qa_uses_documents(tmp_path) -> None:
+def test_imports_knowledge_materials_and_public_qa_uses_dify(tmp_path, monkeypatch) -> None:
+    from opentalking.core.in_memory_redis import InMemoryRedis
+    from apps.api.services.dify_chat import DifyChatClient, ChatReply
+    async def session(*args):
+        return {"state": "ready", "model": "mock"}
+    async def chat(self, **kwargs):
+        assert kwargs["question"] == "一号馆入口西侧有什么服务？"
+        return ChatReply("服务中心位于一号馆入口西侧，提供咨询和失物招领。", "conversation")
+    monkeypatch.setattr(qa_routes.session_service, "get_session", session)
+    monkeypatch.setattr(DifyChatClient, "chat", chat)
     with _client(tmp_path) as client:
+        client.app.state.redis = InMemoryRedis()
         headers = _headers(client)
         workbook = _workbook()
         _append(workbook, "知识库", {"id": "kb-expo", "exhibition_id": "expo-test", "name": "测试展会知识库"})
@@ -143,8 +153,9 @@ def test_imports_knowledge_materials_and_public_qa_uses_documents(tmp_path) -> N
             json={"session_id": "demo", "turn_id": "turn-doc", "question": "一号馆入口西侧有什么服务？"},
         )
         assert rag.status_code == 200
-        assert rag.json()["match_type"] == "rag"
-        assert rag.json()["sources"][0]["title"] == "服务指南"
+        assert rag.json()["match_type"] == "dify"
+        assert rag.json()["speak_mode"] == "direct"
+        assert "失物招领" in rag.json()["answer"]
 
 
 def test_zip_images_are_stored_and_route_points_are_ordered(tmp_path) -> None:

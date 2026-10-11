@@ -478,6 +478,7 @@ export type ExhibitionQaQueryRequest = {
   turn_id: string;
   question: string;
   selected_entity_id?: string;
+  origin_point_id?: string;
   knowledge_base_ids?: string[];
   locale?: string;
   voice?: string;
@@ -502,6 +503,8 @@ export type ExhibitionQaQueryResponse = {
   related_entities?: ExhibitionEntityCard[];
   navigation?: NavigationResult | null;
   retrieval_status?: string;
+  routing_reason?: string;
+  registration?: { strategy_id: string; exhibit_id: string; title: string; path: string; spoken_text: string } | null;
 };
 
 export async function queryExhibitionQa(

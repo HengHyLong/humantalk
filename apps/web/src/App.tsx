@@ -3035,6 +3035,13 @@ export default function App() {
       });
       if (sequence !== difyRequestSequenceRef.current || result.status === "cancelled") return;
       setNavigationResult(result.navigation ?? null);
+      if (result.registration) {
+        const url = new URL(result.registration.path, window.location.origin).toString();
+        const { toDataURL } = await import("qrcode");
+        const qrDataUrl = await toDataURL(url, { width: 360, margin: 2 });
+        if (sequence !== difyRequestSequenceRef.current) return;
+        setShoppingRegistration({ ...result.registration, url, qrDataUrl });
+      }
       setLastVoiceIntent(result.navigation ? "navigation" : result.related_entities?.length ? "exhibition_content" : null);
       setMessages((prev) => prev.map((message) => message.id === pendingId ? {
         ...message, text: result.answer || (englishConversation ? "Preparing a response..." : "正在准备回复..."),

@@ -754,6 +754,10 @@ function normalizeWakeActiveSeconds(value: unknown): number {
 }
 
 export class FetchAdminApiClient implements AdminApiClient {
+  exhibitionMatchingConfig<T>(exhibitionId: string, method: "GET" | "PUT" | "POST", data?: unknown): Promise<T> {
+    const path = `/admin/event/exhibitions/${encodeURIComponent(exhibitionId)}/runtime-config${method === "POST" ? "/validate" : ""}`;
+    return this.request<T>(path, { method, ...(data === undefined ? {} : { body: JSON.stringify({ data }) }) });
+  }
   private refreshPromise: Promise<string> | null = null;
   private lastRefreshAttemptAt = 0;
 

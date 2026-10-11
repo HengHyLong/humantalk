@@ -24,7 +24,7 @@ from apps.api.services.exhibition_qa import (
 )
 from opentalking.runtime.bus import publish_event
 from apps.api.services.dify_chat import DifyChatClient, DifyChatError, turns_for, turn_key, same_turn, save_context
-from apps.api.services.exhibition_lookup import lookup, database_answer
+from apps.api.services.exhibition_lookup import lookup, database_answer, service_answer
 
 
 router = APIRouter(prefix="/exhibitions", tags=["exhibition-qa"])
@@ -50,6 +50,7 @@ class QaQueryRequest(BaseModel):
     tts_model: str | None = None
     knowledge_base_ids: list[str] | None = Field(default=None, max_length=16)
     selected_entity_id: str | None = Field(default=None, max_length=128)
+    origin_point_id: str | None = Field(default=None, max_length=128)
 
 
 class QaSourceResponse(BaseModel):
@@ -81,6 +82,8 @@ class QaQueryResponse(BaseModel):
     related_entities: list[dict] = Field(default_factory=list)
     navigation: dict | None = None
     retrieval_status: str | None = None
+    routing_reason: str | None = None
+    registration: dict | None = None
 
 
 def _setting(settings: object, name: str, default: object) -> object:
@@ -636,26 +639,55 @@ async def query_exhibition_qa(exhibition_id: str, body: QaQueryRequest, request:
     started = time.perf_counter()
     try:
         result = lookup(store, exhibition_id, body.question, selected_entity_id=body.selected_entity_id,
-                        previous_ids=previous.get("entity_ids", []), top_k=int(getattr(settings, "dify_chat_top_k", 5)))
+                        previous_ids=previous.get("entity_ids", []), top_k=int(getattr(settings, "dify_chat_top_k", 5)),
+                        origin_point_id=body.origin_point_id, previous_route_ids=previous.get("route_ids", []),
+                        previous_origin_id=previous.get("destination_id", ""))
     except ValueError as exc:
         raise HTTPException(status_code=404, detail="entity not found in exhibition") from exc
     except Exception:
         log.exception("Database lookup failed: trace=%s", trace_id)
         from apps.api.services.exhibition_lookup import LookupResult
-        result = LookupResult(status="error")
+        result = LookupResult(status="error", reason="database_error")
     lookup_ms = round((time.perf_counter() - started) * 1000)
-    context = json.dumps(result.context(), ensure_ascii=False)
+    from apps.api.services.exhibition_lookup import fact
+    def retrieval_context() -> str:
+        return json.dumps({**result.context(), "current_exhibition": fact(store.get_record("exhibitions", exhibition_id) or {}, "exhibition")}, ensure_ascii=False)
+    context = retrieval_context()
     if len(context) > 16000:
         # Drop trailing candidates as whole records; never truncate JSON.
         while len(context) > 16000 and result.items:
             result.items.pop()
-            context = json.dumps(result.context(), ensure_ascii=False)
+            retained = {str(i.get("id")) for i in result.items}
+            result.entity_ids = [eid for eid in result.entity_ids if eid in retained]
+            result.route_ids = [rid for rid in result.route_ids if rid in retained]
+            result.truncated = True
+            result.reason = "incomplete_results"
+            context = retrieval_context()
     error_code = None
     user = f"humantalk-{body.session_id}"
     async def is_current() -> bool:
         return await same_turn(r, body.session_id, token)
 
-    answer = database_answer(result, body.question, body.locale)
+    visible = public_exhibition_entities(exhibition_id, request)["items"]
+    related = [item for entity_id in result.entity_ids for item in visible if item["id"] == entity_id]
+    registration = None
+    answer = service_answer(result, body.locale)
+    used_service = bool(answer)
+    if result.reason == "registration_request":
+        card = related[0] if len(related) == 1 else {}
+        if card.get("survey_path"):
+            registration = {"strategy_id": "exhibit-survey", "exhibit_id": card["id"], "title": card["name"],
+                            "path": card["survey_path"], "spoken_text": "Please scan the QR code to register." if body.locale == "en-US" else "请使用手机扫码完成登记。"}
+            answer = registration["spoken_text"]
+        else:
+            answer = "Registration is not configured for this exhibit. Please ask the staff." if body.locale == "en-US" else "该展品暂未配置登记入口，请咨询现场工作人员。"
+            result.reason = "registration_unavailable"
+        used_service = True
+    if not answer:
+        answer = database_answer(result, body.question, body.locale)
+        if not answer and result.reason == "exact_match":
+            result.reason = "translation_required" if body.locale == "en-US" else "answer_field_missing"
+            context = retrieval_context()
     used_database = bool(answer)
     reply = None
     try:
@@ -680,10 +712,9 @@ async def query_exhibition_qa(exhibition_id: str, body: QaQueryRequest, request:
     if reply or used_database:
         await save_context(r, body.session_id, token, scope,
                            json.dumps({"conversation_id": reply.conversation_id if reply else previous.get("conversation_id", ""),
-                                       "entity_ids": result.entity_ids}, ensure_ascii=False))
-    visible = public_exhibition_entities(exhibition_id, request)["items"]
-    related = [item for item in visible if item["id"] in result.entity_ids]
-    navigation = result.route if not error_code else None
+                                       "entity_ids": result.entity_ids, "route_ids": result.route_ids,
+                                       "destination_id": result.destination_id}, ensure_ascii=False))
+    navigation = result.route if not error_code and result.reason == "route_valid" else None
     if navigation:
         navigation.update(language=body.locale, spoken_text=answer, subtitle_text=answer)
         related = []
@@ -694,15 +725,19 @@ async def query_exhibition_qa(exhibition_id: str, body: QaQueryRequest, request:
                                     voice=body.voice, tts_provider=body.tts_provider, tts_model=body.tts_model,
                                     direct=True, turn_id=body.turn_id, trace_id=trace_id,
                                     interrupt_first=False, turn_token=token)
-    match_type = "retrieval_error" if error_code else "clarification" if result.status == "multiple" else "database" if used_database else "dify"
+    clarification = result.status == "multiple" or (used_service and registration is None)
+    match_type = "retrieval_error" if error_code else "clarification" if clarification else "database" if used_database else "dify"
     store.save_record("knowledge_hits", {"id": f"hit-{uuid.uuid4().hex}", "exhibitionId": exhibition_id,
                       "question": body.question, "answer": answer, "turnId": body.turn_id, "traceId": trace_id,
                       "provider": "database" if used_database else "dify_chat", "matchType": match_type, "retrievalStatus": result.status,
                       "sourceIds": result.entity_ids, "lookupMs": lookup_ms,
+                      "routingReason": result.reason, "intent": result.intent, "matches": result.matches,
+                      "originId": result.origin_id, "destinationId": result.destination_id, "routeIds": result.route_ids,
+                      "truncated": result.truncated, "decisionSource": "rule" if used_service else "database" if used_database else "dify",
                       "totalMs": round((time.perf_counter() - started) * 1000), "errorCode": error_code}, exhibition_id)
     return QaQueryResponse(session_id=body.session_id, exhibition_id=exhibition_id, turn_id=body.turn_id,
                            trace_id=trace_id, match_type=match_type, speak_mode="direct", answer=answer,
-                           error_code=error_code, need_clarification=result.status == "multiple",
-                           clarification_question=answer if result.status == "multiple" else None,
+                           error_code=error_code, need_clarification=clarification,
+                           clarification_question=answer if clarification else None,
                            related_entities=related if not error_code else [], navigation=navigation,
-                           retrieval_status=result.status)
+                           retrieval_status=result.status, routing_reason=result.reason, registration=registration)

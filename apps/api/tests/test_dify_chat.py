@@ -21,6 +21,7 @@ from opentalking.runtime.task_consumer import handle_worker_task
 def business_store(tmp_path):
     store = AdminStore(tmp_path / "admin.db", initialize_defaults=False)
     store.save_record("exhibitions", {"id": "expo", "name": "测试展会", "isCurrent": True})
+    store.save_record("runtime_configs", {"id": "expo", "exhibitionId": "expo", "terminalPointId": "entry"}, "expo")
     for kind, record in [
         ("exhibitors", {"id": "vendor", "name": "测试科技", "boothCode": "A01", "status": "active", "phone": "secret-phone"}),
         ("exhibits", {"id": "product", "name": "智能机器人", "aliases": ["小智"], "exhibitorId": "vendor", "status": "published"}),
@@ -249,3 +250,43 @@ def test_dify_fallback_multiturn_and_database_turn_keeps_conversation(tmp_path, 
     assert len(calls) == 2
     assert calls[1]["conversation_id"] == "conversation-one"
     assert json.loads(calls[1]["inputs"]["retrieval_context"])["items"][0]["booth_code"] == "A01"
+
+
+@pytest.mark.parametrize("question,locale,reason", [("测试科技多少钱", "zh-CN", "unsupported_intent"), ("测试科技在哪", "en-US", "translation_required")])
+def test_unsupported_intent_and_translation_reach_dify_with_current_facts(tmp_path, monkeypatch, question, locale, reason):
+    app = FastAPI()
+    app.state.settings = SimpleNamespace(dify_chat_base_url="https://dify.test/v1", dify_chat_api_key="app-test")
+    app.state.admin_store = business_store(tmp_path)
+    app.state.redis = InMemoryRedis()
+    app.include_router(qa.router)
+    async def session(*args):
+        return {"state": "ready", "model": "mock"}
+    async def chat(self, **kwargs):
+        context = json.loads(kwargs["inputs"]["retrieval_context"])
+        assert context["routing_reason"] == reason
+        assert context["current_exhibition"]["id"] == "expo"
+        assert context["items"][0]["booth_code"] == "A01"
+        return ChatReply("validated answer", "conversation")
+    monkeypatch.setattr(qa.session_service, "get_session", session)
+    monkeypatch.setattr(DifyChatClient, "chat", chat)
+    r = TestClient(app).post("/exhibitions/expo/qa/query", json={"session_id": "sid", "turn_id": "turn", "question": question, "locale": locale})
+    assert r.status_code == 200 and r.json()["match_type"] == "dify"
+    assert r.json()["routing_reason"] == reason
+
+
+def test_route_configuration_clarification_skips_dify(tmp_path, monkeypatch):
+    app = FastAPI()
+    app.state.settings = SimpleNamespace(dify_chat_base_url="", dify_chat_api_key="")
+    app.state.admin_store = business_store(tmp_path)
+    app.state.redis = InMemoryRedis()
+    app.include_router(qa.router)
+    async def session(*args):
+        return {"state": "ready", "model": "mock"}
+    async def chat(*args, **kwargs):
+        pytest.fail("invalid route must not call Dify")
+    monkeypatch.setattr(qa.session_service, "get_session", session)
+    monkeypatch.setattr(DifyChatClient, "chat", chat)
+    r = TestClient(app).post("/exhibitions/expo/qa/query", json={"session_id": "sid", "turn_id": "turn", "question": "从酒店到测试科技"})
+    assert r.status_code == 200
+    assert r.json()["routing_reason"] == "route_origin_unknown"
+    assert r.json()["need_clarification"] and r.json()["navigation"] is None
