@@ -408,8 +408,6 @@ def service_answer(result: LookupResult, locale: str) -> str:
         "route_origin_unknown": ("没有识别到有效的起点，请告诉我您当前所在的入口或展台。", "Please specify a known entrance or booth as your starting point."),
         "route_origin_required": ("请告诉我您从哪个入口或展台出发。", "Which entrance or booth are you starting from?"),
         "route_config_conflict": ("这条路线的名称、终点或点位配置不一致，暂时无法提供可靠导航，请咨询现场工作人员。", "This route has conflicting configuration. Please ask the staff for directions."),
-        "route_missing_from_origin": ("数据库没有从该起点到目的地的路线，请咨询现场工作人员。", "No route from this starting point is configured. Please ask the staff."),
-        "route_missing": ("数据库暂未配置该目的地的路线，请确认目的地或咨询现场工作人员。", "No route to this destination is configured. Please confirm the destination or ask the staff."),
         "route_multiple_destinations": ("您提到了多个目的地，请先选择一个目的地。", "Please select one destination first."),
         "exhibition_scope_mismatch": ("您提到的展会与当前展会不同，请先切换展会或确认要查询的展会。", "Please switch exhibitions or confirm which exhibition you want to ask about."),
     }

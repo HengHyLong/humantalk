@@ -252,6 +252,38 @@ def test_dify_fallback_multiturn_and_database_turn_keeps_conversation(tmp_path, 
     assert json.loads(calls[1]["inputs"]["retrieval_context"])["items"][0]["booth_code"] == "A01"
 
 
+def test_missing_database_route_reaches_dify(tmp_path, monkeypatch):
+    app = FastAPI()
+    app.state.settings = SimpleNamespace(dify_chat_base_url="https://dify.test/v1", dify_chat_api_key="app-test")
+    app.state.admin_store = business_store(tmp_path)
+    app.state.redis = InMemoryRedis()
+    app.include_router(qa.router)
+    calls = []
+
+    async def session(*args):
+        return {"state": "ready", "model": "mock"}
+
+    async def chat(self, **kwargs):
+        calls.append(kwargs)
+        return ChatReply("请按知识库中的科技馆导览指引前往。", "conversation-one")
+
+    monkeypatch.setattr(qa.session_service, "get_session", session)
+    monkeypatch.setattr(DifyChatClient, "chat", chat)
+    question = "科技馆怎么走"
+    assert lookup(app.state.admin_store, "expo", question).reason == "route_missing"
+
+    response = TestClient(app).post("/exhibitions/expo/qa/query", json={
+        "session_id": "sid", "turn_id": "turn", "question": question,
+    })
+    assert response.status_code == 200, response.text
+    assert response.json()["match_type"] == "dify"
+    assert response.json()["answer"] == "请按知识库中的科技馆导览指引前往。"
+    assert response.json()["navigation"] is None
+    assert len(calls) == 1
+    assert calls[0]["question"] == question
+    assert json.loads(calls[0]["inputs"]["retrieval_context"])["routing_reason"] == "route_missing"
+
+
 @pytest.mark.parametrize("question,locale,reason", [("测试科技多少钱", "zh-CN", "unsupported_intent"), ("测试科技在哪", "en-US", "translation_required")])
 def test_unsupported_intent_and_translation_reach_dify_with_current_facts(tmp_path, monkeypatch, question, locale, reason):
     app = FastAPI()
