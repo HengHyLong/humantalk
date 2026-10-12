@@ -338,6 +338,7 @@ def lookup(store: Any, exhibition_id: str, question: str, *, selected_entity_id:
                 _, route, route_points = route_matches[0]
                 result.destination_id = str(route["pointIds"][-1])
                 result.route = {"matched": True, "route_id": route["id"], "title": route.get("name", ""),
+                                "image_url": next(iter(values(route.get("imageUrls") or route.get("image_urls"))), None),
                                 "image_urls": values(route.get("imageUrls") or route.get("image_urls")),
                                 "spoken_text": "", "subtitle_text": "", "route": {
                                     "from": route_points[0].get("name", "") if route_points else "",

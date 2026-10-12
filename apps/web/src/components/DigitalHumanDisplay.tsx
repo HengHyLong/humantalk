@@ -8,6 +8,7 @@ import type {
   VoiceIntent,
 } from "../lib/api";
 import { buildApiUrl } from "../lib/api";
+import { resolveNavigationImage } from "../lib/navigationImage";
 import { isEnglishConversation, type ConversationLanguage } from "../lib/conversationLanguage";
 import { selectCurrentEntityPresentation } from "../lib/entityPresentation";
 import { selectCurrentConversation } from "../lib/currentConversation";
@@ -24,9 +25,8 @@ const PRESENTATION_AUTO_CLOSE_MS = 90_000;
 const CONVERSATION_IDLE_HIDE_MS = 90_000;
 const SIDE_CONTROLS_IDLE_HIDE_MS = 30_000;
 
-function navigationImageUrl(value: string): string {
-  const url = value.trim();
-  return url.startsWith("/scene-assets/") ? buildApiUrl(url) : url;
+function navigationImageUrl(navigation: NavigationResult): string {
+  return resolveNavigationImage(navigation, buildApiUrl);
 }
 
 type DigitalHumanDisplayProps = {
@@ -465,18 +465,18 @@ export function DigitalHumanDisplay({
                         >
                           ×
                         </button>
-                        {navigationResult.image_url ? (
+                        {navigationImageUrl(navigationResult) ? (
                             <button
                                 type="button"
                                 className="digital-display-zoom-trigger digital-display-navigation-image"
                                 onClick={() => openImageLightbox(
-                                    navigationImageUrl(navigationResult.image_url ?? ""),
+                                    navigationImageUrl(navigationResult),
                                     navigationResult.title || (english ? "Navigation map" : "导航示意图"),
                                 )}
                                 aria-label={english ? "Enlarge navigation map" : "放大查看导航示意图"}
                             >
                               <img
-                                  src={navigationImageUrl(navigationResult.image_url)}
+                                  src={navigationImageUrl(navigationResult)}
                                   alt={navigationResult.title || (english ? "Navigation map" : "导航示意图")}
                                   loading="lazy"
                                   onError={(event) => { event.currentTarget.parentElement?.style.setProperty("display", "none"); }}
@@ -644,18 +644,18 @@ export function DigitalHumanDisplay({
                               >
                                 ×
                               </button>
-                              {navigationResult.image_url ? (
+                              {navigationImageUrl(navigationResult) ? (
                                   <button
                                       type="button"
                                       className="digital-display-zoom-trigger digital-display-navigation-image"
                                       onClick={() => openImageLightbox(
-                                          navigationImageUrl(navigationResult.image_url ?? ""),
+                                          navigationImageUrl(navigationResult),
                                           navigationResult.title || (english ? "Navigation map" : "导航示意图"),
                                       )}
                                       aria-label={english ? "Enlarge navigation map" : "放大查看导航示意图"}
                                   >
                                     <img
-                                        src={navigationImageUrl(navigationResult.image_url)}
+                                        src={navigationImageUrl(navigationResult)}
                                         alt={navigationResult.title || (english ? "Navigation map" : "导航示意图")}
                                         loading="lazy"
                                         onError={(event) => { event.currentTarget.parentElement?.style.setProperty("display", "none"); }}

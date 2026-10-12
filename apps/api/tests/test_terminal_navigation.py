@@ -22,6 +22,7 @@ def test_terminal_route_uses_its_validated_start_and_route_image(question):
     result = lookup(route_store(), "expo", question)
     assert result.reason == "route_valid" and result.origin_id == "east"
     assert result.route["image_urls"] == ["/route-map.png"]
+    assert result.route["image_url"] == "/route-map.png"
     assert result.route["title"] == "终端至机器人展台"
     assert database_answer(result, question, "zh-CN") == "从东门出发，直走到机器人展台。"
 
@@ -71,6 +72,7 @@ def test_qa_route_popup_and_followup_are_navigation_not_entity_cards(tmp_path, m
         result = response.json()
         assert result["match_type"] == "database" and result["routing_reason"] == "route_valid"
         assert result["navigation"]["image_urls"] == ["/route-map.png"]
+        assert result["navigation"]["image_url"] == "/route-map.png"
         assert result["related_entities"] == []
     store.save_record("routes", {**route, "name": "入口至A01展位"}, "expo")
     response = client.post("/exhibitions/expo/qa/query", json={"session_id": "other", "turn_id": "t", "question": "去A01展位"})
