@@ -18,9 +18,9 @@ def route_store():
 
 
 @pytest.mark.parametrize("question", ["我想去机器人展台", "去机器人展台", "从终端去机器人展台", "从终端出发去机器人展台", "我想从这里到机器人展台"])
-def test_terminal_route_uses_its_validated_start_and_route_image(question):
+def test_terminal_route_starts_at_device_and_uses_configured_route_image(question):
     result = lookup(route_store(), "expo", question)
-    assert result.reason == "route_valid" and result.origin_id == "east"
+    assert result.reason == "route_valid" and result.route["route"]["from"] == "终端"
     assert result.route["image_urls"] == ["/route-map.png"]
     assert result.route["image_url"] == "/route-map.png"
     assert result.route["title"] == "终端至机器人展台"
@@ -33,23 +33,45 @@ def test_terminal_origin_followup_retains_destination():
     assert lookup(route_store(), "expo", "从这里出发", pending_destination_id="booth").reason == "route_valid"
 
 
-def test_terminal_inference_does_not_override_config_or_explicit_origin():
+@pytest.mark.parametrize("target,ids,copy", [
+    ("科技展台", ["tech", "booth"], "从此处直走50米至科技展台"),
+    ("东门", ["tech", "east"], "从此处直走50米到科技展台，再右转前往东门。"),
+    ("机器人展台", ["east", "tech", "booth"], "从东门前往科技展台，再左转到机器人展台。"),
+])
+def test_all_device_routes_use_declared_destination_copy_and_map(target, ids, copy):
+    store = route_store()
+    store.data["points"].append({"id": "tech", "name": "科技展台"})
+    store.data["routes"][0].update(name="终端至" + target, pointIds=ids, spokenText=copy)
+    for question in ["如何去" + target, "去" + target, "从终端出发去" + target]:
+        result = lookup(store, "expo", question)
+        assert result.reason == "route_valid"
+        assert result.route["route"]["from"] == "终端" and result.route["route"]["to"] == target
+        assert database_answer(result, question, "zh-CN") == copy
+        assert result.route["image_url"] == "/route-map.png"
+
+
+def test_terminal_instructions_ignore_waypoint_origin_but_respect_explicit_other_origins():
     store = route_store()
     assert lookup(store, "expo", "从不存在的地方去机器人展台").reason == "route_origin_unknown"
     assert lookup(store, "expo", "从西门去机器人展台").reason == "route_missing_from_origin"
     store.data["runtime_configs"] = [{"id": "expo", "terminalPointId": "west"}]
-    assert lookup(store, "expo", "我想去机器人展台").reason == "route_missing_from_origin"
+    assert lookup(store, "expo", "我想去机器人展台").reason == "route_valid"
     store.data["runtime_configs"][0]["terminalPointId"] = "missing"
-    assert lookup(store, "expo", "从终端去机器人展台").reason == "route_origin_unknown"
+    assert lookup(store, "expo", "从终端去机器人展台").reason == "route_valid"
+    assert lookup(store, "expo", "去机器人展台", origin_point_id="west").reason == "route_missing_from_origin"
 
 
-def test_conflicting_or_multiple_terminal_origins_are_not_guessed():
+def test_terminal_routes_use_curated_destination_and_keep_duplicate_routes_ambiguous():
     store = route_store()
     store.data["routes"][0]["pointIds"] = ["east", "west"]
-    assert lookup(store, "expo", "去机器人展台").reason == "route_config_conflict"
+    result = lookup(store, "expo", "去机器人展台")
+    assert result.reason == "route_valid" and result.route["route"]["to"] == "机器人展台"
     store = route_store()
     store.data["routes"].append({"id": "r2", "name": "终端至机器人展台", "pointIds": ["west", "booth"], "spokenText": "从西门到机器人展台。"})
-    assert lookup(store, "expo", "去机器人展台").reason == "route_origin_required"
+    result = lookup(store, "expo", "去机器人展台")
+    assert result.reason == "route_ambiguous" and result.route is None
+    selected = lookup(store, "expo", "第二条路线", previous_route_ids=result.route_ids)
+    assert selected.reason == "route_valid" and selected.route["route_id"] == "r2"
 
 
 def test_qa_route_popup_and_followup_are_navigation_not_entity_cards(tmp_path, monkeypatch):

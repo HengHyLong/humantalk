@@ -136,6 +136,7 @@ def lookup(store: Any, exhibition_id: str, question: str, *, selected_entity_id:
            previous_route_ids: list[str] | None = None, previous_origin_id: str = "",
            pending_destination_id: str = "") -> LookupResult:
     top_k = max(1, min(top_k, 8))
+    caller_origin = origin_point_id
     query = normalize(question)
     raw = {kind: [r for r in store.list_records(kind, exhibition_id=exhibition_id) if published(r)]
            for kind in ("exhibitors", "exhibits", "points", "venues", "routes", "schedules")}
@@ -244,6 +245,22 @@ def lookup(store: Any, exhibition_id: str, question: str, *, selected_entity_id:
             result.truncated = result.truncated or len(products) > top_k
         result.items.append(item)
     if route_intent:
+        # This application is a fixed exhibition terminal. Curated terminal
+        # routes are instructions from this device, not paths whose first
+        # waypoint must represent the device itself.
+        terminal_destination = destination_override or question
+        source = re.search(r"从(.+?)(?:到|去|前往)(.+)|\bfrom\s+(.+?)\s+to\s+(.+)", question, re.I)
+        explicit_other_origin = bool(caller_origin or re.search(r"继续|接着|下一站|continue|next stop", question, re.I))
+        if source:
+            origin_text = re.sub(r"(?:出发|开始)\s*$", "", (source[1] or source[3]).strip())
+            explicit_other_origin = explicit_other_origin or not bool(re.fullmatch(r"(?:这里|此处|当前位置|(?:当前|数字人|这个)?终端|here|terminal)", origin_text, re.I))
+            terminal_destination = source[2] or source[4]
+        destination_candidates = prune_nested(terminal_destination, [(k, record) for k, record in content if rank(terminal_destination, record)[0] == 1])
+        if not explicit_other_origin and len(destination_candidates) <= 1:
+            terminal_result = _configured_terminal_route(terminal_destination, raw["routes"], points, top_k,
+                                                         str(selected[1]["id"]) if selected and selected[0] == "route" else "")
+            if terminal_result is not None:
+                return terminal_result
         origin, destination_question = resolve_origin(question, points, origin_point_id,
                                                      config, previous_origin_id)
         terminal_requested = origin == "@terminal"
@@ -374,6 +391,49 @@ def lookup(store: Any, exhibition_id: str, question: str, *, selected_entity_id:
             result.status = "matched"
             result.total = 1
             result.reason = "exhibition_question"
+    return result
+
+
+def _configured_terminal_route(question: str, routes: list[dict], points: dict[str, dict], top_k: int, selected_route_id: str = "") -> LookupResult | None:
+    matches = []
+    for route in routes:
+        target = re.match(r"^(?:从)?(?:当前|数字人)?终端(?:出发)?(?:至|到|去)(.+)$", str(route.get("name") or ""))
+        if not target or route.get("type", "navigation") not in {"navigation", "tour"}:
+            continue
+        destination_name = target[1].strip()
+        destination_points = [p for p in points.values() if normalize(p.get("name")) == normalize(destination_name)]
+        aliases = [term for p in destination_points for _, term in term_fields(p)]
+        if selected_route_id:
+            if str(route["id"]) != selected_route_id:
+                continue
+        elif rank(question, route, [destination_name, *aliases])[0] != 1:
+            continue
+        text = clean_copy(route.get("spokenText") or route.get("spoken_text") or route.get("description") or " ".join(values(route.get("directions"))))
+        if not text:
+            continue
+        matches.append((route, destination_name, destination_points, text))
+    if not matches:
+        return None
+    defaults = [row for row in matches if row[0].get("isDefault") is True]
+    if len(defaults) == 1 and len({normalize(row[1]) for row in matches}) == 1:
+        matches = defaults
+    result = LookupResult(intent="route", status="matched" if len(matches) == 1 else "multiple",
+                          exact_hit=True, total=len(matches), truncated=len(matches) > top_k,
+                          reason="route_valid" if len(matches) == 1 else "route_ambiguous")
+    result.route_ids = [str(row[0]["id"]) for row in matches[:top_k]]
+    result.entity_ids = result.route_ids.copy()
+    result.items = [fact(row[0], "route") for row in matches[:top_k]]
+    if len(matches) == 1:
+        route, target, destination_points, text = matches[0]
+        result.items[0]["spoken_text"] = text
+        result.destination_id = str(destination_points[0]["id"]) if len(destination_points) == 1 else ""
+        images = values(route.get("imageUrls") or route.get("image_urls"))
+        result.route = {"matched": True, "route_id": route["id"], "title": route.get("name", ""),
+                        "image_url": images[0] if images else None, "image_urls": images,
+                        "spoken_text": text, "subtitle_text": text,
+                        "route": {"from": "终端", "to": target,
+                                  "directions": [line.strip() for line in text.splitlines() if line.strip()],
+                                  "estimated_minutes": route.get("estimatedMinutes")}}
     return result
 
 
