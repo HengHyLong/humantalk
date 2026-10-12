@@ -51,6 +51,8 @@ def test_default_password_server_guard_and_private_cookie(tmp_path):
         response = client.post("/frontend-access/login", json={"password": "10528"})
         assert response.status_code == 200
         assert "HttpOnly" in response.headers["set-cookie"]
+        assert "max-age" not in response.headers["set-cookie"].lower()
+        assert "expires=" not in response.headers["set-cookie"].lower()
         assert "samesite=lax" in response.headers["set-cookie"].lower()
         assert "10528" not in response.text and "10528" not in response.headers["set-cookie"]
         assert client.get("/models").status_code == 200
@@ -104,3 +106,21 @@ def test_expired_forged_tokens_and_read_only_admin(tmp_path):
         with client.app.state.admin_store.connect() as conn:
             conn.execute("DELETE FROM admin_role_permissions WHERE permission_id IN (SELECT id FROM admin_permissions WHERE code='system:llm:write')")
         assert client.put("/api/v1/admin/frontend-access", json={"password": "cannot-change"}, headers=headers).status_code == 403
+
+
+def test_browser_session_has_no_time_limit_and_legacy_cookie_is_rejected(tmp_path):
+    with client_for(tmp_path) as client:
+        client.post("/frontend-access/login", json={"password": "10528"})
+        record = access_record(SimpleNamespace(app=client.app))
+        payload = jwt.decode(client.cookies.get(COOKIE), record["password_hash"], algorithms=["HS256"])
+        assert "exp" not in payload
+        payload["iat"] = 1
+        client.cookies.clear()
+        client.cookies.set(COOKIE, jwt.encode(payload, record["password_hash"], algorithm="HS256"))
+        assert client.get("/models").status_code == 200
+        assert client.get("/frontend-access/status").json()["authenticated"]
+        client.cookies.jar.clear_session_cookies()
+        assert client.get("/models").status_code == 401
+        legacy = jwt.encode({"type": "frontend-access", "iat": 1, "exp": 9999999999}, record["password_hash"], algorithm="HS256")
+        client.cookies.set(COOKIE, legacy)
+        assert client.get("/models").status_code == 401

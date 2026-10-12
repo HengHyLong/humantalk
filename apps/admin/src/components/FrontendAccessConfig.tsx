@@ -10,7 +10,7 @@ export function FrontendAccessConfig({ canWrite }: { canWrite: boolean }) {
   useEffect(() => { void loadFrontendAccess().then(() => setReady(true)).catch(() => setMessage("密码配置读取失败，请刷新后重试。")); }, []);
   return <section className="rounded-lg border border-slate-200 bg-white p-4">
     <h2 className="text-sm font-semibold">数字人前端访问密码</h2>
-    <p className="my-2 text-xs text-slate-500">修改后，使用旧密码验证的浏览器需要重新验证。每次验证有效期为 12 小时。</p>
+    <p className="my-2 text-xs text-slate-500">浏览器会话内保持登录，关闭浏览器后需重新验证。修改密码后，旧验证失效。</p>
     <form className="flex flex-wrap items-end gap-3" onSubmit={async e => {
       e.preventDefault(); if (password !== confirm) { setMessage("两次输入的密码不一致。"); return; }
       setBusy(true);

@@ -16,7 +16,6 @@ from apps.api.admin.security import current_user, get_store, password_hasher, re
 from apps.api.admin.store import utc_now
 
 COOKIE = "humantalk_frontend_access"
-LIFETIME = 12 * 60 * 60
 _attempt_lock = threading.Lock()
 router = APIRouter(prefix="/frontend-access", tags=["frontend-access"])
 admin_router = APIRouter(prefix="/api/v1/admin/frontend-access", tags=["frontend-access"])
@@ -38,18 +37,19 @@ def authenticated(request) -> bool:
     if not token:
         return False
     try:
-        payload = jwt.decode(token, access_record(request)["password_hash"], algorithms=["HS256"], options={"require": ["exp", "iat", "type"]})
-        return payload.get("type") == "frontend-access"
+        payload = jwt.decode(token, access_record(request)["password_hash"], algorithms=["HS256"], options={"require": ["iat", "type"]})
+        # Reject the former persistent, 12-hour cookies after this migration.
+        return payload.get("type") == "frontend-browser-session"
     except jwt.PyJWTError:
         return False
 
 
 def session_response(request):
     issued = int(time.time())
-    token = jwt.encode({"type": "frontend-access", "iat": issued, "exp": issued + LIFETIME}, access_record(request)["password_hash"], algorithm="HS256")
+    token = jwt.encode({"type": "frontend-browser-session", "iat": issued}, access_record(request)["password_hash"], algorithm="HS256")
     response = JSONResponse({"authenticated": True})
     secure = request.url.scheme == "https" or request.headers.get("origin", "").startswith("https://")
-    response.set_cookie(COOKIE, token, max_age=LIFETIME, httponly=True, secure=secure, samesite="lax", path="/")
+    response.set_cookie(COOKIE, token, httponly=True, secure=secure, samesite="lax", path="/")
     response.headers["Cache-Control"] = "no-store"
     return response
 
