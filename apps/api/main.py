@@ -19,6 +19,7 @@ from apps.api.admin.routes import public_router as admin_public_router
 from apps.api.admin.routes import router as admin_router
 from apps.api.routes import agent, avatars, events, exports, health, knowledge_proxy, memory, models, personas, qa, runtime_config, scene_assets, sessions, tts_preview, video_clone, video_creation, voices
 from apps.api.services.vidu_service import ViduSessionManager
+from apps.api.services.frontend_access import FrontendAccessMiddleware, router as frontend_access_router, admin_router as frontend_access_admin_router
 from opentalking.voice.store import init_voice_store
 
 
@@ -125,6 +126,9 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     app.add_middleware(AdminTraceMiddleware)
+    app.add_middleware(FrontendAccessMiddleware)
+    app.include_router(frontend_access_router)
+    app.include_router(frontend_access_admin_router)
     app.include_router(health.router)
     app.include_router(models.router)
     app.include_router(avatars.router)

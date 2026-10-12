@@ -1,5 +1,11 @@
 # v2.6 数字人问答分流
 
+## 数字人前端访问密码
+
+前端启动前必须通过服务端密码验证，初始密码为 `10528`。后台“系统管理 → 模型管理 → 数字人前端访问密码”可以修改密码（5–128 字符），需要 `system:llm:write` 权限。密码以 Argon2 哈希保存在管理数据库的 `frontend_access` 表中，不回传密码或哈希。修改后旧浏览器验证立即失效，前端在重新打开、聚焦或每分钟检查时返回验证页。
+
+验证使用 HttpOnly、SameSite=Lax Cookie，有效期 12 小时。数字人 HTTP、SSE、WebSocket 接口由服务端校验；管理员沿用管理员登录和权限管理，可访问数字人调试接口。公开展品登记二维码接口及 `/healthz` 保持可用。运维健康检查应使用 `/healthz`；调用数字人接口前先请求 `POST /frontend-access/login`，保存返回的 Cookie。`GET /frontend-access/status` 查询验证状态，`POST /frontend-access/logout` 清除当前浏览器验证。`GET/PUT /api/v1/admin/frontend-access` 查询或修改密码，需要对应管理员权限。
+
 ## 完整句子流式播报
 
 后台“系统管理 → 模型管理 → Dify 数字人问答”可选择“完整句子流式播报”或“完整回答后播报（回退模式）”。开关下一轮生效，不中断正在播报的回答。环境变量 `OPENTALKING_DIFY_CHAT_SPEECH_MODE` 取 `sentences` 或 `complete`，代码默认 `complete`；上线时可显式启用 `sentences`。

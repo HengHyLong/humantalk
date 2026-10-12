@@ -1,5 +1,11 @@
 # v2.6 digital human answer routing
 
+## Frontend access password
+
+The digital human UI requires server-side password verification before initialization. The initial password is `10528`. Administrators can change it (5–128 characters) under System → Model management → Frontend access password with `system:llm:write` permission. Only an Argon2 hash is stored in the admin database's `frontend_access` table; neither passwords nor hashes are returned. Changing it immediately invalidates previous browser sessions. The UI checks on startup, window focus and every minute.
+
+Verification uses a 12-hour HttpOnly, SameSite=Lax cookie. HTTP, SSE and WebSocket digital human endpoints are protected. Existing administrator authentication and permissions remain available for administration and debugging. Public exhibit survey links and `/healthz` remain accessible. Use `/healthz` for deployment probes. API clients must first call `POST /frontend-access/login` and retain the cookie. `GET /frontend-access/status` checks access; `POST /frontend-access/logout` clears browser access. `GET/PUT /api/v1/admin/frontend-access` reads metadata or changes the password with administrator permissions.
+
 ## Complete-sentence streaming speech
 
 The Dify configuration panel selects complete-sentence streaming or complete-answer speech as the rollback mode. Changes apply to the next turn. `OPENTALKING_DIFY_CHAT_SPEECH_MODE` accepts `sentences` or `complete`; the code defaults to `complete`, and deployments can explicitly enable `sentences`.

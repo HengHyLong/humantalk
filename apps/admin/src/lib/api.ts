@@ -105,14 +105,14 @@ async function throwIfNotOk(r: Response): Promise<void> {
 }
 
 export async function apiGet<T>(path: string): Promise<T> {
-  const r = await fetch(buildApiUrl(path));
+  const r = await authorizedFetch(buildApiUrl(path));
   await throwIfNotOk(r);
   return r.json() as Promise<T>;
 }
 
 export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
   return runAdminMutation(path, "POST", async () => {
-    const r = await fetch(buildApiUrl(path), { method: "POST", headers: { "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
+    const r = await authorizedFetch(buildApiUrl(path), { method: "POST", headers: { "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
     await throwIfNotOk(r);
     return r.json() as Promise<T>;
   });
@@ -120,7 +120,7 @@ export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
 
 export async function apiPut<T, B = unknown>(path: string, body?: B): Promise<T> {
   return runAdminMutation(path, "PUT", async () => {
-    const r = await fetch(buildApiUrl(path), { method: "PUT", headers: { "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
+    const r = await authorizedFetch(buildApiUrl(path), { method: "PUT", headers: { "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
     await throwIfNotOk(r);
     return r.json() as Promise<T>;
   });
@@ -128,14 +128,14 @@ export async function apiPut<T, B = unknown>(path: string, body?: B): Promise<T>
 
 export async function apiPatch<T, B = unknown>(path: string, body?: B): Promise<T> {
   return runAdminMutation(path, "PATCH", async () => {
-    const r = await fetch(buildApiUrl(path), { method: "PATCH", headers: { "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
+    const r = await authorizedFetch(buildApiUrl(path), { method: "PATCH", headers: { "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
     await throwIfNotOk(r);
     return r.json() as Promise<T>;
   });
 }
 
 export async function apiPostBlob(path: string, body?: unknown): Promise<Blob> {
-  const r = await fetch(buildApiUrl(path), {
+  const r = await authorizedFetch(buildApiUrl(path), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -145,7 +145,7 @@ export async function apiPostBlob(path: string, body?: unknown): Promise<Blob> {
 }
 
 export async function apiPostFormBlob(path: string, form: FormData, init?: RequestInit): Promise<Blob> {
-  const r = await fetch(buildApiUrl(path), { method: "POST", body: form, ...init });
+  const r = await authorizedFetch(buildApiUrl(path), { method: "POST", body: form, ...init });
   await throwIfNotOk(r);
   return r.blob();
 }
@@ -173,7 +173,7 @@ async function postFormWithProgress<T>(path: string, form: FormData, init: Reque
 /** multipart/form-data（语音识别 speak_audio / transcribe） */
 export async function apiPostForm<T>(path: string, form: FormData, init?: RequestInit, onProgress?: UploadProgressCallback): Promise<T> {
   if (onProgress && typeof XMLHttpRequest !== "undefined") return postFormWithProgress<T>(path, form, init, onProgress);
-  const r = await fetch(buildApiUrl(path), { method: "POST", body: form, ...init });
+  const r = await authorizedFetch(buildApiUrl(path), { method: "POST", body: form, ...init });
   await throwIfNotOk(r);
   return r.json() as Promise<T>;
 }
@@ -266,7 +266,7 @@ export async function loadRuntimeConfig(): Promise<RuntimeConfigResponse> {
 }
 
 export async function applyRuntimeConfig(input: RuntimeConfigApplyInput): Promise<RuntimeConfigResponse> {
-  const response = await fetch(buildApiUrl("/runtime-config/apply"), {
+  const response = await authorizedFetch(buildApiUrl("/runtime-config/apply"), {
     method: "POST", headers: adminRuntimeHeaders(), body: JSON.stringify(input),
   });
   await throwIfNotOk(response);
@@ -279,8 +279,20 @@ function adminRuntimeHeaders(): Record<string, string> {
   return { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) };
 }
 
+export async function loadFrontendAccess(): Promise<{ password_set: boolean; updated_at: string }> {
+  const response = await authorizedFetch(buildApiUrl("/api/v1/admin/frontend-access"), { headers: adminRuntimeHeaders() });
+  await throwIfNotOk(response);
+  return response.json();
+}
+
+export async function saveFrontendPassword(password: string): Promise<{ password_set: boolean; updated_at: string }> {
+  const response = await authorizedFetch(buildApiUrl("/api/v1/admin/frontend-access"), { method: "PUT", headers: adminRuntimeHeaders(), body: JSON.stringify({ password }) });
+  await throwIfNotOk(response);
+  return response.json();
+}
+
 export async function testDifyConnection(): Promise<{ name: string; compatible: boolean; missing_variables: string[] }> {
-  const response = await fetch(buildApiUrl("/runtime-config/dify/test"), { method: "POST", headers: adminRuntimeHeaders() });
+  const response = await authorizedFetch(buildApiUrl("/runtime-config/dify/test"), { method: "POST", headers: adminRuntimeHeaders() });
   await throwIfNotOk(response);
   return response.json();
 }
@@ -517,7 +529,7 @@ export async function createVideoCreationJob(input: CreateVideoCreationJobInput)
 
 export async function apiDelete<T>(path: string, init?: RequestInit): Promise<T> {
   return runAdminMutation(path, "DELETE", async () => {
-    const r = await fetch(buildApiUrl(path), { ...init, method: "DELETE" });
+    const r = await authorizedFetch(buildApiUrl(path), { ...init, method: "DELETE" });
     await throwIfNotOk(r);
     return r.json() as Promise<T>;
   });
@@ -792,3 +804,10 @@ export type VoiceCatalogItem = {
   profile?: string | null;
   source: "system" | "clone" | string;
 };
+
+async function authorizedFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
+  const headers = new Headers(init.headers);
+  const authorization = adminRuntimeHeaders().Authorization;
+  if (authorization && !headers.has("Authorization")) headers.set("Authorization", authorization);
+  return fetch(input, { ...init, headers, credentials: "include" });
+}
