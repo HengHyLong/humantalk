@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { completedQaSpeech, generatedQaText, newQaSpeechPresentation, spokenQaText } from "./lib/qaSpeechPresentation";
 import { AvatarSelectionStage, type AgentConfig } from "./components/AvatarSelectionStage";
 import { ExhibitionSelectionStage } from "./components/ExhibitionSelectionStage";
 import { BailianVoiceClone } from "./components/BailianVoiceClone";
@@ -989,7 +990,7 @@ export default function App() {
   const ttsPreviewUrlRef = useRef<string | null>(null);
   /** Cumulative assistant text for the current speech turn (subtitle.chunk segments). */
   const subtitleAccRef = useRef("");
-  const qaStreamRef = useRef({ turnId: "", messageId: "", text: "", active: false });
+  const qaStreamRef = useRef(newQaSpeechPresentation());
   /** `messages` id of the in-progress assistant bubble for this turn; cleared on speech.ended. */
   const streamingAssistantMsgIdRef = useRef<string | null>(null);
   /** Local placeholder shown immediately after the user sends text, before worker SSE arrives. */
@@ -1140,10 +1141,11 @@ export default function App() {
   }, []);
 
   const flushSubtitleMessage = useCallback(() => {
-    if (qaStreamRef.current.active) return;
-    const msgId = streamingAssistantMsgIdRef.current;
+    const state = qaStreamRef.current;
+    const msgId = state.active ? state.messageId : streamingAssistantMsgIdRef.current;
     const t = subtitleAccRef.current;
     if (!msgId || !t) return;
+    if (state.active) spokenQaText(state, t);
     setMessages((prev) =>
       prev.map((m) => (m.id === msgId ? { ...m, text: t } : m)),
     );
@@ -2404,16 +2406,18 @@ export default function App() {
         const update = data as { turn_id?: string; text?: string; message?: string; incomplete?: boolean };
         if (update.turn_id !== qaStreamRef.current.turnId) return;
         const state = qaStreamRef.current;
-        state.active = true;
-        if (typeof update.text === "string") state.text = update.text;
-        setMessages((prev) => prev.map((m) => m.id === state.messageId ? { ...m, text: state.text + ((ev === "qa.error" || update.incomplete) ? (englishConversation ? " (Answer incomplete)" : "（回答未完成）") : "") } : m));
+        const visible = generatedQaText(state, typeof update.text === "string" ? update.text : state.text);
+        if (ev === "qa.replace") { state.spokenText = ""; setCurrentSubtitle(""); }
+        if (visible || ev === "qa.error" || ev === "qa.replace" || update.incomplete) {
+          setMessages((prev) => prev.map((m) => m.id === state.messageId ? { ...m, text: (ev === "qa.replace" ? update.text || "" : visible) + ((ev === "qa.error" || update.incomplete) ? (englishConversation ? " (Answer incomplete)" : "（回答未完成）") : "") } : m));
+        }
         if (ev === "qa.error") notify(update.message || "回答未完成，请重试。", "error");
       }
       if (ev === "speech.started") {
         const started = data && typeof data === "object"
           ? data as { text?: string; direct?: boolean }
           : {};
-        const immediateText = qaStreamRef.current.active ? qaStreamRef.current.text : started.direct && typeof started.text === "string"
+        const immediateText = qaStreamRef.current.active ? qaStreamRef.current.spokenText : started.direct && typeof started.text === "string"
           ? started.text.trim()
           : "";
         const staleId = streamingAssistantMsgIdRef.current;
@@ -2427,10 +2431,10 @@ export default function App() {
         setIsSpeaking(true);
         setVideoState("think");
         if (immediateText && !qaStreamRef.current.active) setCurrentSubtitle(immediateText);
-        if (staleId) {
+        const id = qaStreamRef.current.active ? qaStreamRef.current.messageId : pendingId ?? makeId();
+        if (staleId && staleId !== id) {
           setMessages((prev) => prev.filter((m) => m.id !== staleId));
         }
-        const id = pendingId ?? makeId();
         streamingAssistantMsgIdRef.current = id;
         setMessages((prev) => {
           if (prev.some((m) => m.id === id)) {
@@ -2464,7 +2468,8 @@ export default function App() {
         const d = data && typeof data === "object" ? (data as { text?: string }) : {};
         const fromEvent = typeof d.text === "string" ? d.text.trim() : "";
         const streamed = subtitleAccRef.current.trim();
-        const finalText = qaStreamRef.current.active ? qaStreamRef.current.text : fromEvent || streamed;
+        const finalText = qaStreamRef.current.active ? completedQaSpeech(qaStreamRef.current, fromEvent || streamed) : fromEvent || streamed;
+        qaStreamRef.current.ended = true;
         const msgId = streamingAssistantMsgIdRef.current;
         setVoiceTurnActive(false);
         setVideoState("listen");
@@ -3018,7 +3023,7 @@ export default function App() {
     const pendingId = makeId();
     const previousPendingId = pendingAssistantMsgIdRef.current;
     pendingAssistantMsgIdRef.current = pendingId;
-    qaStreamRef.current = { turnId, messageId: pendingId, text: "", active: false };
+    qaStreamRef.current = newQaSpeechPresentation(turnId, pendingId);
     setNavigationResult(null);
     setShoppingRegistration(null);
     pendingContentClarificationRef.current = null;
@@ -3058,8 +3063,12 @@ export default function App() {
         setShoppingRegistration({ ...result.registration, url, qrDataUrl });
       }
       setLastVoiceIntent(result.navigation ? "navigation" : result.related_entities?.length ? "exhibition_content" : null);
+      const streamState = qaStreamRef.current;
+      const visibleAnswer = result.speech_mode === "sentences"
+        ? generatedQaText(streamState, result.answer || "")
+        : result.answer;
       setMessages((prev) => prev.map((message) => message.id === pendingId ? {
-        ...message, text: (result.answer || (englishConversation ? "Preparing a response..." : "正在准备回复...")) + (result.error_code && result.speech_mode === "sentences" ? (englishConversation ? " (Answer incomplete)" : "（回答未完成）") : ""),
+        ...message, text: (visibleAnswer || (result.speech_mode === "sentences" ? message.text : englishConversation ? "Preparing a response..." : "正在准备回复...")) + (result.error_code && result.speech_mode === "sentences" ? (englishConversation ? " (Answer incomplete)" : "（回答未完成）") : ""),
         relatedEntities: result.related_entities ?? [],
         qa: { turnId: result.turn_id, traceId: result.trace_id, matchType: result.match_type, sources: result.sources },
       } : message));

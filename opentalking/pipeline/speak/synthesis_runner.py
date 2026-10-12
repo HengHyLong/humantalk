@@ -2385,7 +2385,12 @@ class FlashTalkRunner:
                         tts_text[:30] if tts_text else "",
                     )
                     t0 = _t.monotonic()
-                    timing.setdefault("first_tts_request_ms", (time.perf_counter() - t_speak_wall0) * 1000)
+                    if "first_tts_request_ms" not in timing:
+                        timing["first_tts_request_ms"] = (time.perf_counter() - t_speak_wall0) * 1000
+                        await publish_event(self.redis, self.session_id, "speech.synthesis_started", {
+                            "session_id": self.session_id, "turn_id": turn_id,
+                            "elapsed_ms": round(timing["first_tts_request_ms"]), "characters": len(tts_text),
+                        })
                     chunks_produced = 0
                     first_pcm_ms: float | None = None
                     seen_audio = False
@@ -2714,6 +2719,10 @@ class FlashTalkRunner:
                         timing["first_model_request_ms"] = (
                             g0 - t_speak_wall0
                         ) * 1000.0
+                        await publish_event(self.redis, self.session_id, "speech.lip_sync_started", {
+                            "session_id": self.session_id, "turn_id": turn_id,
+                            "elapsed_ms": round(timing["first_model_request_ms"]),
+                        })
                     frames = await self._generate_flashtalk_frames(pcm_chunk)
                     g1 = time.perf_counter()
                     flashtalk_gen_sum_s += g1 - g0

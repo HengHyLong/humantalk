@@ -14,9 +14,9 @@
 
 Dify 文本通过增量过滤后，仅完整句子进入同一直接播报任务，不经过 OpenTalking 大模型。只有收到 `message_end` 才提交无标点尾句。句子通道限制 16000 字、256 段、10 分钟保留时间，TTS 队列上限 4 段。新提问和关闭会话停止旧生成与播报；每段按轮次校验，过期内容不能继续播放。
 
-现有 HTTP 接口仍返回最终完整答案，SSE 新增 `qa.delta`（已提交句子的累计文本）、`qa.completed`（生成结束及计时）、`qa.replace`（正在更正）、`qa.error`（部分回答失败）。事件带 `turn_id`；聊天文字与口播字幕分别更新。SSE 短暂断开后，HTTP 最终结果可以补齐文字，不重启播报。`speech.ended` 才表示音视频播报结束，不能把 `qa.completed` 当成播报结束。
+现有 HTTP 接口仍返回最终完整答案，SSE 新增 `qa.delta`（已提交句子的累计文本）、`qa.completed`（生成结束及计时）、`qa.replace`（正在更正）、`qa.error`（部分回答失败）。事件带 `turn_id`；生成文本先保存在前端，聊天文字与口播字幕随播报片段逐句推进；HTTP 最终结果和生成完成事件不会在播报开始前抢先展示全文。播报结束后补齐完整回答。SSE 短暂断开后，HTTP 最终结果保留用于补齐，不重启播报。`speech.ended` 才表示音视频播报结束，不能把 `qa.completed` 当成播报结束。
 
-`message_replace` 会取消未播内容，并在完整替换答案到齐后以更正提示播报；已播放内容无法撤回。断流或语音异常明确提示未完成，不从头自动重播。响应新增 `speech_mode`；命中日志记录 `firstDeltaMs`、`firstSentenceMs`、`generationMs`。首句保持自然句末边界，不使用超时强切半句话，后续按真实 WebRTC 首音频、首口型计时调整。
+`message_replace` 会取消未播内容，并在完整替换答案到齐后以更正提示播报；已播放内容无法撤回。断流或语音异常明确提示未完成，不从头自动重播。响应新增 `speech_mode`；命中日志记录 `firstDeltaMs`、`firstSentenceMs`、`generationMs`。首句保持自然句末边界，不使用超时强切半句话。首句到齐即进入 TTS，不等生成完成；PCM 首音频窗口到齐即进入口型模型，不等整句合成结束。事件 `speech.synthesis_started` 和 `speech.lip_sync_started` 标记本轮首次语音合成和口型请求，可与 `qa.completed`、真实 WebRTC 首音频计时核对。
 
 前端将文字、语音识别结果和实体卡片选择提交到 `POST /exhibitions/{exhibition_id}/qa/query`。后端按当前展会筛选可用的展商、展品和路线，统一决定回答来源。保留已有公开接口对草稿资料的可用规则，不改变资料状态；下线、停用和删除的资料不参与匹配。
 
