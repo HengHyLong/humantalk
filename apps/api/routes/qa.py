@@ -85,6 +85,7 @@ class QaQueryResponse(BaseModel):
     retrieval_status: str | None = None
     routing_reason: str | None = None
     registration: dict | None = None
+    follow_up: dict | None = None
     speech_mode: str = "complete"
     timings_ms: dict[str, int | None] = Field(default_factory=dict)
 
@@ -639,9 +640,13 @@ async def query_exhibition_qa(exhibition_id: str, body: QaQueryRequest, request:
         previous = json.loads(cached) if cached else {}
     except (ValueError, TypeError):
         previous = {}
+    from apps.api.services.exhibition_sales_flow import available_cards, plan_followup, resolve_followup
+    visible = public_exhibition_entities(exhibition_id, request)["items"]
+    sales_cards = available_cards(store, visible)
+    flow_turn = resolve_followup(body.question, body.selected_entity_id, previous.get("sales_flow"), sales_cards, body.locale == "en-US")
     started = time.perf_counter()
     try:
-        result = lookup(store, exhibition_id, body.question, selected_entity_id=body.selected_entity_id,
+        result = lookup(store, exhibition_id, flow_turn["question"], selected_entity_id=flow_turn["selected_id"],
                         previous_ids=previous.get("entity_ids", []), top_k=int(getattr(settings, "dify_chat_top_k", 5)),
                         origin_point_id=body.origin_point_id, previous_route_ids=previous.get("route_ids", []),
                         previous_origin_id=previous.get("destination_id", ""),
@@ -672,10 +677,13 @@ async def query_exhibition_qa(exhibition_id: str, body: QaQueryRequest, request:
     async def is_current() -> bool:
         return await same_turn(r, body.session_id, token)
 
-    visible = public_exhibition_entities(exhibition_id, request)["items"]
     related = [item for entity_id in result.entity_ids for item in visible if item["id"] == entity_id]
     registration = None
-    answer = service_answer(result, body.locale)
+    answer = flow_turn.get("answer") or service_answer(result, body.locale)
+    follow_up = flow_turn.get("flow")
+    if flow_turn.get("answer"):
+        related = flow_turn.get("related", [])
+        result.reason = "sales_followup"
     used_service = bool(answer)
     if result.reason == "registration_request":
         card = related[0] if len(related) == 1 else {}
@@ -692,6 +700,8 @@ async def query_exhibition_qa(exhibition_id: str, body: QaQueryRequest, request:
         if not answer and result.reason == "exact_match":
             result.reason = "translation_required" if body.locale == "en-US" else "answer_field_missing"
             context = retrieval_context()
+        if answer:
+            answer, related, follow_up = plan_followup(result, answer, related, sales_cards, body.locale == "en-US")
     used_database = bool(answer)
     reply = None
     from apps.api.services.speech_sentences import SpeechSentences
@@ -780,7 +790,8 @@ async def query_exhibition_qa(exhibition_id: str, body: QaQueryRequest, request:
     if reply or used_database:
         await save_context(r, body.session_id, token, scope,
                            json.dumps({"conversation_id": reply.conversation_id if reply else previous.get("conversation_id", ""),
-                                       "entity_ids": result.entity_ids, "route_ids": result.route_ids,
+                                       "entity_ids": [c["id"] for c in related] if follow_up and follow_up.get("stage") == "product_selection" else result.entity_ids, "route_ids": result.route_ids,
+                                       "sales_flow": follow_up,
                                        "destination_id": result.destination_id, "routing_reason": result.reason}, ensure_ascii=False))
     navigation = result.route if not error_code and result.reason == "route_valid" else None
     if navigation:
@@ -793,7 +804,7 @@ async def query_exhibition_qa(exhibition_id: str, body: QaQueryRequest, request:
                                     voice=body.voice, tts_provider=body.tts_provider, tts_model=body.tts_model,
                                     direct=True, turn_id=body.turn_id, trace_id=trace_id,
                                     interrupt_first=False, turn_token=token)
-    clarification = result.status == "multiple" or (used_service and registration is None)
+    clarification = result.status == "multiple" or (used_service and registration is None and result.reason != "sales_followup")
     match_type = "retrieval_error" if error_code else "clarification" if clarification else "database" if used_database else "dify"
     store.save_record("knowledge_hits", {"id": f"hit-{uuid.uuid4().hex}", "exhibitionId": exhibition_id,
                       "question": body.question, "answer": answer, "turnId": body.turn_id, "traceId": trace_id,
@@ -817,6 +828,7 @@ async def query_exhibition_qa(exhibition_id: str, body: QaQueryRequest, request:
                            clarification_question=answer if clarification else None,
                            related_entities=related if not error_code else [], navigation=navigation,
                            retrieval_status=result.status, routing_reason=result.reason, registration=registration,
+                           follow_up=follow_up,
                            speech_mode="sentences" if stream_enabled and not used_database and not replaced else "complete",
                            timings_ms={"lookup": lookup_ms, "first_sentence": first_sentence_ms,
                                        "first_delta": reply.first_delta_ms if reply else None,

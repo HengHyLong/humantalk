@@ -167,12 +167,11 @@ type PendingContentClarification = {
   retryPrompt: string;
 };
 
-type PendingExhibitionFollowup =
-  | {
-      stage: "exhibitor_products" | "product_selection";
-      exhibitor: ExhibitionEntityCard;
-      products: ExhibitionEntityCard[];
-    };
+type PendingExhibitionFollowup = {
+  stage: "exhibitor_products" | "product_selection" | "registration";
+  entity_id: string;
+  product_ids?: string[];
+};
 
 
 
@@ -3055,6 +3054,8 @@ export default function App() {
       });
       if (sequence !== difyRequestSequenceRef.current || result.status === "cancelled") return;
       setNavigationResult(result.navigation ?? null);
+      pendingExhibitionFollowupRef.current = result.follow_up ?? null;
+      setExhibitionFollowupStage(result.follow_up?.stage ?? null);
       if (result.registration) {
         const url = new URL(result.registration.path, window.location.origin).toString();
         const { toDataURL } = await import("qrcode");
@@ -3300,7 +3301,9 @@ export default function App() {
   const conversationSuggestions = exhibitionFollowupStage === "exhibitor_products"
     ? (englishConversation ? ["Yes, show products", "Not now"] : ["想了解相关展品", "暂时不用"])
     : exhibitionFollowupStage === "product_selection"
-      ? (englishConversation ? ["First product", "Second product", "Third product"] : ["第一个", "第二个", "第三个"])
+      ? (englishConversation ? ["First product", "Second product", "Third product"] : ["第一个", "第二个", "第三个"]).slice(0, pendingExhibitionFollowupRef.current?.product_ids?.length ?? 3)
+      : exhibitionFollowupStage === "registration"
+        ? (englishConversation ? ["Yes, show QR code", "Not now"] : ["需要二维码", "暂时不用"])
       : undefined;
 
   const handleExhibitionConfirm = useCallback(() => {

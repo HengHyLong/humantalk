@@ -507,6 +507,7 @@ export type ExhibitionQaQueryResponse = {
   routing_reason?: string;
   speech_mode?: "complete" | "sentences";
   registration?: { strategy_id: string; exhibit_id: string; title: string; path: string; spoken_text: string } | null;
+  follow_up?: { stage: "exhibitor_products" | "product_selection" | "registration"; entity_id: string; product_ids?: string[] } | null;
 };
 
 export async function queryExhibitionQa(

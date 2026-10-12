@@ -45,7 +45,7 @@ def classify(question: str) -> str:
     route = bool(re.search(r"怎么走|怎么去|如何到|如何去|路线|导航|带我去|前往|(?:^|我想|我要|请)去|从.+(?:到|去)|how.*(?:get|go)|directions|\broute\b|from.+to", positive, re.I))
     if intro and route:
         return "compound"
-    if re.search(r"登记|报名|扫码|register|registration|sign up", question, re.I):
+    if re.search(r"登记|报名|扫码|二维码|register|registration|qr\s*code|sign up", question, re.I):
         return "registration"
     if route:
         return "route"
