@@ -1968,6 +1968,8 @@ class FlashTalkRunner:
         tts_provider: str | None = None,
         tts_model: str | None = None,
         enqueue_unix: float | None = None,
+        text_stream=None,
+        turn_id: str | None = None,
     ) -> asyncio.Task[None]:
         """Speak deterministic application text without sending it to the LLM."""
         task = asyncio.create_task(
@@ -1978,6 +1980,8 @@ class FlashTalkRunner:
                 tts_model=tts_model,
                 enqueue_unix=enqueue_unix,
                 direct=True,
+                **({"text_stream": text_stream} if text_stream is not None else {}),
+                **({"turn_id": turn_id} if turn_id else {}),
             )
         )
         self.speech_tasks.add(task)
@@ -2078,6 +2082,8 @@ class FlashTalkRunner:
         knowledge_context: str | None = None,
         *,
         direct: bool = False,
+        text_stream=None,
+        turn_id: str | None = None,
     ) -> None:
         log.info("speak start: %s (session=%s)", text[:30], self.session_id)
         try:
@@ -2089,6 +2095,8 @@ class FlashTalkRunner:
                 enqueue_unix=enqueue_unix,
                 knowledge_context=knowledge_context,
                 direct=direct,
+                **({"text_stream": text_stream} if text_stream is not None else {}),
+                **({"turn_id": turn_id} if turn_id else {}),
             )
             log.info("speak done: session=%s", self.session_id)
         except asyncio.CancelledError:
@@ -2114,6 +2122,8 @@ class FlashTalkRunner:
             self._speech_media_active = False
             self._speech_started = False
         payload: dict[str, str] = {"session_id": self.session_id}
+        if getattr(self, "_speech_turn_id", None):
+            payload["turn_id"] = self._speech_turn_id
         if reply_text is not None:
             payload["text"] = reply_text
         await publish_event(
@@ -2133,6 +2143,8 @@ class FlashTalkRunner:
         enqueue_unix: float | None = None,
         knowledge_context: str | None = None,
         direct: bool = False,
+        text_stream=None,
+        turn_id: str | None = None,
     ) -> None:
         """Full pipeline: user text → LLM → TTS → FlashTalk → WebRTC.
 
@@ -2154,6 +2166,7 @@ class FlashTalkRunner:
                 await begin_speech()
             self._interrupt.clear()
             self._speaking = True
+            self._speech_turn_id = turn_id
             self._playback_draining = False
             if self.webrtc:
                 # Stop idle loop first, then drain queues atomically.
@@ -2170,7 +2183,7 @@ class FlashTalkRunner:
             await publish_event(
                 self.redis, self.session_id,
                 "speech.started",
-                {"session_id": self.session_id, "text": text, "direct": direct},
+                {"session_id": self.session_id, "text": text, "direct": direct, "turn_id": turn_id},
             )
             self._speech_started = True
 
@@ -2239,6 +2252,7 @@ class FlashTalkRunner:
             self._speak_t0_wall = t_speak_wall0
             self._speak_milestones = timing
 
+            producer_error = None
             async def _producer():
                 """LLM → sentence split → TTS → fixed-size audio chunks into queue.
 
@@ -2248,7 +2262,7 @@ class FlashTalkRunner:
                   Stage 2 (TTS worker): sentence_q → TTS adapter → audio chunks → audio_q
                 This eliminates the ~300-800ms TTS startup gap between sentences.
                 """
-                nonlocal full_response
+                nonlocal full_response, producer_error
                 t_producer_wall0 = time.perf_counter()
                 audio_buffer = np.zeros(0, dtype=np.int16)
                 text_buffer = ""
@@ -2570,14 +2584,30 @@ class FlashTalkRunner:
                         timing["llm_stream_ms"] = (t_llm1 - t_llm0) * 1000.0
                         if t_first_token is not None:
                             timing["llm_first_token_ms"] = (t_first_token - t_llm0) * 1000.0
+                        if self._interrupt.is_set() or getattr(asyncio.current_task(), "cancelling", lambda: 0)():
+                            while not sentence_q.empty():
+                                sentence_q.get_nowait()
                         await sentence_q.put(None)  # signal TTS worker to stop
 
                 async def _direct_text_feeder() -> None:
                     """Queue configured application copy directly for TTS."""
+                    nonlocal full_response
                     try:
-                        if not self._interrupt.is_set() and text.strip():
+                        if text_stream is not None:
+                            full_response = ""
+                            async for sentence in text_stream:
+                                if self._interrupt.is_set():
+                                    break
+                                full_response += sentence
+                                await _queue_sentence_for_tts(sentence, force=True)
+                        elif not self._interrupt.is_set() and text.strip():
                             await _queue_sentence_for_tts(text, force=True)
                     finally:
+                        if text_stream is not None:
+                            await text_stream.aclose()
+                        if self._interrupt.is_set() or getattr(asyncio.current_task(), "cancelling", lambda: 0)():
+                            while not sentence_q.empty():
+                                sentence_q.get_nowait()
                         await sentence_q.put(None)
 
                 try:
@@ -2591,7 +2621,16 @@ class FlashTalkRunner:
                     # feeder keeps streaming deltas into sentence_q.
                     t_gather0 = time.perf_counter()
                     feeder = _direct_text_feeder() if direct else _llm_feeder()
-                    await asyncio.gather(feeder, _tts_worker())
+                    workers = [asyncio.create_task(feeder), asyncio.create_task(_tts_worker())]
+                    try:
+                        await asyncio.gather(*workers)
+                    finally:
+                        for worker in workers:
+                            if not worker.done():
+                                worker.cancel()
+                        while not sentence_q.empty():
+                            sentence_q.get_nowait()
+                        await asyncio.gather(*workers, return_exceptions=True)
                     timing["llm_tts_gather_ms"] = (time.perf_counter() - t_gather0) * 1000.0
 
                     # Flush leftover audio with a short silence tail so the mouth can settle.
@@ -2611,7 +2650,8 @@ class FlashTalkRunner:
 
                     timing["producer_wall_ms"] = (time.perf_counter() - t_producer_wall0) * 1000.0
                     log.info("Producer done, full_response=%r", full_response[:100])
-                except Exception:
+                except Exception as exc:
+                    producer_error = exc
                     log.exception("Producer failed")
                 finally:
                     if hasattr(tts, "aclose"):
@@ -2619,6 +2659,9 @@ class FlashTalkRunner:
                             await tts.aclose()
                         except Exception:
                             log.exception("TTS adapter aclose failed")
+                    if self._interrupt.is_set() or getattr(asyncio.current_task(), "cancelling", lambda: 0)():
+                        while not audio_q.empty():
+                            audio_q.get_nowait()
                     await audio_q.put(None)  # signal done
 
             async def _consumer():
@@ -2638,7 +2681,7 @@ class FlashTalkRunner:
                 async def _publish_subtitle_chunk(text: str) -> None:
                     await publish_event(
                         self.redis, self.session_id, "subtitle.chunk",
-                        {"session_id": self.session_id, "text": text, "is_final": False},
+                        {"session_id": self.session_id, "text": text, "is_final": False, "turn_id": turn_id},
                     )
 
                 def _start_pacing() -> None:
@@ -2737,15 +2780,24 @@ class FlashTalkRunner:
             try:
                 # Run producer and consumer concurrently
                 t_parallel0 = time.perf_counter()
-                await asyncio.gather(_producer(), _consumer())
+                pipeline_tasks = [asyncio.create_task(_producer()), asyncio.create_task(_consumer())]
+                try:
+                    await asyncio.gather(*pipeline_tasks)
+                finally:
+                    for task in pipeline_tasks:
+                        if not task.done():
+                            task.cancel()
+                    await asyncio.gather(*pipeline_tasks, return_exceptions=True)
+                if producer_error is not None:
+                    raise RuntimeError("speech production failed") from producer_error
                 timing["parallel_total_ms"] = (time.perf_counter() - t_parallel0) * 1000.0
                 await self._queue_fasterliveportrait_rest_frame()
-            except Exception as e:
+            except Exception:
                 log.exception("FlashTalk speak failed: session=%s", self.session_id)
                 await publish_event(
                     self.redis, self.session_id,
                     "error",
-                    {"session_id": self.session_id, "code": "SPEAK_FAILED", "message": str(e)},
+                    {"session_id": self.session_id, "code": "SPEAK_FAILED", "message": "语音或数字人播报失败，请稍后重试。", "turn_id": turn_id},
                 )
                 raise
             finally:
@@ -3360,7 +3412,7 @@ class FlashTalkRunner:
                     self.redis,
                     self.session_id,
                     "speech.media_started",
-                    {"session_id": self.session_id},
+                    {"session_id": self.session_id, "turn_id": getattr(self, "_speech_turn_id", None)},
                 )
             except Exception:
                 log.exception("publish speech.media_started failed")

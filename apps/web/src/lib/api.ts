@@ -479,6 +479,7 @@ export type ExhibitionQaQueryRequest = {
   question: string;
   selected_entity_id?: string;
   origin_point_id?: string;
+  speech_mode?: "complete" | "sentences";
   knowledge_base_ids?: string[];
   locale?: string;
   voice?: string;
@@ -504,6 +505,7 @@ export type ExhibitionQaQueryResponse = {
   navigation?: NavigationResult | null;
   retrieval_status?: string;
   routing_reason?: string;
+  speech_mode?: "complete" | "sentences";
   registration?: { strategy_id: string; exhibit_id: string; title: string; path: string; spoken_text: string } | null;
 };
 

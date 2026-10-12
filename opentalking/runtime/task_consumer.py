@@ -348,6 +348,10 @@ async def _do_init(
     runners[sid] = runner
     try:
         await runner.prepare()
+        import inspect
+        method = getattr(runner, "create_direct_speak_task", None)
+        stream_capable = callable(method) and "text_stream" in inspect.signature(method).parameters
+        await r.hset(session_key(sid), mapping={"stream_speech_supported": "1" if stream_capable else "0"})
         await set_session_state(r, sid, "worker_ready")
         await publish_event(r, sid, "session.queued", {
             "session_id": sid,
@@ -531,7 +535,7 @@ async def handle_worker_task(
     sid = task.get("session_id")
     if not sid or not cmd:
         return
-    if cmd == "speak" and task.get("dify_turn_token"):
+    if cmd in {"speak", "interrupt"} and task.get("dify_turn_token"):
         latest = await r.get(f"opentalking:dify:turn:{sid}")
         if isinstance(latest, bytes):
             latest = latest.decode()
@@ -597,6 +601,17 @@ async def handle_worker_task(
         create_chat_task = getattr(runner, "create_chat_task", None)
         create_direct_speak_task = getattr(runner, "create_direct_speak_task", None)
         if task.get("direct"):
+            if task.get("text_stream"):
+                from opentalking.runtime.text_stream import SpeechTextStream
+                stream = SpeechTextStream(r, sid, str(task["dify_turn_token"]))
+                if not callable(create_direct_speak_task):
+                    await stream.fail()
+                    await publish_event(r, sid, "error", {"code": "STREAM_SPEECH_UNSUPPORTED", "message": "当前数字人暂不支持流式播报，请使用完整回答模式。"})
+                    return
+                create_direct_speak_task(text, tts_voice=tts_voice, tts_provider=tts_provider,
+                                         tts_model=tts_model, enqueue_unix=enqueue_value,
+                                         text_stream=stream.sentences(), turn_id=task.get("turn_id"))
+                return
             speak_direct = (
                 create_direct_speak_task
                 if callable(create_direct_speak_task)

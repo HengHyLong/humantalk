@@ -222,7 +222,7 @@ export type RuntimeConfigMem0 = {
 };
 
 export type RuntimeConfigResponse = {
-  dify_chat?: { base_url: string; api_key_set: boolean; timeout_sec: number; top_k: number };
+  dify_chat?: { base_url: string; api_key_set: boolean; timeout_sec: number; top_k: number; speech_mode?: "complete" | "sentences" };
   llm: RuntimeConfigLlm;
   stt: RuntimeConfigStt;
   tts: RuntimeConfigTts;
@@ -237,6 +237,7 @@ export type RuntimeConfigApplyInput = {
   dify_chat_api_key?: string;
   dify_chat_timeout_sec?: number;
   dify_chat_top_k?: number;
+  dify_chat_speech_mode?: "complete" | "sentences";
   llm_base_url?: string;
   llm_model?: string;
   llm_api_key?: string;

@@ -10,12 +10,14 @@ export function DifyConfig({ config, onApply, applying }: {
   const [key, setKey] = useState("");
   const [timeout, setTimeoutValue] = useState(60);
   const [topK, setTopK] = useState(5);
+  const [speechMode, setSpeechMode] = useState<"complete" | "sentences">("complete");
   const [testing, setTesting] = useState(false);
   const [message, setMessage] = useState("");
   useEffect(() => {
     setUrl(config?.dify_chat?.base_url || "");
     setTimeoutValue(config?.dify_chat?.timeout_sec || 60);
     setTopK(config?.dify_chat?.top_k || 5);
+    setSpeechMode(config?.dify_chat?.speech_mode || "complete");
     setKey("");
   }, [config]);
   const field = "h-10 w-full rounded-md border border-slate-200 px-3 text-sm outline-none focus:border-cyan-300";
@@ -29,9 +31,16 @@ export function DifyConfig({ config, onApply, applying }: {
       <label className="text-xs text-slate-600">最多查询结果<input className={field} type="number" min={1} max={8} value={topK} onChange={e => setTopK(Number(e.target.value))} /></label>
     </div>
     <div className="mt-3 flex gap-3">
+      <label className="text-xs text-slate-600">Dify 播报方式
+        <select className={field} value={speechMode} onChange={e => setSpeechMode(e.target.value as "complete" | "sentences")}>
+          <option value="complete">完整回答后播报（回退模式）</option>
+          <option value="sentences">完整句子流式播报</option>
+        </select>
+        <span>分句播报可以提前开口；不支持的数字人自动使用完整回答模式。遇到问题切换回退模式，下一轮生效。</span>
+      </label>
       <button disabled={applying || testing} className="rounded bg-cyan-700 px-4 py-2 text-sm text-white disabled:opacity-50" onClick={async () => {
         try {
-          await onApply({ dify_chat_base_url: url.trim(), dify_chat_timeout_sec: timeout, dify_chat_top_k: topK, ...(key.trim() ? { dify_chat_api_key: key.trim() } : {}) });
+          await onApply({ dify_chat_base_url: url.trim(), dify_chat_timeout_sec: timeout, dify_chat_top_k: topK, dify_chat_speech_mode: speechMode, ...(key.trim() ? { dify_chat_api_key: key.trim() } : {}) });
           setKey(""); setMessage("配置已保存，下一轮问答生效。");
         } catch { setMessage("保存失败，请检查登录权限和配置。"); }
       }}>保存 Dify 配置</button>

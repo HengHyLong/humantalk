@@ -24,7 +24,7 @@ class DifyChatError(Exception):
 def spoken_answer(text: str) -> str:
     # Defensive fallback for older Dify/model plugins, including an unclosed tag.
     text = re.sub(r"<think\b[^>]*>.*?(?:</think\s*>|$)", "", text, flags=re.S | re.I)
-    text = re.sub(r"<!--.*?-->", "", text, flags=re.S)
+    text = re.sub(r"<!--.*?(?:-->|$)", "", text, flags=re.S)
     return sanitize_tts_text(text).strip()
 
 
@@ -33,6 +33,8 @@ class ChatReply:
     answer: str
     conversation_id: str = ""
     message_id: str = ""
+    first_delta_ms: int | None = None
+    generation_ms: int | None = None
 
 
 class DifyChatClient:
@@ -73,7 +75,10 @@ class DifyChatClient:
             pass
 
     async def chat(self, *, question: str, inputs: dict[str, Any], user: str,
-                   conversation_id: str = "", is_current: Any = None) -> ChatReply:
+                   conversation_id: str = "", is_current: Any = None,
+                   on_delta: Any = None, on_replace: Any = None) -> ChatReply:
+        import time
+        started = time.perf_counter()
         if not self.base_url or not self.api_key:
             raise DifyChatError("DIFY_CHAT_NOT_CONFIGURED")
         body = {"query": question, "inputs": inputs, "user": user,
@@ -107,8 +112,14 @@ class DifyChatClient:
                                 raise DifyChatError("DIFY_CHAT_INVALID_RESPONSE")
                             if kind == "message_replace":
                                 parts = [delta]
+                                if on_replace:
+                                    await on_replace(delta)
                             else:
                                 parts.append(delta)
+                                if delta and reply.first_delta_ms is None:
+                                    reply.first_delta_ms = round((time.perf_counter() - started) * 1000)
+                                if on_delta and delta:
+                                    await on_delta(delta)
                         if kind == "message_end":
                             completed = True
                             break
@@ -116,10 +127,14 @@ class DifyChatClient:
         try:
             await asyncio.wait_for(consume(), timeout=self.timeout_sec)
             reply.answer = spoken_answer("".join(parts))
+            reply.generation_ms = round((time.perf_counter() - started) * 1000)
             if not completed or not reply.answer:
                 raise DifyChatError("DIFY_CHAT_INVALID_RESPONSE")
             return reply
         except asyncio.CancelledError:
+            await self.stop(user)
+            raise
+        except DifyChatError:
             await self.stop(user)
             raise
         except (httpx.HTTPError, TimeoutError, ValueError, TypeError, AttributeError) as exc:

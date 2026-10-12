@@ -1,5 +1,17 @@
 # v2.6 digital human answer routing
 
+## Complete-sentence streaming speech
+
+The Dify configuration panel selects complete-sentence streaming or complete-answer speech as the rollback mode. Changes apply to the next turn. `OPENTALKING_DIFY_CHAT_SPEECH_MODE` accepts `sentences` or `complete`; the code defaults to `complete`, and deployments can explicitly enable `sentences`.
+
+Streaming applies only to Dify answers and capable direct-speech renderers. Database answers remain direct; Vidu and unsupported renderers automatically use complete answers. Requests may set `speech_mode=complete` for one turn, but cannot enable streaming when the global switch is off.
+
+Incrementally filtered complete sentences enter one direct speech task without the OpenTalking LLM. Only a verified `message_end` commits an unpunctuated tail. Transport limits are 16000 characters, 256 segments and a ten-minute TTL; the TTS queue holds four segments. New turns and session closure cancel old generation and speech; each segment checks the active turn.
+
+The existing HTTP endpoint still returns the final answer. Session SSE adds `qa.delta` (cumulative committed text), `qa.completed` (generation end and timing), `qa.replace` (correction) and `qa.error` (incomplete answer), carrying `turn_id`. Chat text and playback subtitles update separately. The final HTTP result repairs text after a temporary SSE disconnect without restarting speech. Only `speech.ended`, not `qa.completed`, marks playback completion.
+
+`message_replace` cancels pending speech, then speaks the verified replacement with a correction notice. Played audio cannot be retracted. Stream or TTS failures are reported and never automatically replay the partial answer. Responses add `speech_mode`; hit logs record `firstDeltaMs`, `firstSentenceMs` and `generationMs`. Initial tuning preserves natural sentence endings instead of timeout-based mid-sentence cuts; compare real WebRTC first-audio and first-animation times before tuning further.
+
 The frontend submits text, transcribed speech and entity selections to `POST /exhibitions/{exhibition_id}/qa/query`. The backend searches available exhibitors, exhibits and routes within the selected exhibition. Existing public APIs expose draft records, so v2.6 preserves that availability without changing record status. Offline, inactive and deleted records are excluded.
 
 - A unique exact keyword hit speaks stored copy or a description directly. Location questions use the booth or address; route questions use stored speech or directions. The response has `match_type=database` and makes no Dify call.

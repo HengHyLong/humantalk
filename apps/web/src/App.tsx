@@ -989,6 +989,7 @@ export default function App() {
   const ttsPreviewUrlRef = useRef<string | null>(null);
   /** Cumulative assistant text for the current speech turn (subtitle.chunk segments). */
   const subtitleAccRef = useRef("");
+  const qaStreamRef = useRef({ turnId: "", messageId: "", text: "", active: false });
   /** `messages` id of the in-progress assistant bubble for this turn; cleared on speech.ended. */
   const streamingAssistantMsgIdRef = useRef<string | null>(null);
   /** Local placeholder shown immediately after the user sends text, before worker SSE arrives. */
@@ -1139,6 +1140,7 @@ export default function App() {
   }, []);
 
   const flushSubtitleMessage = useCallback(() => {
+    if (qaStreamRef.current.active) return;
     const msgId = streamingAssistantMsgIdRef.current;
     const t = subtitleAccRef.current;
     if (!msgId || !t) return;
@@ -2337,6 +2339,8 @@ export default function App() {
   useEffect(() => {
     if (!sessionId) return;
     const stop = connectSse(buildApiUrl(`/sessions/${sessionId}/events`), (ev, data) => {
+      const eventTurn = data && typeof data === "object" ? (data as { turn_id?: string }).turn_id : undefined;
+      if (eventTurn && eventTurn !== qaStreamRef.current.turnId) return;
       if (ev === "session.queued" && data && typeof data === "object") {
         const d = data as { position?: number; message?: string };
         const position = d.position ?? 1;
@@ -2396,11 +2400,20 @@ export default function App() {
         appendAssistantError(detail);
         notify(`对话失败：${detail}`, "error");
       }
+      if (["qa.delta", "qa.completed", "qa.replace", "qa.error"].includes(ev) && data && typeof data === "object") {
+        const update = data as { turn_id?: string; text?: string; message?: string; incomplete?: boolean };
+        if (update.turn_id !== qaStreamRef.current.turnId) return;
+        const state = qaStreamRef.current;
+        state.active = true;
+        if (typeof update.text === "string") state.text = update.text;
+        setMessages((prev) => prev.map((m) => m.id === state.messageId ? { ...m, text: state.text + ((ev === "qa.error" || update.incomplete) ? (englishConversation ? " (Answer incomplete)" : "（回答未完成）") : "") } : m));
+        if (ev === "qa.error") notify(update.message || "回答未完成，请重试。", "error");
+      }
       if (ev === "speech.started") {
         const started = data && typeof data === "object"
           ? data as { text?: string; direct?: boolean }
           : {};
-        const immediateText = started.direct && typeof started.text === "string"
+        const immediateText = qaStreamRef.current.active ? qaStreamRef.current.text : started.direct && typeof started.text === "string"
           ? started.text.trim()
           : "";
         const staleId = streamingAssistantMsgIdRef.current;
@@ -2451,7 +2464,7 @@ export default function App() {
         const d = data && typeof data === "object" ? (data as { text?: string }) : {};
         const fromEvent = typeof d.text === "string" ? d.text.trim() : "";
         const streamed = subtitleAccRef.current.trim();
-        const finalText = fromEvent || streamed;
+        const finalText = qaStreamRef.current.active ? qaStreamRef.current.text : fromEvent || streamed;
         const msgId = streamingAssistantMsgIdRef.current;
         setVoiceTurnActive(false);
         setVideoState("listen");
@@ -2488,7 +2501,7 @@ export default function App() {
       }
     });
     return stop;
-  }, [appendAssistantError, clearSubtitleFallbackTimer, clearSubtitleState, finishSubtitleState, flushSubtitleDisplay, flushSubtitleMessage, keepWakeSessionActiveUntil, notify, sessionId]);
+  }, [appendAssistantError, clearSubtitleFallbackTimer, clearSubtitleState, finishSubtitleState, flushSubtitleDisplay, flushSubtitleMessage, keepWakeSessionActiveUntil, notify, sessionId, englishConversation]);
 
   // Resolves when FlashTalk slot is acquired (session.queued position=0)
   const slotAcquiredRef = useRef<(() => void) | null>(null);
@@ -2943,6 +2956,7 @@ export default function App() {
       const text = speechText.trim();
       const user = userText.trim();
       if (!sessionId || !text) return;
+      qaStreamRef.current.active = false;
       setVoiceTurnActive(true);
       const pendingId = makeId();
       const activeAssistantId = streamingAssistantMsgIdRef.current;
@@ -3004,6 +3018,7 @@ export default function App() {
     const pendingId = makeId();
     const previousPendingId = pendingAssistantMsgIdRef.current;
     pendingAssistantMsgIdRef.current = pendingId;
+    qaStreamRef.current = { turnId, messageId: pendingId, text: "", active: false };
     setNavigationResult(null);
     setShoppingRegistration(null);
     pendingContentClarificationRef.current = null;
@@ -3044,7 +3059,7 @@ export default function App() {
       }
       setLastVoiceIntent(result.navigation ? "navigation" : result.related_entities?.length ? "exhibition_content" : null);
       setMessages((prev) => prev.map((message) => message.id === pendingId ? {
-        ...message, text: result.answer || (englishConversation ? "Preparing a response..." : "正在准备回复..."),
+        ...message, text: (result.answer || (englishConversation ? "Preparing a response..." : "正在准备回复...")) + (result.error_code && result.speech_mode === "sentences" ? (englishConversation ? " (Answer incomplete)" : "（回答未完成）") : ""),
         relatedEntities: result.related_entities ?? [],
         qa: { turnId: result.turn_id, traceId: result.trace_id, matchType: result.match_type, sources: result.sources },
       } : message));

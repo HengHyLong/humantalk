@@ -286,6 +286,7 @@ async def speak(
     trace_id: str | None = None,
     interrupt_first: bool = True,
     turn_token: str | None = None,
+    text_stream: bool = False,
 ) -> None:
     # 新用户输入前先打断，避免上一条仍在推理/播报时排队等到结束才生效
     if interrupt_first:
@@ -307,6 +308,10 @@ async def speak(
         task["tts_model"] = tts_model.strip()
     if direct:
         task["direct"] = True
+    if text_stream:
+        if not direct or not turn_token:
+            raise ValueError("text stream requires a direct, turn-scoped task")
+        task["text_stream"] = True
     if knowledge_context:
         task["knowledge_context"] = knowledge_context
     if turn_id:
@@ -332,8 +337,8 @@ async def speak(
         await _push_task(r, task)
 
 
-async def interrupt(r: redis.Redis, sid: str) -> None:
-    await _push_task(r, {"cmd": "interrupt", "session_id": sid})
+async def interrupt(r: redis.Redis, sid: str, *, turn_token: str | None = None) -> None:
+    await _push_task(r, {"cmd": "interrupt", "session_id": sid, **({"dify_turn_token": turn_token} if turn_token else {})})
 
 
 async def close_session(r: redis.Redis, sid: str) -> None:

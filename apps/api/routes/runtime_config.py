@@ -5,7 +5,7 @@ import re
 import shutil
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Literal
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request, Depends
@@ -36,6 +36,7 @@ _RUNTIME_ENV_KEYS = {
     "OPENTALKING_DIFY_CHAT_API_KEY",
     "OPENTALKING_DIFY_CHAT_TIMEOUT_SEC",
     "OPENTALKING_DIFY_CHAT_TOP_K",
+    "OPENTALKING_DIFY_CHAT_SPEECH_MODE",
     "DASHSCOPE_API_KEY",
     "OPENTALKING_LLM_PROVIDER",
     "OPENTALKING_LLM_BASE_URL",
@@ -123,6 +124,7 @@ class RuntimeConfigPayload(BaseModel):
     dify_chat_api_key: Optional[str] = Field(default=None, max_length=4096)
     dify_chat_timeout_sec: Optional[float] = Field(default=None, ge=5, le=180)
     dify_chat_top_k: Optional[int] = Field(default=None, ge=1, le=8)
+    dify_chat_speech_mode: Literal["complete", "sentences"] | None = None
     llm_base_url: Optional[str] = Field(default=None, max_length=2048)
     llm_model: Optional[str] = Field(default=None, max_length=256)
     llm_api_key: Optional[str] = Field(default=None, max_length=4096)
@@ -543,6 +545,7 @@ def _current_payload(settings: Any | None = None) -> dict[str, Any]:
             "api_key_set": bool(_env_value(values, "OPENTALKING_DIFY_CHAT_API_KEY", _settings_value(settings, "dify_chat_api_key"))),
             "timeout_sec": float(_env_value(values, "OPENTALKING_DIFY_CHAT_TIMEOUT_SEC", _settings_value(settings, "dify_chat_timeout_sec", "60"))),
             "top_k": int(_env_value(values, "OPENTALKING_DIFY_CHAT_TOP_K", _settings_value(settings, "dify_chat_top_k", "5"))),
+            "speech_mode": _env_value(values, "OPENTALKING_DIFY_CHAT_SPEECH_MODE", _settings_value(settings, "dify_chat_speech_mode", "complete")),
         },
         "llm": {
             "base_url": _env_value(values, "OPENTALKING_LLM_BASE_URL", _settings_value(settings, "llm_base_url")).rstrip("/"),
@@ -578,6 +581,8 @@ def _build_updates(payload: RuntimeConfigPayload) -> dict[str, str]:
         updates["OPENTALKING_DIFY_CHAT_TIMEOUT_SEC"] = str(payload.dify_chat_timeout_sec)
     if payload.dify_chat_top_k is not None:
         updates["OPENTALKING_DIFY_CHAT_TOP_K"] = str(payload.dify_chat_top_k)
+    if payload.dify_chat_speech_mode is not None:
+        updates["OPENTALKING_DIFY_CHAT_SPEECH_MODE"] = payload.dify_chat_speech_mode
 
     if any(
         value is not None

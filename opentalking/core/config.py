@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from dotenv import dotenv_values
@@ -533,6 +533,7 @@ class Settings(BaseSettings):
     dify_chat_api_key: str = Field(default="", repr=False)
     dify_chat_timeout_sec: float = Field(default=60.0, ge=5, le=180)
     dify_chat_top_k: int = Field(default=5, ge=1, le=8)
+    dify_chat_speech_mode: Literal["complete", "sentences"] = "complete"
     # Dataset API configuration (not used for answer generation).
     dify_base_url: str = Field(default="https://api.dify.ai/v1")
     dify_api_key: str = Field(default="")

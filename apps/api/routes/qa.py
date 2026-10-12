@@ -51,6 +51,7 @@ class QaQueryRequest(BaseModel):
     knowledge_base_ids: list[str] | None = Field(default=None, max_length=16)
     selected_entity_id: str | None = Field(default=None, max_length=128)
     origin_point_id: str | None = Field(default=None, max_length=128)
+    speech_mode: Literal["complete", "sentences"] | None = None
 
 
 class QaSourceResponse(BaseModel):
@@ -84,6 +85,8 @@ class QaQueryResponse(BaseModel):
     retrieval_status: str | None = None
     routing_reason: str | None = None
     registration: dict | None = None
+    speech_mode: str = "complete"
+    timings_ms: dict[str, int | None] = Field(default_factory=dict)
 
 
 def _setting(settings: object, name: str, default: object) -> object:
@@ -623,7 +626,7 @@ async def query_exhibition_qa(exhibition_id: str, body: QaQueryRequest, request:
     await r.set(turn_key(body.session_id), token, ex=3600)
     await manager.cancel(body.session_id)
     if str(session.get("model") or "").lower() != "vidu":
-        await session_service.interrupt(r, body.session_id)
+        await session_service.interrupt(r, body.session_id, turn_token=token)
     client = DifyChatClient(str(getattr(settings, "dify_chat_base_url", "")),
                             str(getattr(settings, "dify_chat_api_key", "")),
                             float(getattr(settings, "dify_chat_timeout_sec", 60)))
@@ -691,22 +694,86 @@ async def query_exhibition_qa(exhibition_id: str, body: QaQueryRequest, request:
             context = retrieval_context()
     used_database = bool(answer)
     reply = None
+    from apps.api.services.speech_sentences import SpeechSentences
+    from opentalking.runtime.text_stream import SpeechTextStream, TextStreamError
+    stream_enabled = (getattr(settings, "dify_chat_speech_mode", "complete") == "sentences"
+                      and body.speech_mode != "complete" and session.get("stream_speech_supported") == "1")
+    speech_stream = SpeechTextStream(r, body.session_id, token)
+    splitter = SpeechSentences()
+    stream_started = False
+    replaced = False
+    committed = ""
+    first_sentence_ms = None
+    async def append_sentence(sentence):
+        nonlocal stream_started, committed, first_sentence_ms
+        if not await is_current():
+            raise asyncio.CancelledError()
+        if committed and body.locale == "en-US":
+            sentence = " " + sentence
+        if not stream_started:
+            await speech_stream.start()
+            await speech_stream.append(sentence)
+            await session_service.speak(r, body.session_id, "", language=body.locale,
+                                        voice=body.voice, tts_provider=body.tts_provider, tts_model=body.tts_model,
+                                        direct=True, turn_id=body.turn_id, trace_id=trace_id,
+                                        interrupt_first=False, turn_token=token, text_stream=True)
+            stream_started = True
+            first_sentence_ms = round((time.perf_counter() - started) * 1000)
+        else:
+            await speech_stream.append(sentence)
+        committed += sentence
+        await publish_event(r, body.session_id, "qa.delta", {"turn_id": body.turn_id, "text": committed,
+                            "sequence": speech_stream.seq, "trace_id": trace_id})
+
+    async def on_delta(delta):
+        if not replaced:
+            for sentence in splitter.feed(delta):
+                await append_sentence(sentence)
+
+    async def on_replace(delta):
+        nonlocal replaced
+        replaced = True
+        if stream_started and await is_current():
+            await speech_stream.cancel()
+            await session_service.interrupt(r, body.session_id, turn_token=token)
+            await publish_event(r, body.session_id, "qa.replace", {"turn_id": body.turn_id,
+                                "text": "The answer is being corrected." if body.locale == "en-US" else "回答正在更正，请以最终回答为准。"})
     try:
         if not used_database:
             reply = await manager.run(body.session_id, client.chat(
                 question=body.question,
                 inputs={"exhibition_id": exhibition_id, "locale": body.locale,
                         "retrieval_status": result.status, "retrieval_context": context},
-                user=user, conversation_id=previous.get("conversation_id", ""), is_current=is_current))
+                user=user, conversation_id=previous.get("conversation_id", ""), is_current=is_current,
+                **({"on_delta": on_delta, "on_replace": on_replace} if stream_enabled else {})))
             answer = reply.answer
+            if stream_enabled:
+                answer = SpeechSentences.clean(answer)
+            if stream_enabled and not replaced:
+                for sentence in splitter.finish():
+                    await append_sentence(sentence)
+                if stream_started:
+                    await speech_stream.finish()
+            elif replaced and stream_started:
+                answer = ("Correction: " if body.locale == "en-US" else "刚才的回答需要更正。") + answer
+                stream_started = False
     except asyncio.CancelledError:
+        if stream_started:
+            await speech_stream.cancel()
         return QaQueryResponse(session_id=body.session_id, exhibition_id=exhibition_id, turn_id=body.turn_id,
                                trace_id=trace_id, status="cancelled", match_type="dify", speak_mode="direct")
-    except DifyChatError as exc:
-        error_code = exc.code
+    except (DifyChatError, TextStreamError) as exc:
+        await client.stop(user)
+        error_code = exc.code if isinstance(exc, DifyChatError) else "TTS_STREAM_FAILED"
         answer = ("The Q&A service is temporarily unavailable. Please try again later or ask the staff."
                   if body.locale == "en-US" else "问答服务暂时不可用，请稍后重试或咨询现场工作人员。")
         reply = None
+        if stream_started:
+            await speech_stream.fail()
+            await session_service.interrupt(r, body.session_id, turn_token=token)
+            answer = committed
+            await publish_event(r, body.session_id, "qa.error", {"turn_id": body.turn_id,
+                                "message": "回答未完成，已停止后续播报，请重试。", "text": committed})
     if not await same_turn(r, body.session_id, token):
         return QaQueryResponse(session_id=body.session_id, exhibition_id=exhibition_id, turn_id=body.turn_id,
                                trace_id=trace_id, status="cancelled", match_type="dify", speak_mode="direct")
@@ -721,7 +788,7 @@ async def query_exhibition_qa(exhibition_id: str, body: QaQueryRequest, request:
         related = []
     if str(session.get("model") or "").lower() == "vidu":
         await _speak_vidu_answer(request=request, redis_client=r, session_id=body.session_id, text=answer, turn_token=token)
-    else:
+    elif not stream_started:
         await session_service.speak(r, body.session_id, answer, language=body.locale,
                                     voice=body.voice, tts_provider=body.tts_provider, tts_model=body.tts_model,
                                     direct=True, turn_id=body.turn_id, trace_id=trace_id,
@@ -735,10 +802,22 @@ async def query_exhibition_qa(exhibition_id: str, body: QaQueryRequest, request:
                       "routingReason": result.reason, "intent": result.intent, "matches": result.matches,
                       "originId": result.origin_id, "destinationId": result.destination_id, "routeIds": result.route_ids,
                       "truncated": result.truncated, "decisionSource": "rule" if used_service else "database" if used_database else "dify",
+                      "speechMode": "sentences" if stream_enabled and not used_database and not replaced else "complete",
+                      "firstSentenceMs": first_sentence_ms, "firstDeltaMs": reply.first_delta_ms if reply else None,
+                      "generationMs": reply.generation_ms if reply else None,
                       "totalMs": round((time.perf_counter() - started) * 1000), "errorCode": error_code}, exhibition_id)
+    if stream_enabled and not used_database:
+        await publish_event(r, body.session_id, "qa.completed", {"turn_id": body.turn_id, "text": answer,
+                            "incomplete": bool(error_code), "first_sentence_ms": first_sentence_ms,
+                            "first_delta_ms": reply.first_delta_ms if reply else None,
+                            "generation_ms": reply.generation_ms if reply else None})
     return QaQueryResponse(session_id=body.session_id, exhibition_id=exhibition_id, turn_id=body.turn_id,
                            trace_id=trace_id, match_type=match_type, speak_mode="direct", answer=answer,
                            error_code=error_code, need_clarification=clarification,
                            clarification_question=answer if clarification else None,
                            related_entities=related if not error_code else [], navigation=navigation,
-                           retrieval_status=result.status, routing_reason=result.reason, registration=registration)
+                           retrieval_status=result.status, routing_reason=result.reason, registration=registration,
+                           speech_mode="sentences" if stream_enabled and not used_database and not replaced else "complete",
+                           timings_ms={"lookup": lookup_ms, "first_sentence": first_sentence_ms,
+                                       "first_delta": reply.first_delta_ms if reply else None,
+                                       "generation": reply.generation_ms if reply else None})
