@@ -46,8 +46,13 @@ def resolve_origin(question: str, points: dict[str, dict], explicit: str | None,
     source = re.search(r"从(.+?)(?:到|去|前往)(.+)|\bfrom\s+(.+?)\s+to\s+(.+)", question, re.I)
     if source:
         origin_text, destination = (source[1], source[2]) if source[1] else (source[3], source[4])
-        if re.fullmatch(r"(?:这里|此处|当前位置|终端|here)", origin_text.strip(), re.I):
+        origin_text = re.sub(r"(?:出发|开始)\s*$", "", origin_text.strip())
+        if re.fullmatch(r"(?:这里|此处|当前位置|(?:当前|数字人|这个)?终端|here|terminal)", origin_text.strip(), re.I):
             origin = str(config.get("terminalPointId") or "")
+            if not origin:
+                # Resolve this against a validated, destination-specific route
+                # explicitly labelled as starting at the terminal.
+                return "@terminal", destination
         else:
             matches = [pid for pid, p in points.items() if rank(origin_text, p)[0] == 1]
             origin = matches[0] if len(matches) == 1 else ""
@@ -57,7 +62,7 @@ def resolve_origin(question: str, points: dict[str, dict], explicit: str | None,
     origin = str(config.get("terminalPointId") or "")
     if re.search(r"继续|接着|下一站|continue|next stop", question, re.I):
         origin = previous or origin
-    return (origin if origin in points else ""), question
+    return (origin if origin in points else "!route_origin_unknown" if origin else ""), question
 
 
 def terms(record: dict[str, Any]) -> list[str]:
@@ -141,17 +146,22 @@ def lookup(store: Any, exhibition_id: str, question: str, *, selected_entity_id:
     by_id.update({str(r["id"]): ("route", r) for r in raw["routes"]})
     intent = classify(question)
     destination_override = ""
+    config = store.get_record("runtime_configs", exhibition_id) or {}
     if intent == "unknown" and pending_destination_id in points:
         # A short answer to "where are you starting?" continues the pending route.
         origin_answers = [p for p in points.values() if rank(question, p)[0] == 1]
-        if len(origin_answers) == 1:
+        terminal_answer = re.fullmatch(r"(?:我)?(?:从|在)?(?:当前|数字人|这个)?(?:终端|这里|此处|当前位置)(?:出发|开始)?[。！!\s]*", question.strip())
+        if terminal_answer:
+            origin_point_id = str(config.get("terminalPointId") or "") or None
+            destination_override = str(points[pending_destination_id].get("name") or "")
+            intent = "route"
+        elif len(origin_answers) == 1:
             point = origin_answers[0]
             short = re.sub(r"我现在在|我在|现在在|这里是|从|出发|在", "", query)
             if short in terms(point):
                 origin_point_id = str(point["id"])
                 destination_override = str(points[pending_destination_id].get("name") or "")
                 intent = "route"
-    config = store.get_record("runtime_configs", exhibition_id) or {}
     if intent == "unknown" and any(occurrences(question, str(word)) for word in (config.get("keywords") or {}).get("navigation", [])):
         intent = "route"
     if intent == "unknown" and any(occurrences(question, str(word)) for word in (config.get("keywords") or {}).get("exhibition_content", [])):
@@ -236,6 +246,9 @@ def lookup(store: Any, exhibition_id: str, question: str, *, selected_entity_id:
     if route_intent:
         origin, destination_question = resolve_origin(question, points, origin_point_id,
                                                      config, previous_origin_id)
+        terminal_requested = origin == "@terminal"
+        if terminal_requested:
+            origin = ""
         destination_question = destination_override or destination_question
         if origin.startswith("!"):
             result.reason = origin[1:]
@@ -280,12 +293,20 @@ def lookup(store: Any, exhibition_id: str, question: str, *, selected_entity_id:
                     continue
                 ranked_routes.append((score, route, route_points))
         if not origin:
-            named = [r for r in ranked_routes if occurrences(question, str(r[1].get("name") or ""))]
+            named = [r for r in ranked_routes if occurrences(question, str(r[1].get("name") or ""))
+                     and (not terminal_requested or re.match(r"^(?:从)?(?:当前|数字人)?终端(?:出发)?(?:至|到|去)", str(r[1].get("name") or "")))]
             if len(named) == 1:
                 origin = str(named[0][1]["pointIds"][0])
                 result.origin_id = origin
                 ranked_routes = named
-            elif ranked_routes:
+            else:
+                terminal_routes = [row for row in ranked_routes if re.match(r"^(?:从)?(?:当前|数字人)?终端(?:出发)?(?:至|到|去)", str(row[1].get("name") or ""))]
+                starts = {str(row[1]["pointIds"][0]) for row in terminal_routes}
+                if len(starts) == 1:
+                    origin = next(iter(starts))
+                    result.origin_id = origin
+                    ranked_routes = terminal_routes
+            if not origin and ranked_routes:
                 result.reason = "route_origin_required"
                 result.route_ids = [str(row[1]["id"]) for row in ranked_routes[:top_k]]
                 destinations = {str(row[1]["pointIds"][-1]) for row in ranked_routes}

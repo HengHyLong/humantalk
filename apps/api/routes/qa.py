@@ -650,7 +650,7 @@ async def query_exhibition_qa(exhibition_id: str, body: QaQueryRequest, request:
                         previous_ids=previous.get("entity_ids", []), top_k=int(getattr(settings, "dify_chat_top_k", 5)),
                         origin_point_id=body.origin_point_id, previous_route_ids=previous.get("route_ids", []),
                         previous_origin_id=previous.get("destination_id", ""),
-                        pending_destination_id=previous.get("destination_id", "") if previous.get("routing_reason") == "route_origin_required" else "")
+                        pending_destination_id=previous.get("destination_id", "") if previous.get("routing_reason") in {"route_origin_required", "route_valid"} else "")
     except ValueError as exc:
         raise HTTPException(status_code=404, detail="entity not found in exhibition") from exc
     except Exception:
@@ -796,6 +796,10 @@ async def query_exhibition_qa(exhibition_id: str, body: QaQueryRequest, request:
     navigation = result.route if not error_code and result.reason == "route_valid" else None
     if navigation:
         navigation.update(language=body.locale, spoken_text=answer, subtitle_text=answer)
+        related = []
+    elif result.intent == "route":
+        # A navigation request must not open an introduction popup for its
+        # destination while route resolution is pending or unavailable.
         related = []
     if str(session.get("model") or "").lower() == "vidu":
         await _speak_vidu_answer(request=request, redis_client=r, session_id=body.session_id, text=answer, turn_token=token)

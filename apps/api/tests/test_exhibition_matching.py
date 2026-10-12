@@ -69,6 +69,9 @@ def test_corrections_take_priority_over_cached_entity_and_ordinal():
 
 def test_route_origin_destination_and_conflicts():
     store = Store()
+    assert lookup(store, "expo", "怎么去科技展台").reason == "route_valid"
+    # Routes without a terminal-origin declaration still require an origin.
+    store.data["routes"][0]["name"] = "东门至科技展台"
     assert lookup(store, "expo", "怎么去科技展台").reason == "route_origin_required"
     valid = lookup(store, "expo", "从东门到科技展台")
     assert valid.reason == "route_valid" and valid.origin_id == "east" and valid.destination_id == "booth"
