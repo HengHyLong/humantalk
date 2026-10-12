@@ -2426,7 +2426,7 @@ export default function App() {
         setVoiceTurnActive(true);
         setIsSpeaking(true);
         setVideoState("think");
-        if (immediateText) setCurrentSubtitle(immediateText);
+        if (immediateText && !qaStreamRef.current.active) setCurrentSubtitle(immediateText);
         if (staleId) {
           setMessages((prev) => prev.filter((m) => m.id !== staleId));
         }
