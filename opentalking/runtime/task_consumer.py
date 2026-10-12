@@ -617,13 +617,19 @@ async def handle_worker_task(
                 if callable(create_direct_speak_task)
                 else runner.create_speak_task
             )
-            speak_direct(
-                text,
-                tts_voice=tts_voice or None,
-                tts_provider=tts_provider or None,
-                tts_model=tts_model or None,
-                enqueue_unix=enqueue_value,
-            )
+            direct_kwargs = {
+                "tts_voice": tts_voice or None,
+                "tts_provider": tts_provider or None,
+                "tts_model": tts_model or None,
+                "enqueue_unix": enqueue_value,
+            }
+            # Full-answer rollback and database replies need the same event
+            # identity as streamed replies; keep older runners compatible.
+            import inspect
+
+            if "turn_id" in inspect.signature(speak_direct).parameters:
+                direct_kwargs["turn_id"] = task.get("turn_id")
+            speak_direct(text, **direct_kwargs)
         elif callable(create_chat_task):
             chat_kwargs = {
                 "tts_voice": tts_voice or None,

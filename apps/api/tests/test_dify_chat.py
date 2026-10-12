@@ -166,6 +166,22 @@ async def test_stale_worker_queue_cannot_start_speech(tmp_path):
                               "text": "obsolete", "dify_turn_token": "old"}, broker, tmp_path, "cpu", {"sid": Runner()})
 
 
+async def test_complete_direct_speech_preserves_turn_identity(tmp_path):
+    broker = InMemoryRedis()
+    calls = []
+
+    class Runner:
+        def create_direct_speak_task(self, text, *, turn_id=None, **kwargs):
+            calls.append((text, turn_id))
+
+    await handle_worker_task(
+        {"cmd": "speak", "session_id": "sid", "direct": True,
+         "text": "新回答。", "turn_id": "new-turn"},
+        broker, tmp_path, "cpu", {"sid": Runner()},
+    )
+    assert calls == [("新回答。", "new-turn")]
+
+
 def test_failure_uses_fixed_prompt_without_local_llm(tmp_path, monkeypatch):
     store = business_store(tmp_path)
     app = FastAPI()
