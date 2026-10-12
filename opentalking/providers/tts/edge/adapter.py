@@ -78,11 +78,16 @@ def _split_pcm_chunks(pcm: np.ndarray, sr: int, chunk_ms: float) -> list[AudioCh
 
 
 async def _edge_audio_stream(text: str, voice: str) -> AsyncIterator[bytes]:
+    from opentalking.core.config import get_settings
+
+    # Scope the proxy to Edge speech only; do not route Dify, STT or local
+    # model requests through a global HTTP_PROXY setting.
+    proxy = os.environ.get("OPENTALKING_TTS_EDGE_PROXY", "").strip() or get_settings().tts_edge_proxy.strip()
     for attempt in range(3):
         try:
             started = time.perf_counter()
             first_audio = True
-            communicate = edge_tts.Communicate(text, voice)
+            communicate = edge_tts.Communicate(text, voice, **({"proxy": proxy} if proxy else {}))
             async for event in communicate.stream():
                 if event["type"] == "audio" and event.get("data"):
                     if first_audio:

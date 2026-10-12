@@ -15,6 +15,12 @@ talking-head backend。本文只做选型和入口导航；权重、启动、验
 | `indextts` | 本地部署 / OmniRT | 可控配音、情绪控制和复刻音色 | [IndexTTS](tts/indextts.md) |
 | `local_qwen3_tts` | 本地部署 | 本地 Qwen3-TTS Base 复刻音色 | [Qwen3-TTS](tts/qwen3-tts.md) |
 
+## Edge TTS 连接配置
+
+字幕已显示但没有语音和口型时，先检查服务端 TTS 日志是否生成了音频。Edge 合成连接返回 `403` 时，字幕仍可能正常，因为问答文本与语音合成是两个阶段。
+
+若已验证可用的 HTTP 代理能完成语音合成，可在项目根目录 `.env` 设置 `OPENTALKING_TTS_EDGE_PROXY=http://127.0.0.1:7890`，然后重启 API。也支持 YAML 的 `tts.edge_proxy`，进程环境变量优先。留空保持直连；此项只用于 Edge 语音连接，不改变 Dify、STT 或数字人模型连接，也不改变音色。代理地址应使用实际可用的本地或受信代理。
+
 ## 本地模型入口
 
 - [CosyVoice 本地部署](tts/cosyvoice.md)

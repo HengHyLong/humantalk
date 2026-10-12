@@ -7,6 +7,27 @@ import pytest
 
 from opentalking.core.types.frames import AudioChunk
 from opentalking.providers.tts.edge import adapter
+from types import SimpleNamespace
+
+
+@pytest.mark.parametrize("env_proxy,settings_proxy,expected", [
+    ("", "", None),
+    ("", "http://127.0.0.1:7890", "http://127.0.0.1:7890"),
+    ("http://127.0.0.1:8080", "http://127.0.0.1:7890", "http://127.0.0.1:8080"),
+])
+async def test_edge_proxy_is_scoped_and_respects_configuration(monkeypatch, env_proxy, settings_proxy, expected):
+    from opentalking.core import config
+    calls = []
+    monkeypatch.setenv("OPENTALKING_TTS_EDGE_PROXY", env_proxy)
+    monkeypatch.setattr(config, "get_settings", lambda: SimpleNamespace(tts_edge_proxy=settings_proxy))
+    class Communicate:
+        def __init__(self, text, voice, **kwargs):
+            calls.append((text, voice, kwargs))
+        async def stream(self):
+            yield {"type": "audio", "data": b"mp3"}
+    monkeypatch.setattr(adapter.edge_tts, "Communicate", Communicate)
+    assert [data async for data in adapter._edge_audio_stream("hello", "zh-CN-XiaoxiaoNeural")] == [b"mp3"]
+    assert calls == [("hello", "zh-CN-XiaoxiaoNeural", {"proxy": expected} if expected else {})]
 
 
 def test_ffmpeg_bin_empty_env_falls_back_to_command_name(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -166,6 +166,7 @@ def _flatten_config(raw: dict[str, Any] | None) -> dict[str, Any]:
             "cosyvoice_service_url": "tts_cosyvoice_service_url",
             "sambert_model": "tts_sambert_model",
             "edge_voice": "tts_edge_voice",
+            "edge_proxy": "tts_edge_proxy",
             "indextts_backend": "tts_indextts_backend",
             "local_cosyvoice_model": "tts_local_cosyvoice_model",
             "local_cosyvoice_model_dir": "tts_local_cosyvoice_model_dir",
@@ -614,6 +615,7 @@ class Settings(BaseSettings):
     tts_cosyvoice_service_url: str = ""
     tts_sambert_model: str = "sambert-zhichu-v1"
     tts_edge_voice: str = "zh-CN-XiaoxiaoNeural"
+    tts_edge_proxy: str = ""
     tts_indextts_backend: str = ""
     tts_local_cosyvoice_model: str = "FunAudioLLM/Fun-CosyVoice3-0.5B-2512"
     tts_local_cosyvoice_model_dir: str = ""
