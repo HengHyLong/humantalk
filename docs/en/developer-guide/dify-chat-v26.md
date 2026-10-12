@@ -6,6 +6,16 @@ The digital human UI requires server-side password verification before initializ
 
 Verification uses an HttpOnly, SameSite=Lax browser-session cookie without a fixed token timeout, Max-Age or Expires. Refreshing or reopening pages within the browser session keeps access; normal browser exit clears it. Browser session-restore features may restore session cookies; websites cannot reliably observe process exit, so disable session restoration or configure cookie clearing on exit for that case. Old 12-hour cookies are rejected after upgrading, requiring verification once. HTTP, SSE and WebSocket digital human endpoints are protected. Existing administrator authentication and permissions remain available for administration and debugging. Public exhibit survey links and `/healthz` remain accessible. Use `/healthz` for deployment probes. API clients must first call `POST /frontend-access/login` and retain the cookie. `GET /frontend-access/status` checks access; `POST /frontend-access/logout` clears browser access. `GET/PUT /api/v1/admin/frontend-access` reads metadata or changes the password with administrator permissions.
 
+## Empty answers and retries
+
+The Dify admin panel configures additional retries (0–3, default 3; 0 disables retries) and a total generation/backoff budget (5–180 seconds, default 30). One initial call plus up to three retries uses approximately 0.5, 1 and 2 seconds of backoff with jitter, honoring HTTP `Retry-After`. Budget exhaustion ends attempts early. Upstream stop cleanup can take up to two additional seconds; each request also respects the answer timeout.
+
+Even after `message_end`, the final spoken answer must contain meaningful text. Blank, reasoning-only, comment-only and punctuation-only answers are rejected. Empty/incomplete responses, network errors, timeouts and HTTP 408/429/5xx can retry. Authentication/configuration errors and other HTTP 4xx do not. If all eligible attempts or the budget fail before speech is committed, exactly one fixed unavailable prompt is spoken without calling the OpenTalking LLM.
+
+Each attempt has a fresh HTTP client and sentence buffer, using the same inputs and previously successful conversation ID. Failed fragments cannot enter the next answer. Once any sentence is committed to speech, errors stop the partial answer instead of retrying from the beginning. Complete-answer mode also retries. New questions, session closure and stale turns cancel requests/backoff without speaking an obsolete fallback. Only successful answers advance the application's normal context; Dify may retain failed attempts in its own logs.
+
+Knowledge-hit records include `difyAttemptCount` and `difyAttempts`: per-attempt status, duration, safe error code, HTTP status, conversation/message/task IDs, backoff and termination reason. Database answers have zero attempts. Environment controls are `OPENTALKING_DIFY_CHAT_MAX_RETRIES` and `OPENTALKING_DIFY_CHAT_RETRY_BUDGET_SEC`. This validation works without changing the Dify model or prompt.
+
 ## Complete-sentence streaming speech
 
 The Dify configuration panel selects complete-sentence streaming or complete-answer speech as the rollback mode. Changes apply to the next turn. `OPENTALKING_DIFY_CHAT_SPEECH_MODE` accepts `sentences` or `complete`; the code defaults to `complete`, and deployments can explicitly enable `sentences`.

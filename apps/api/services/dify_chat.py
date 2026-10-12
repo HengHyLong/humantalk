@@ -16,8 +16,20 @@ from opentalking.pipeline.speak.text_sanitize import sanitize_tts_text
 class DifyChatError(Exception):
     """Safe error code; never expose provider responses or credentials."""
 
-    def __init__(self, code: str = "DIFY_CHAT_UNAVAILABLE") -> None:
+    def __init__(self, code: str = "DIFY_CHAT_UNAVAILABLE", *, retryable: bool | None = None,
+                 http_status: int | None = None, retry_after: float = 0) -> None:
         self.code = code
+        self.retryable = retryable if retryable is not None else code in {
+            "DIFY_CHAT_UNAVAILABLE", "DIFY_CHAT_INVALID_RESPONSE", "DIFY_CHAT_EMPTY_ANSWER",
+            "DIFY_CHAT_INCOMPLETE", "DIFY_CHAT_TIMEOUT",
+        }
+        self.http_status = http_status
+        self.retry_after = retry_after
+        self.attempts: list[dict] = []
+        self.conversation_id = ""
+        self.message_id = ""
+        self.task_id = ""
+        self.workflow_run_id = ""
         super().__init__(code)
 
 
@@ -35,6 +47,8 @@ class ChatReply:
     message_id: str = ""
     first_delta_ms: int | None = None
     generation_ms: int | None = None
+    task_id: str = ""
+    workflow_run_id: str = ""
 
 
 class DifyChatClient:
@@ -67,11 +81,12 @@ class DifyChatClient:
     async def stop(self, user: str) -> None:
         if not self.task_id:
             return
+        task_id, self.task_id = self.task_id, ""
         try:
-            async with httpx.AsyncClient(timeout=5) as client:
-                await client.post(f"{self.base_url}/chat-messages/{self.task_id}/stop",
+            async with asyncio.timeout(2), httpx.AsyncClient(timeout=2) as client:
+                await client.post(f"{self.base_url}/chat-messages/{task_id}/stop",
                                   headers={"Authorization": f"Bearer {self.api_key}"}, json={"user": user})
-        except httpx.HTTPError:
+        except (httpx.HTTPError, TimeoutError):
             pass
 
     async def chat(self, *, question: str, inputs: dict[str, Any], user: str,
@@ -98,18 +113,26 @@ class DifyChatClient:
                             continue
                         event = json.loads(line[5:].strip())
                         self.task_id = event.get("task_id") or self.task_id
+                        reply.task_id = self.task_id
                         if is_current is not None and not await is_current():
                             raise asyncio.CancelledError()
                         reply.conversation_id = event.get("conversation_id") or reply.conversation_id
                         reply.message_id = event.get("message_id") or reply.message_id
                         kind = event.get("event")
+                        reply.workflow_run_id = event.get("workflow_run_id") or reply.workflow_run_id
+                        if kind == "workflow_started":
+                            reply.workflow_run_id = event.get("data", {}).get("id") or reply.workflow_run_id
                         if kind == "error":
-                            raise DifyChatError()
+                            status = int(event.get("status") or 500)
+                            permanent = (400 <= status < 500 and status not in {408, 429}) or event.get("code") in {
+                                "invalid_param", "invalid_api_key", "unauthorized", "app_unavailable", "model_not_supported",
+                            }
+                            raise DifyChatError(retryable=not permanent, http_status=status)
                         if kind in {"message", "agent_message", "message_replace"}:
                             delta = str(event.get("answer") or "")
                             size += len(delta)
                             if size > 100_000:
-                                raise DifyChatError("DIFY_CHAT_INVALID_RESPONSE")
+                                raise DifyChatError("DIFY_CHAT_INVALID_RESPONSE", retryable=False)
                             if kind == "message_replace":
                                 parts = [delta]
                                 if on_replace:
@@ -128,18 +151,46 @@ class DifyChatClient:
             await asyncio.wait_for(consume(), timeout=self.timeout_sec)
             reply.answer = spoken_answer("".join(parts))
             reply.generation_ms = round((time.perf_counter() - started) * 1000)
-            if not completed or not reply.answer:
-                raise DifyChatError("DIFY_CHAT_INVALID_RESPONSE")
+            if not completed:
+                raise DifyChatError("DIFY_CHAT_INCOMPLETE")
+            if not reply.answer or not re.search(r"\w", reply.answer):
+                raise DifyChatError("DIFY_CHAT_EMPTY_ANSWER")
             return reply
         except asyncio.CancelledError:
             await self.stop(user)
             raise
-        except DifyChatError:
+        except DifyChatError as exc:
+            exc.conversation_id, exc.message_id, exc.task_id = reply.conversation_id, reply.message_id, self.task_id
+            exc.workflow_run_id = reply.workflow_run_id
             await self.stop(user)
             raise
-        except (httpx.HTTPError, TimeoutError, ValueError, TypeError, AttributeError) as exc:
+        except httpx.HTTPStatusError as exc:
+            status = exc.response.status_code
+            delay = 0.0
+            try:
+                delay = max(0.0, float(exc.response.headers.get("Retry-After", "0")))
+            except ValueError:
+                from email.utils import parsedate_to_datetime
+                from datetime import datetime, timezone
+                try:
+                    delay = max(0.0, (parsedate_to_datetime(exc.response.headers["Retry-After"]) - datetime.now(timezone.utc)).total_seconds())
+                except (ValueError, KeyError, TypeError):
+                    pass
             await self.stop(user)
-            raise DifyChatError() from exc
+            error = DifyChatError("DIFY_CHAT_HTTP_ERROR", retryable=status in {408, 429} or status >= 500,
+                                  http_status=status, retry_after=delay)
+            error.conversation_id, error.message_id = reply.conversation_id, reply.message_id
+            raise error from exc
+        except (httpx.HTTPError, TimeoutError, ValueError, TypeError, AttributeError) as exc:
+            task_id = self.task_id
+            await self.stop(user)
+            code = ("DIFY_CHAT_TIMEOUT" if isinstance(exc, (TimeoutError, httpx.TimeoutException))
+                    else "DIFY_CHAT_INVALID_RESPONSE" if isinstance(exc, (ValueError, TypeError, AttributeError))
+                    else "DIFY_CHAT_UNAVAILABLE")
+            error = DifyChatError(code)
+            error.conversation_id, error.message_id, error.task_id = reply.conversation_id, reply.message_id, task_id
+            error.workflow_run_id = reply.workflow_run_id
+            raise error from exc
 
 
 class DifyTurns:

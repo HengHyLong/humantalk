@@ -11,6 +11,8 @@ export function DifyConfig({ config, onApply, applying }: {
   const [timeout, setTimeoutValue] = useState(60);
   const [topK, setTopK] = useState(5);
   const [speechMode, setSpeechMode] = useState<"complete" | "sentences">("complete");
+  const [maxRetries, setMaxRetries] = useState(3);
+  const [retryBudget, setRetryBudget] = useState(30);
   const [testing, setTesting] = useState(false);
   const [message, setMessage] = useState("");
   useEffect(() => {
@@ -18,6 +20,8 @@ export function DifyConfig({ config, onApply, applying }: {
     setTimeoutValue(config?.dify_chat?.timeout_sec || 60);
     setTopK(config?.dify_chat?.top_k || 5);
     setSpeechMode(config?.dify_chat?.speech_mode || "complete");
+    setMaxRetries(config?.dify_chat?.max_retries ?? 3);
+    setRetryBudget(config?.dify_chat?.retry_budget_sec ?? 30);
     setKey("");
   }, [config]);
   const field = "h-10 w-full rounded-md border border-slate-200 px-3 text-sm outline-none focus:border-cyan-300";
@@ -29,6 +33,8 @@ export function DifyConfig({ config, onApply, applying }: {
       <label className="text-xs text-slate-600">应用 API Key{config?.dify_chat?.api_key_set ? "（已设置，留空保留）" : "（未设置）"}<input className={field} type="password" autoComplete="new-password" value={key} onChange={e => setKey(e.target.value)} /></label>
       <label className="text-xs text-slate-600">回答超时（秒）<input className={field} type="number" min={5} max={180} value={timeout} onChange={e => setTimeoutValue(Number(e.target.value))} /></label>
       <label className="text-xs text-slate-600">最多查询结果<input className={field} type="number" min={1} max={8} value={topK} onChange={e => setTopK(Number(e.target.value))} /></label>
+      <label className="text-xs text-slate-600">最大追加重试次数（0 可关闭）<input className={field} type="number" min={0} max={3} value={maxRetries} onChange={e => setMaxRetries(Number(e.target.value))} /><span>最多调用 {maxRetries + 1} 次；已提交播报句子后不自动重试。</span></label>
+      <label className="text-xs text-slate-600">整轮重试时间预算（秒）<input className={field} type="number" min={5} max={180} value={retryBudget} onChange={e => setRetryBudget(Number(e.target.value))} /></label>
     </div>
     <div className="mt-3 flex gap-3">
       <label className="text-xs text-slate-600">Dify 播报方式
@@ -40,7 +46,7 @@ export function DifyConfig({ config, onApply, applying }: {
       </label>
       <button disabled={applying || testing} className="rounded bg-cyan-700 px-4 py-2 text-sm text-white disabled:opacity-50" onClick={async () => {
         try {
-          await onApply({ dify_chat_base_url: url.trim(), dify_chat_timeout_sec: timeout, dify_chat_top_k: topK, dify_chat_speech_mode: speechMode, ...(key.trim() ? { dify_chat_api_key: key.trim() } : {}) });
+          await onApply({ dify_chat_base_url: url.trim(), dify_chat_timeout_sec: timeout, dify_chat_top_k: topK, dify_chat_speech_mode: speechMode, dify_chat_max_retries: maxRetries, dify_chat_retry_budget_sec: retryBudget, ...(key.trim() ? { dify_chat_api_key: key.trim() } : {}) });
           setKey(""); setMessage("配置已保存，下一轮问答生效。");
         } catch { setMessage("保存失败，请检查登录权限和配置。"); }
       }}>保存 Dify 配置</button>

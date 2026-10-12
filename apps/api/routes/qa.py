@@ -714,8 +714,11 @@ async def query_exhibition_qa(exhibition_id: str, body: QaQueryRequest, request:
     replaced = False
     committed = ""
     first_sentence_ms = None
+    dify_attempts = []
     async def append_sentence(sentence):
         nonlocal stream_started, committed, first_sentence_ms
+        if not re.search(r"\w", sentence):
+            return
         if not await is_current():
             raise asyncio.CancelledError()
         if committed and body.locale == "en-US":
@@ -750,12 +753,26 @@ async def query_exhibition_qa(exhibition_id: str, body: QaQueryRequest, request:
                                 "text": "The answer is being corrected." if body.locale == "en-US" else "回答正在更正，请以最终回答为准。"})
     try:
         if not used_database:
-            reply = await manager.run(body.session_id, client.chat(
-                question=body.question,
-                inputs={"exhibition_id": exhibition_id, "locale": body.locale,
-                        "retrieval_status": result.status, "retrieval_context": context},
-                user=user, conversation_id=previous.get("conversation_id", ""), is_current=is_current,
-                **({"on_delta": on_delta, "on_replace": on_replace} if stream_enabled else {})))
+            from apps.api.services.dify_retry import chat_with_retries
+            def reset_attempt():
+                nonlocal splitter, replaced
+                splitter = SpeechSentences()
+                replaced = False
+            async def attempt(remaining):
+                nonlocal client
+                client = DifyChatClient(str(getattr(settings, "dify_chat_base_url", "")),
+                                        str(getattr(settings, "dify_chat_api_key", "")),
+                                        min(float(getattr(settings, "dify_chat_timeout_sec", 60)), remaining))
+                return await client.chat(
+                    question=body.question,
+                    inputs={"exhibition_id": exhibition_id, "locale": body.locale,
+                            "retrieval_status": result.status, "retrieval_context": context},
+                    user=user, conversation_id=previous.get("conversation_id", ""), is_current=is_current,
+                    **({"on_delta": on_delta, "on_replace": on_replace} if stream_enabled else {}))
+            reply = await manager.run(body.session_id, chat_with_retries(
+                attempt, is_current=is_current, can_retry=lambda: not stream_started,
+                reset=reset_attempt, max_retries=int(getattr(settings, "dify_chat_max_retries", 3)),
+                budget_sec=float(getattr(settings, "dify_chat_retry_budget_sec", 30)), attempts=dify_attempts))
             answer = reply.answer
             if stream_enabled:
                 answer = SpeechSentences.clean(answer)
@@ -776,7 +793,7 @@ async def query_exhibition_qa(exhibition_id: str, body: QaQueryRequest, request:
         await client.stop(user)
         error_code = exc.code if isinstance(exc, DifyChatError) else "TTS_STREAM_FAILED"
         answer = ("The Q&A service is temporarily unavailable. Please try again later or ask the staff."
-                  if body.locale == "en-US" else "问答服务暂时不可用，请稍后重试或咨询现场工作人员。")
+                  if body.locale == "en-US" else "问答功能暂不可用，请联系现场工作人员。")
         reply = None
         if stream_started:
             await speech_stream.fail()
@@ -820,6 +837,7 @@ async def query_exhibition_qa(exhibition_id: str, body: QaQueryRequest, request:
                       "speechMode": "sentences" if stream_enabled and not used_database and not replaced else "complete",
                       "firstSentenceMs": first_sentence_ms, "firstDeltaMs": reply.first_delta_ms if reply else None,
                       "generationMs": reply.generation_ms if reply else None,
+                      "difyAttempts": dify_attempts, "difyAttemptCount": len(dify_attempts),
                       "totalMs": round((time.perf_counter() - started) * 1000), "errorCode": error_code}, exhibition_id)
     if stream_enabled and not used_database:
         await publish_event(r, body.session_id, "qa.completed", {"turn_id": body.turn_id, "text": answer,

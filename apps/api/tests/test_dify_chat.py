@@ -196,7 +196,7 @@ def test_failure_uses_fixed_prompt_without_local_llm(tmp_path, monkeypatch):
     assert result.status_code == 200
     assert result.json()["error_code"] == "DIFY_CHAT_NOT_CONFIGURED"
     assert result.json()["speak_mode"] == "direct"
-    assert result.json()["answer"] == "问答服务暂时不可用，请稍后重试或咨询现场工作人员。"
+    assert result.json()["answer"] == "问答功能暂不可用，请联系现场工作人员。"
 
 
 def test_database_speech_uses_stored_copy_routes_and_rejects_fuzzy_or_ambiguous(tmp_path):

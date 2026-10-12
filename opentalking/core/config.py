@@ -534,6 +534,8 @@ class Settings(BaseSettings):
     dify_chat_timeout_sec: float = Field(default=60.0, ge=5, le=180)
     dify_chat_top_k: int = Field(default=5, ge=1, le=8)
     dify_chat_speech_mode: Literal["complete", "sentences"] = "complete"
+    dify_chat_max_retries: int = Field(default=3, ge=0, le=3)
+    dify_chat_retry_budget_sec: float = Field(default=30.0, ge=5, le=180)
     # Dataset API configuration (not used for answer generation).
     dify_base_url: str = Field(default="https://api.dify.ai/v1")
     dify_api_key: str = Field(default="")
