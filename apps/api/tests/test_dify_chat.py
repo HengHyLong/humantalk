@@ -284,6 +284,40 @@ def test_missing_database_route_reaches_dify(tmp_path, monkeypatch):
     assert json.loads(calls[0]["inputs"]["retrieval_context"])["routing_reason"] == "route_missing"
 
 
+def test_conflicting_database_route_reaches_dify(tmp_path, monkeypatch):
+    store = business_store(tmp_path)
+    route = store.get_record("routes", "route")
+    store.save_record("routes", dict(route, name="入口到测试科技", pointIds=["entry", "entry"]), "expo")
+    question = "怎么去测试科技"
+    assert lookup(store, "expo", question).reason == "route_config_conflict"
+
+    app = FastAPI()
+    app.state.settings = SimpleNamespace(dify_chat_base_url="https://dify.test/v1", dify_chat_api_key="app-test")
+    app.state.admin_store = store
+    app.state.redis = InMemoryRedis()
+    app.include_router(qa.router)
+    calls = []
+
+    async def session(*args):
+        return {"state": "ready", "model": "mock"}
+
+    async def chat(self, **kwargs):
+        calls.append(kwargs)
+        return ChatReply("知识库已提供路线信息。", "conversation-one")
+
+    monkeypatch.setattr(qa.session_service, "get_session", session)
+    monkeypatch.setattr(DifyChatClient, "chat", chat)
+    response = TestClient(app).post("/exhibitions/expo/qa/query", json={
+        "session_id": "sid", "turn_id": "turn", "question": question,
+    })
+    assert response.status_code == 200, response.text
+    assert response.json()["match_type"] == "dify"
+    assert response.json()["answer"] == "知识库已提供路线信息。"
+    assert response.json()["navigation"] is None
+    assert len(calls) == 1
+    assert json.loads(calls[0]["inputs"]["retrieval_context"])["routing_reason"] == "route_config_conflict"
+
+
 @pytest.mark.parametrize("question,locale,reason", [("测试科技多少钱", "zh-CN", "unsupported_intent"), ("测试科技在哪", "en-US", "translation_required")])
 def test_unsupported_intent_and_translation_reach_dify_with_current_facts(tmp_path, monkeypatch, question, locale, reason):
     app = FastAPI()
