@@ -663,6 +663,9 @@ async def query_exhibition_qa(exhibition_id: str, body: QaQueryRequest, request:
     def retrieval_context() -> str:
         return json.dumps({**result.context(), "current_exhibition": fact(store.get_record("exhibitions", exhibition_id) or {}, "exhibition")}, ensure_ascii=False)
     context = retrieval_context()
+    while len(context) > 16000 and result.reference_items:
+        result.reference_items.pop()
+        context = retrieval_context()
     if len(context) > 16000:
         # Drop trailing candidates as whole records; never truncate JSON.
         while len(context) > 16000 and result.items:

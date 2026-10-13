@@ -8,8 +8,10 @@ from fastapi.testclient import TestClient
 from apps.api.routes import qa
 from apps.api.services.dify_chat import DifyChatClient, ChatReply
 from apps.api.services.exhibition_lookup import LookupResult, database_answer, service_answer
+from apps.api.services.exhibition_lookup import lookup
 from apps.api.services.exhibition_matching import classify
 from apps.api.tests.test_dify_chat import business_store
+from apps.api.tests.test_exhibition_matching import Store
 from opentalking.core.in_memory_redis import InMemoryRedis
 
 
@@ -103,3 +105,18 @@ def test_single_item_list_is_a_list_and_incomplete_names_fall_back():
     item["name"] = "测试科技"
     item["exhibits"] = [{"name": " "}]
     assert database_answer(result, "测试科技有哪些展品", "zh-CN") == ""
+
+
+@pytest.mark.parametrize("question", ["它附近的酒店怎么去", "这个怎么去成都大学", "这个展会在哪里", "它附近的酒店在哪里",
+                                     "这个未收录公司在哪里", "这个学校在哪里", "tell me more about unknown hotels"])
+def test_previous_exhibitor_cannot_replace_a_new_unmatched_target(question):
+    store = Store()
+    store.data["runtime_configs"] = [{"id": "expo", "terminalPointId": "east"}]
+    result = lookup(store, "expo", question, previous_ids=["v"])
+    assert not database_answer(result, question, "zh-CN")
+    assert not service_answer(result, "zh-CN")
+    assert result.entity_ids != ["v"] and result.route is None
+    assert result.context()["reference_items"][0]["id"] == "v"
+    assert not result.context()["route_validated"]
+    previous = lookup(store, "expo", "它在哪个展位", previous_ids=["v"])
+    assert database_answer(previous, "它在哪个展位", "zh-CN") == "具身科学有限公司位于02展位。"

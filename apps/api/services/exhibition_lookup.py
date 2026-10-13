@@ -124,11 +124,14 @@ class LookupResult:
     origin_id: str = ""
     destination_id: str = ""
     route_ids: list[str] = field(default_factory=list)
+    reference_items: list[dict[str, Any]] = field(default_factory=list)
 
     def context(self) -> dict[str, Any]:
         return {"intent": self.intent, "items": self.items, "total_matches": self.total,
                 "routing_reason": self.reason, "truncated": self.truncated,
-                "origin_id": self.origin_id, "destination_id": self.destination_id}
+                "origin_id": self.origin_id, "destination_id": self.destination_id,
+                "reference_items": self.reference_items,
+                "route_validated": self.reason == "route_valid" and self.route is not None}
 
 
 def lookup(store: Any, exhibition_id: str, question: str, *, selected_entity_id: str | None = None,
@@ -175,6 +178,21 @@ def lookup(store: Any, exhibition_id: str, question: str, *, selected_entity_id:
         # Explicit card selection must belong to this exhibition and be visible.
         raise ValueError("entity not found in exhibition")
     followup = bool(re.search(r"^(它|他|她|这[个件家]|那[个件家]|上述|刚才)|^(where is it|tell me more|its |their )", question, re.I))
+    unsafe_reference = bool(re.search(r"附近|周边|周围|旁边|\bnear(?:by)?\b|\baround\b|^(?:这|那)(?:个|次|场)(?:展会|大会|会议)", question, re.I))
+    named_reference = re.match(r"^(?:这[个件家]|那[个件家])(.+?)(?:在哪|在哪里|哪里|怎么|如何|多少钱|有哪些|有什么)", question)
+    previous_object = by_id.get((previous_ids or [""])[0])
+    generic_names = {"exhibitor": {"公司", "展商", "企业"}, "exhibit": {"产品", "展品", "东西"},
+                     "point": {"展台", "展位", "点位", "入口"}, "route": {"路线"}}
+    if named_reference and named_reference[1] not in generic_names.get(previous_object[0] if previous_object else "", set()):
+        unsafe_reference = True
+    if re.search(r"^tell me more about (?!it[\s.!?]*$|them[\s.!?]*$|this[\s.!?]*$|that[\s.!?]*$)", question, re.I):
+        unsafe_reference = True
+    new_destination = re.search(r"(?:怎么去|如何去|如何到|带我去|前往|去|到|\b(?:go|get) to)\s*(.+)", question, re.I) if route_intent else None
+    if new_destination and not re.fullmatch(r"(?:它|他|她|这个|那个|这里|那里|这儿|那儿|一下|呢|啊|呀|吧|吗|it|them|there|here|please|[\s?？!！.。])+", new_destination[1], re.I):
+        unsafe_reference = True
+    contextual_only = followup and unsafe_reference
+    if contextual_only:
+        followup = False
     explicit = any(rank(question, r)[0] == 1 for _, r in content)
     if explicit:
         selected = None  # Explicit current-turn objects override old selections.
@@ -214,6 +232,8 @@ def lookup(store: Any, exhibition_id: str, question: str, *, selected_entity_id:
     result = LookupResult(intent=intent, total=len(candidates),
                           exact_hit=bool(selected or (ranked and ranked[0][0][0] == 1) or (listing and generic)),
                           truncated=len(candidates) > top_k)
+    if contextual_only and not explicit and not corrected and len(previous_ids or []) == 1:
+        result.reference_items = [fact(by_id[eid][1], by_id[eid][0]) for eid in (previous_ids or [])[:top_k] if eid in by_id]
     result.matches = [{"id": str(r["id"]), "type": kind, "field": key, "keyword": value, "score": 1.0}
                       for kind, r in candidates for key, value in term_fields(r)
                       if occurrences(question, value, code=key in {"boothCode", "modelNo", "code"})]
