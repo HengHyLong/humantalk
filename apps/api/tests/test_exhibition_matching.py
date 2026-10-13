@@ -81,7 +81,8 @@ def test_route_origin_destination_and_conflicts():
     assert coded.reason == "route_valid" and coded.destination_id == "booth"
     assert lookup(store, "expo", "从西门到科技展台").reason == "route_missing_from_origin"
     unknown = lookup(store, "expo", "从酒店到科技展台")
-    assert unknown.reason == "route_origin_unknown" and service_answer(unknown, "zh-CN")
+    assert unknown.reason == "route_origin_unknown" and unknown.status == "not_found"
+    assert service_answer(unknown, "zh-CN") == ""
     assert lookup(store, "expo", "怎么去科技展台和西门").reason == "route_multiple_destinations"
     store.data["routes"][0]["pointIds"] = ["east", "west"]
     assert lookup(store, "expo", "从东门到科技展台").reason == "route_config_conflict"

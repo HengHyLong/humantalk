@@ -356,7 +356,8 @@ def test_unsupported_intent_and_translation_reach_dify_with_current_facts(tmp_pa
     assert r.json()["routing_reason"] == reason
 
 
-def test_route_configuration_clarification_skips_dify(tmp_path, monkeypatch):
+@pytest.mark.parametrize("question", ["如何从成都大学到西博城", "从酒店到测试科技", "怎么去未收录的目的地", "从入口去未收录的目的地"])
+def test_unmatched_routes_use_dify_without_navigation_popup(tmp_path, monkeypatch, question):
     app = FastAPI()
     app.state.settings = SimpleNamespace(dify_chat_base_url="", dify_chat_api_key="")
     app.state.admin_store = business_store(tmp_path)
@@ -364,11 +365,18 @@ def test_route_configuration_clarification_skips_dify(tmp_path, monkeypatch):
     app.include_router(qa.router)
     async def session(*args):
         return {"state": "ready", "model": "mock"}
+    calls = []
     async def chat(*args, **kwargs):
-        pytest.fail("invalid route must not call Dify")
+        context = json.loads(kwargs["inputs"]["retrieval_context"])
+        assert kwargs["inputs"]["retrieval_status"] == "not_found"
+        assert context["intent"] == "route"
+        calls.append(kwargs)
+        return ChatReply("您希望乘坐公共交通还是驾车前往？", "conversation")
     monkeypatch.setattr(qa.session_service, "get_session", session)
     monkeypatch.setattr(DifyChatClient, "chat", chat)
-    r = TestClient(app).post("/exhibitions/expo/qa/query", json={"session_id": "sid", "turn_id": "turn", "question": "从酒店到测试科技"})
+    r = TestClient(app).post("/exhibitions/expo/qa/query", json={"session_id": "sid", "turn_id": "turn", "question": question})
     assert r.status_code == 200
-    assert r.json()["routing_reason"] == "route_origin_unknown"
-    assert r.json()["need_clarification"] and r.json()["navigation"] is None
+    assert r.json()["match_type"] == "dify" and len(calls) == 1
+    assert r.json()["answer"] == "您希望乘坐公共交通还是驾车前往？"
+    assert not r.json()["need_clarification"]
+    assert r.json()["navigation"] is None and r.json()["related_entities"] == []

@@ -1,5 +1,7 @@
 # v2.6 digital human answer routing
 
+Recognizing a navigation intent does not mean a database route matched. Unknown origins/destinations and missing routes fall back to Dify with `match_type=dify`, without route or destination popups. Clarification remains for an actual matched route requiring an origin, or multiple matched destinations. Dify distinguishes general travel between cities, schools and venues from navigation inside the exhibition. Relevant knowledge and reliable general information can support travel advice; missing database coverage alone must not cause refusal. Unsupported indoor paths, distances, durations and live transport details must not be invented.
+
 ## Frontend access password
 
 The digital human UI requires server-side password verification before initialization. The initial password is `10528`. Administrators can change it (5–128 characters) under System → Model management → Frontend access password with `system:llm:write` permission. Only an Argon2 hash is stored in the admin database's `frontend_access` table; neither passwords nor hashes are returned. Changing it immediately invalidates previous browser sessions. The UI checks on startup, window focus and every minute.

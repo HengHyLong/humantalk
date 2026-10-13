@@ -268,6 +268,7 @@ def lookup(store: Any, exhibition_id: str, question: str, *, selected_entity_id:
             origin = ""
         destination_question = destination_override or destination_question
         if origin.startswith("!"):
+            result.status = "not_found"
             result.reason = origin[1:]
             return result
         # Remove origin-only entities before counting requested destinations.
@@ -487,7 +488,6 @@ def json_public(item: dict) -> str:
 
 def service_answer(result: LookupResult, locale: str) -> str:
     prompts = {
-        "route_origin_unknown": ("没有识别到有效的起点，请告诉我您当前所在的入口或展台。", "Please specify a known entrance or booth as your starting point."),
         "route_origin_required": ("请告诉我您从哪个入口或展台出发。", "Which entrance or booth are you starting from?"),
         "route_multiple_destinations": ("您提到了多个目的地，请先选择一个目的地。", "Please select one destination first."),
         "exhibition_scope_mismatch": ("您提到的展会与当前展会不同，请先切换展会或确认要查询的展会。", "Please switch exhibitions or confirm which exhibition you want to ask about."),
