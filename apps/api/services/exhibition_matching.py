@@ -38,24 +38,35 @@ def occurrences(question: str, value: str, *, code: bool = False) -> list[tuple[
     return result
 
 
-def classify(question: str) -> str:
-    intro = bool(re.search(r"介绍|了解|讲讲|说说|introduce|tell.*about", question, re.I))
+def navigation_requested(question: str) -> bool:
     # Negated navigation clauses are not requests to travel.
     positive = re.sub(r"(?:不去|不要去|don't go|do not go)[^，。；,;]*", "", question, flags=re.I)
-    route = bool(re.search(r"怎么走|怎么去|如何到|如何去|路线|导航|带我去|前往|(?:^|我想|我要|请)去|从.+(?:到|去)|how.*(?:get|go)|directions|\broute\b|from.+to", positive, re.I))
-    if intro and route:
+    return bool(re.search(r"怎么走|怎么去|如何到|如何去|路线|导航|带我去|前往|(?:^|我想|我要|请)去|从.+(?:到|去)|how.*(?:get|go)|directions|\broute\b|from.+to", positive, re.I))
+
+
+def classify(question: str) -> str:
+    intro = bool(re.search(r"介绍|了解|讲讲|说说|introduce|tell.*about", question, re.I))
+    route = navigation_requested(question)
+    registration = bool(re.search(r"登记|报名|扫码|二维码|register|registration|qr\s*code|sign up", question, re.I))
+    knowledge = bool(re.search(r"价格|多少钱|收费|成立|优点|缺点|推荐|为什么|原因|几个|多少|预约|预订|多久|多远|距离|耗时|几点|开放时间|开门|门票|票价|price|cost|pros|cons|recommend|why|how many|founded|book|duration|distance|how long|how far", question, re.I))
+    listing = bool(re.search(r"有哪些|有什么|列出|\blist\b|(?:which|what) (?:exhibitors|exhibits|products|venues)", question, re.I))
+    location = bool(re.search(r"在哪|哪里|展位|位置|地址|where|location|booth|address", question, re.I))
+    joined = bool(re.search(r"并|同时|另外|以及|还有|，|,|；|;|\band\b|\balso\b", question, re.I))
+    if (route and (intro or registration or knowledge or listing)
+            or listing and location
+            or joined and intro and (registration or location)):
         return "compound"
-    if re.search(r"登记|报名|扫码|二维码|register|registration|qr\s*code|sign up", question, re.I):
+    if registration:
         return "registration"
     if route:
         return "route"
     if re.search(r"区别|比较|对比|关系|相比|compare|difference|relationship|versus|\bvs\b", question, re.I):
         return "comparison"
-    if re.search(r"价格|多少钱|收费|成立|优点|缺点|推荐|为什么|原因|几个|多少|预约|预订|price|cost|pros|cons|recommend|why|how many|founded|book", question, re.I):
+    if knowledge:
         return "knowledge"
-    if re.search(r"有哪些|有什么|列出|\blist\b|(?:which|what) (?:exhibitors|exhibits|products|venues)", question, re.I):
+    if listing:
         return "list"
-    if re.search(r"在哪|哪里|展位|位置|地址|where|location|booth|address", question, re.I):
+    if location:
         return "location"
     return "intro" if intro else "unknown"
 

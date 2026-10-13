@@ -222,7 +222,12 @@ def lookup(store: Any, exhibition_id: str, question: str, *, selected_entity_id:
     if foreign:
         result.reason = "exhibition_scope_mismatch"
         result.items = [fact(r, "exhibition") for r in foreign[:top_k]]
-        result.status = "multiple"
+        result.status = "matched" if len(foreign) == 1 else "multiple"
+        result.total = len(foreign)
+        result.exact_hit = True
+        result.truncated = len(foreign) > top_k
+        result.matches = [{"id": str(r["id"]), "type": "exhibition", "field": key, "keyword": value, "score": 1.0}
+                          for r in foreign for key, value in term_fields(r) if occurrences(question, value)]
         return result
     if expo_hits and not candidates:
         result.items = [fact(r, "exhibition") for r in expo_hits[:top_k]]
@@ -444,10 +449,12 @@ def database_answer(result: LookupResult, question: str, locale: str) -> str:
         return ""
     if result.reason not in {"exact_match", "route_valid"} or result.intent not in {"intro", "location", "list", "route"}:
         return ""
-    if result.intent == "list" and len(result.items) > 1:
+    if result.intent == "list" and result.items and all("exhibits" not in i for i in result.items):
         if locale == "en-US" and any(re.search(r"[\u4e00-\u9fff]", str(i.get("name", ""))) for i in result.items):
             return ""
-        names = [str(i.get("name", "")) for i in result.items]
+        names = [str(i.get("name") or "").strip() for i in result.items]
+        if not all(names):
+            return ""
         return "Available at this exhibition: " + ", ".join(names) + "." if locale == "en-US" else "当前展会有：" + "、".join(names) + "。"
     if len(result.items) != 1:
         return ""
@@ -461,11 +468,11 @@ def database_answer(result: LookupResult, question: str, locale: str) -> str:
         return spoken_answer(str(text or ""))
     location = result.intent == "location"
     parent = item.get("exhibitor") or {}
-    booth = item.get("booth_code") or parent.get("booth_code")
+    booth = str(item.get("booth_code") or parent.get("booth_code") or "").strip()
     if location:
         if booth:
             return f"{name} is at booth {booth}." if english else f"{name}位于{booth}展位。"
-        address = item.get("address")
+        address = str(item.get("address") or "").strip()
         if address:
             return f"{name}: {address}." if english else f"{name}位于{address}。"
         return ""
@@ -473,7 +480,10 @@ def database_answer(result: LookupResult, question: str, locale: str) -> str:
         products = item["exhibits"]
         if not products:
             return ""
-        names = ", ".join(p.get("name", "") for p in products)
+        product_names = [str(p.get("name") or "").strip() for p in products]
+        if not all(product_names):
+            return ""
+        names = ", ".join(product_names)
         return f"{name}: {names}." if english else f"{name}的展品有：{names}。"
     text = item.get("spoken_text") or item.get("description")
     if text:
@@ -487,10 +497,10 @@ def json_public(item: dict) -> str:
 
 
 def service_answer(result: LookupResult, locale: str) -> str:
+    if result.reason != "route_origin_required" or not result.route_ids or result.truncated:
+        return ""
     prompts = {
         "route_origin_required": ("请告诉我您从哪个入口或展台出发。", "Which entrance or booth are you starting from?"),
-        "route_multiple_destinations": ("您提到了多个目的地，请先选择一个目的地。", "Please select one destination first."),
-        "exhibition_scope_mismatch": ("您提到的展会与当前展会不同，请先切换展会或确认要查询的展会。", "Please switch exhibitions or confirm which exhibition you want to ask about."),
     }
     prompt = prompts.get(result.reason)
     return prompt[locale == "en-US"] if prompt else ""

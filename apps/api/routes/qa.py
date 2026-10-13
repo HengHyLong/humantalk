@@ -25,6 +25,7 @@ from apps.api.services.exhibition_qa import (
 from opentalking.runtime.bus import publish_event
 from apps.api.services.dify_chat import DifyChatClient, DifyChatError, turns_for, turn_key, same_turn, save_context
 from apps.api.services.exhibition_lookup import lookup, database_answer, service_answer
+from apps.api.services.exhibition_matching import navigation_requested
 
 
 router = APIRouter(prefix="/exhibitions", tags=["exhibition-qa"])
@@ -691,10 +692,12 @@ async def query_exhibition_qa(exhibition_id: str, body: QaQueryRequest, request:
             registration = {"strategy_id": "exhibit-survey", "exhibit_id": card["id"], "title": card["name"],
                             "path": card["survey_path"], "spoken_text": "Please scan the QR code to register." if body.locale == "en-US" else "请使用手机扫码完成登记。"}
             answer = registration["spoken_text"]
+            used_service = True
         else:
-            answer = "Registration is not configured for this exhibit. Please ask the staff." if body.locale == "en-US" else "该展品暂未配置登记入口，请咨询现场工作人员。"
             result.reason = "registration_unavailable"
-        used_service = True
+            for item in result.items:
+                item["registration_available"] = False
+            context = retrieval_context()
     if not answer:
         answer = database_answer(result, body.question, body.locale)
         if not answer and result.reason == "exact_match":
@@ -814,7 +817,7 @@ async def query_exhibition_qa(exhibition_id: str, body: QaQueryRequest, request:
     if navigation:
         navigation.update(language=body.locale, spoken_text=answer, subtitle_text=answer)
         related = []
-    elif result.intent == "route":
+    elif result.intent == "route" or (result.intent == "compound" and navigation_requested(body.question)):
         # A navigation request must not open an introduction popup for its
         # destination while route resolution is pending or unavailable.
         related = []
