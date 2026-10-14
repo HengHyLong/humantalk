@@ -23,6 +23,7 @@ class InMemoryRedis:
     def __init__(self) -> None:
         self._hash: dict[str, dict[str, str]] = {}
         self._kv: dict[str, bytes] = {}
+        self._lists: dict[str, list[bytes]] = {}
         self._task_queue: asyncio.Queue[str] | None = None
         self._listeners: dict[str, list[asyncio.Queue[dict[str, Any]]]] = defaultdict(list)
         self._expiry: dict[str, float] = {}
@@ -42,6 +43,7 @@ class InMemoryRedis:
         self._expiry.pop(name, None)
         self._hash.pop(name, None)
         self._kv.pop(name, None)
+        self._lists.pop(name, None)
 
     def _register_listener(self, channel: str, q: asyncio.Queue[dict[str, Any]]) -> None:
         if q not in self._listeners[channel]:
@@ -93,6 +95,9 @@ class InMemoryRedis:
             if name in self._kv:
                 del self._kv[name]
                 removed = True
+            if name in self._lists:
+                del self._lists[name]
+                removed = True
             if removed:
                 self._expiry.pop(name, None)
                 n += 1
@@ -100,11 +105,11 @@ class InMemoryRedis:
 
     async def exists(self, name: str) -> int:
         self._purge_if_expired(name)
-        return 1 if name in self._hash or name in self._kv else 0
+        return 1 if name in self._hash or name in self._kv or name in self._lists else 0
 
     async def expire(self, name: str, seconds: int) -> int:
         self._purge_if_expired(name)
-        if name not in self._hash and name not in self._kv:
+        if name not in self._hash and name not in self._kv and name not in self._lists:
             return 0
         self._expiry[name] = monotonic() + max(0, seconds)
         return 1
@@ -127,10 +132,29 @@ class InMemoryRedis:
         return self._kv.get(name)
 
     async def rpush(self, name: str, *values: str) -> int:
-        _ = name  # only TASK_QUEUE used
-        for v in values:
-            await self.task_queue.put(str(v))
-        return len(values)
+        if name == TASK_QUEUE:
+            for v in values:
+                await self.task_queue.put(str(v))
+            return len(values)
+        self._purge_if_expired(name)
+        items = self._lists.setdefault(name, [])
+        items.extend(str(v).encode("utf-8") for v in values)
+        return len(items)
+
+    async def llen(self, name: str) -> int:
+        self._purge_if_expired(name)
+        return len(self._lists.get(name, []))
+
+    async def lpop(self, name: str) -> bytes | None:
+        self._purge_if_expired(name)
+        items = self._lists.get(name)
+        return items.pop(0) if items else None
+
+    async def incr(self, name: str) -> int:
+        self._purge_if_expired(name)
+        value = int(self._kv.get(name, b"0")) + 1
+        self._kv[name] = str(value).encode("ascii")
+        return value
 
     async def brpop(self, keys: str | list[str], timeout: int = 0) -> tuple[str, str] | None:
         if isinstance(keys, str):

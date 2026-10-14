@@ -119,7 +119,15 @@ class FrontendAccessMiddleware:
         if scope["type"] not in {"http", "websocket"}:
             return await self.app(scope, receive, send)
         path = scope["path"]
-        if scope.get("method") == "OPTIONS" or path == "/healthz" or path.startswith(("/frontend-access/", "/api/v1/auth/", "/api/v1/public/exhibit-surveys/")):
+        method = scope.get("method")
+        remote_parts = path.strip("/").split("/")
+        public_remote_question = (
+            len(remote_parts) == 2 and remote_parts[0] == "remote-questions" and method == "GET"
+        ) or (
+            len(remote_parts) == 3 and remote_parts[0] == "remote-questions"
+            and remote_parts[2] == "questions" and method == "POST"
+        )
+        if method == "OPTIONS" or path == "/healthz" or public_remote_question or path.startswith(("/frontend-access/", "/api/v1/auth/", "/api/v1/public/exhibit-surveys/")):
             return await self.app(scope, receive, send)
         connection = HTTPConnection(scope)
         if await run_in_threadpool(authenticated, connection):

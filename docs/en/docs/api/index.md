@@ -43,9 +43,15 @@ Identifier formats:
 
 v2.6 routes exhibition questions through `POST /exhibitions/{exhibition_id}/qa/query`: exact database keyword hits speak directly; other questions use Dify. `POST /runtime-config/dify/test` checks saved application connectivity and requires administrator `system:llm:write` permission. Updating Dify fields through `POST /runtime-config/apply` requires the same permission. See [Dify answer routing](../../developer-guide/dify-chat-v26.md).
 
+For scan-to-ask, the display creates a temporary pairing token. A phone submits text through the QR page, while the display uses a separate `display_key` to take questions in order and send them through the existing exhibition Q&A flow. Tokens last up to 12 hours and become unusable when the session closes. Anonymous submissions are limited to 12 per token per minute and 20 queued questions. The `display_key` is never included in the QR code.
+
 | Method | Path | Group |
 |--------|------|-------|
 | `POST` | `/exhibitions/{exhibition_id}/qa/query` | Exhibition Q&A |
+| `POST` | `/remote-questions/pair` | Create display pairing |
+| `GET` | `/remote-questions/{token}` | Check display availability from a phone |
+| `POST` | `/remote-questions/{token}/questions` | Submit a phone question |
+| `POST` | `/remote-questions/{token}/next` | Take the next question using `display_key` |
 | `POST` | `/runtime-config/dify/test` | Dify configuration |
 | `GET` | `/health` | Health and Models |
 | `GET` | `/healthz` | Health and Models |

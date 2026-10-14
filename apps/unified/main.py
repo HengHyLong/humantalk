@@ -33,7 +33,7 @@ from apps.api.main import (
     _validation_error_handler,
 )
 from apps.api.routes.avatars import _call_adapter_warmup
-from apps.api.routes import agent, avatars, events, exports, health, memory, models, personas, qa, runtime_config, scene_assets, sessions, tts_preview, video_clone, video_creation, voices
+from apps.api.routes import agent, avatars, events, exports, health, memory, models, personas, qa, remote_questions, runtime_config, scene_assets, sessions, tts_preview, video_clone, video_creation, voices
 from apps.api.services.vidu_service import ViduSessionManager
 from apps.api.services.frontend_access import FrontendAccessMiddleware, router as frontend_access_router, admin_router as frontend_access_admin_router
 from opentalking.voice.store import init_voice_store
@@ -286,6 +286,7 @@ def create_app() -> FastAPI:
     app.include_router(memory.router)
     app.include_router(sessions.router)
     app.include_router(qa.router)
+    app.include_router(remote_questions.router)
     app.include_router(agent.router)
     app.include_router(agent.router, prefix="/api")
     app.include_router(personas.router)

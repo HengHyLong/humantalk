@@ -27,6 +27,22 @@ def client_for(tmp_path):
     def survey():
         return {"public": True}
 
+    @app.get("/remote-questions/test")
+    def remote_question_info():
+        return {"public": True}
+
+    @app.post("/remote-questions/test/questions")
+    def remote_question_submit():
+        return {"public": True}
+
+    @app.post("/remote-questions/pair")
+    def remote_question_pair():
+        return {"private": True}
+
+    @app.post("/remote-questions/test/next")
+    def remote_question_next():
+        return {"private": True}
+
     @app.websocket("/sessions/test/stt")
     async def ws(websocket: WebSocket):
         await websocket.accept()
@@ -81,6 +97,10 @@ def test_admin_rotation_revokes_old_sessions_and_persists(tmp_path):
 def test_rate_limit_surveys_and_websocket_guard(tmp_path):
     with client_for(tmp_path) as client:
         assert client.get("/api/v1/public/exhibit-surveys/test").status_code == 200
+        assert client.get("/remote-questions/test").status_code == 200
+        assert client.post("/remote-questions/test/questions").status_code == 200
+        assert client.post("/remote-questions/pair").status_code == 401
+        assert client.post("/remote-questions/test/next").status_code == 401
         from starlette.websockets import WebSocketDisconnect
         with pytest.raises(WebSocketDisconnect) as exc:
             with client.websocket_connect("/sessions/test/stt"):

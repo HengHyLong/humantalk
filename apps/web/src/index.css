@@ -155,6 +155,11 @@ body {
 .digital-display-languages button { min-height: 43px; border: 0; border-bottom: 1px solid rgba(7, 77, 125, .12); color: #14658f; background: transparent; font-size: 12px; cursor: pointer; }
 .digital-display-languages button:hover,
 .digital-display-languages button.is-active { color: #fff; background: #1999da; }
+.digital-display-scan-question { position: absolute; z-index: 39; top: 76px; right: 24px; display: flex; width: clamp(132px, 13vw, 190px); flex-direction: column; align-items: center; gap: 4px; border: 1px solid rgba(177, 236, 255, .5); border-radius: 16px; padding: 10px; color: #fff; background: rgba(3, 36, 77, .72); box-shadow: 0 16px 38px rgba(0, 17, 48, .3); text-align: center; backdrop-filter: blur(12px); }
+.digital-display-scan-question img { display: block; width: 100%; aspect-ratio: 1; border-radius: 8px; background: #fff; }
+.digital-display-scan-question strong { font-size: clamp(12px, 1.2vw, 16px); }
+.digital-display-scan-question span { color: rgba(224, 246, 255, .8); font-size: clamp(9px, .9vw, 11px); }
+@media (max-width: 640px) { .digital-display-scan-question { top: 74px; right: 10px; width: 114px; padding: 7px; } .digital-display-scan-question span { display: none; } }
 
 .digital-display-watermark { top: 33px; right: 152px; color: rgba(216, 245, 255, .36); font-size: 9px; letter-spacing: .22em; }
 

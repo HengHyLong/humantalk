@@ -41,9 +41,15 @@ multipart 上传（`multipart/form-data`）。
 
 v2.6 展会问答通过 `POST /exhibitions/{exhibition_id}/qa/query` 分流：明确的数据库关键词命中直接播报，其余问题使用 Dify。`POST /runtime-config/dify/test` 测试已保存的智能体连接，需要管理员 `system:llm:write` 权限；`POST /runtime-config/apply` 修改 Dify 配置时也需要该权限。详细配置参见 [Dify 问答分流](../../developer-guide/dify-chat-v26.md)。
 
+扫码提问由屏幕创建临时配对码，手机通过二维码页面提交文字，屏幕凭独立的 `display_key` 按顺序领取问题，再调用现有展会问答接口。配对码最长有效 12 小时；会话结束后立即不可用。匿名提问每个二维码每分钟最多 12 条，待处理队列最多 20 条。`display_key` 只返回给屏幕，不放进二维码。
+
 | 方法 | 路径 | 分组 |
 |------|------|------|
 | `POST` | `/exhibitions/{exhibition_id}/qa/query` | 展会问答 |
+| `POST` | `/remote-questions/pair` | 屏幕创建扫码提问配对 |
+| `GET` | `/remote-questions/{token}` | 手机查看数字人是否在线 |
+| `POST` | `/remote-questions/{token}/questions` | 手机提交问题 |
+| `POST` | `/remote-questions/{token}/next` | 屏幕领取下一个问题，需 `display_key` |
 | `POST` | `/runtime-config/dify/test` | Dify 配置 |
 | `GET` | `/health` | 健康检查与模型 |
 | `GET` | `/healthz` | 健康检查与模型 |

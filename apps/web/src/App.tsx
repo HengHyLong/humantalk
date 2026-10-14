@@ -44,6 +44,8 @@ import {
   listSceneBackgrounds,
   listSceneCompositions,
   queryExhibitionQa,
+  createRemoteQuestionPair,
+  takeRemoteQuestion,
   transcribeSessionAudio,
   loadRuntimeConfig,
   uploadExportVideo,
@@ -61,6 +63,7 @@ import {
   type PersonasResponse,
   type RuntimeConfigApplyInput,
   type RuntimeConfigResponse,
+  type RemoteQuestionPair,
   type SceneBackgroundAsset,
   type SceneComposition,
   type SessionKnowledgeBasesRequest,
@@ -1053,6 +1056,8 @@ export default function App() {
   // Connection
   const [connection, setConnection] = useState<ConnectionStatus>("idle");
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [remoteQuestionPair, setRemoteQuestionPair] = useState<RemoteQuestionPair | null>(null);
+  const [remoteQuestionQr, setRemoteQuestionQr] = useState<string | null>(null);
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
   const [queueInfo, setQueueInfo] = useState<QueueInfo | null>(null);
   const [expiringCountdown, setExpiringCountdown] = useState<number | null>(null);
@@ -3108,6 +3113,58 @@ export default function App() {
     void routeRecognizedText(text);
   }, [routeRecognizedText]);
 
+  useEffect(() => {
+    if (!sessionId || !configuredExhibitionId || workflow !== "realtime" || (connection !== "live" && connection !== "expiring")) {
+      setRemoteQuestionPair(null);
+      setRemoteQuestionQr(null);
+      return;
+    }
+    let active = true;
+    const pair = async () => {
+      try {
+        const next = await createRemoteQuestionPair(sessionId, configuredExhibitionId);
+        const url = new URL(window.location.href);
+        url.pathname = "/";
+        url.search = "";
+        url.hash = "";
+        url.searchParams.set("ask", next.token);
+        const { toDataURL } = await import("qrcode");
+        const qr = await toDataURL(url.toString(), { width: 280, margin: 2, errorCorrectionLevel: "M" });
+        if (active) {
+          setRemoteQuestionPair(next);
+          setRemoteQuestionQr(qr);
+        }
+      } catch (error) {
+        console.warn("Remote question pairing failed", error);
+        if (active) { setRemoteQuestionPair(null); setRemoteQuestionQr(null); }
+      }
+    };
+    void pair();
+    const refresh = window.setInterval(() => void pair(), 6 * 60 * 60 * 1000);
+    return () => { active = false; window.clearInterval(refresh); };
+  }, [sessionId, configuredExhibitionId, workflow, connection]);
+
+  useEffect(() => {
+    if (!remoteQuestionPair || !sessionId || workflow !== "realtime" || (connection !== "live" && connection !== "expiring") || voiceTurnActive || isSpeaking) return;
+    let active = true;
+    let polling = false;
+    const poll = async () => {
+      if (polling || !active) return;
+      polling = true;
+      try {
+        const question = await takeRemoteQuestion(remoteQuestionPair);
+        if (active && question) void routeRecognizedText(question, { displayText: `扫码观众：${question}` });
+      } catch (error) {
+        console.warn("Remote question polling failed", error);
+      } finally {
+        polling = false;
+      }
+    };
+    void poll();
+    const timer = window.setInterval(() => void poll(), 2000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [remoteQuestionPair, sessionId, workflow, connection, voiceTurnActive, isSpeaking, routeRecognizedText]);
+
   const handleExhibitionEntitySelect = useCallback((entity: ExhibitionEntityCard) => {
     void routeRecognizedText(entity.kind === "exhibitor"
       ? (englishConversation ? `What products does ${entity.name} have?` : `${entity.name}有哪些展品？`)
@@ -3741,6 +3798,7 @@ export default function App() {
       ) : workflow === "realtime" ? (
         <DigitalHumanDisplay
           videoRef={videoRef}
+          scanQuestionQr={remoteQuestionQr}
           videoStream={remoteStream}
           scene={selectedScene}
           backgrounds={sceneBackgrounds}

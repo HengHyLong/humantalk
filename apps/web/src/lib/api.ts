@@ -521,6 +521,20 @@ export async function queryExhibitionQa(
   );
 }
 
+export type RemoteQuestionPair = { token: string; display_key: string; expires_in: number };
+
+export async function createRemoteQuestionPair(sessionId: string, exhibitionId: string): Promise<RemoteQuestionPair> {
+  return apiPost<RemoteQuestionPair>("/remote-questions/pair", { session_id: sessionId, exhibition_id: exhibitionId });
+}
+
+export async function takeRemoteQuestion(pair: RemoteQuestionPair): Promise<string | null> {
+  const result = await apiPost<{ question: string | null }>(
+    `/remote-questions/${encodeURIComponent(pair.token)}/next`,
+    { display_key: pair.display_key },
+  );
+  return result.question;
+}
+
 export async function queryExhibitionShopping(
   exhibitionId: string | null | undefined,
   input: { text: string; session_id: string; language: ConversationLanguage },

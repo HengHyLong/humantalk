@@ -56,6 +56,7 @@ type DigitalHumanDisplayProps = {
   prewarmModel?: "quicktalk" | "wav2lip" | null;
   onStart: () => void;
   onSend: (text: string) => void;
+  scanQuestionQr?: string | null;
   onSuggestionSend?: (text: string) => void;
   onInterrupt: () => void;
   onSpeakAudio?: (blob: Blob) => void | Promise<void>;
@@ -114,6 +115,7 @@ export function DigitalHumanDisplay({
                                       prewarmModel = null,
                                       onStart,
                                       onSend,
+                                      scanQuestionQr = null,
                                       onSuggestionSend,
                                       onInterrupt,
                                       onSpeakAudio,
@@ -382,6 +384,14 @@ export function DigitalHumanDisplay({
               ))}
               <button type="button">四川话</button>
             </aside>
+
+            {live && scanQuestionQr ? (
+                <aside className="digital-display-scan-question" aria-label={english ? "Scan to ask a question" : "扫码提问"}>
+                  <img src={scanQuestionQr} alt={english ? "Scan with your phone to ask the digital human" : "手机扫码向数字人提问"} />
+                  <strong>{english ? "Scan to ask" : "扫码向我提问"}</strong>
+                  <span>{english ? "Type on your phone · Answered here" : "手机输入 · 现场回答"}</span>
+                </aside>
+            ) : null}
 
             <aside className={`digital-display-quick-actions ${quickActionsOpen ? "is-open" : ""}`}>
               <button
