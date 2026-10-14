@@ -293,6 +293,8 @@ def _load_yaml_source() -> dict[str, Any]:
 
 def _legacy_env_mapping() -> dict[str, str]:
     return {
+        "OPENTALKING_TTS_LOCAL_QWEN3_TTS_MODEL": "local_qwen3_tts_model",
+        "OPENTALKING_TTS_LOCAL_QWEN3_TTS_SERVICE_URL": "local_qwen3_tts_service_url",
         "FLASHTALK_WS_URL": "flashtalk_ws_url",
         "FLASHTALK_FRAME_NUM": "flashtalk_frame_num",
         "FLASHTALK_MOTION_FRAMES_NUM": "flashtalk_motion_frames_num",

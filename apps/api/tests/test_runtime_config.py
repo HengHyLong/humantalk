@@ -367,3 +367,17 @@ async def test_switch_to_healthy_local_qwen_checks_synthesize_health(monkeypatch
         "OPENTALKING_TTS_LOCAL_QWEN3_TTS_SERVICE_URL": "http://127.0.0.1:19091/synthesize",
     }, request)
     assert urls == ["http://127.0.0.1:19091/health"]
+
+def test_saved_qwen_endpoint_survives_fresh_settings_load(monkeypatch, tmp_path):
+    _request(monkeypatch, tmp_path)
+    values = runtime_config._build_updates(runtime_config.RuntimeConfigPayload(
+        tts_provider="local_qwen3_tts", tts_model="Qwen/Qwen3-TTS-12Hz-0.6B-Base",
+        tts_base_url="http://127.0.0.1:19091/synthesize", tts_voice="local-default",
+    ))
+    runtime_config._write_env_updates(tmp_path / ".env", values)
+    get_settings.cache_clear()
+    settings = get_settings()
+    assert settings.local_qwen3_tts_service_url == "http://127.0.0.1:19091/synthesize"
+    assert settings.local_qwen3_tts_model == "Qwen/Qwen3-TTS-12Hz-0.6B-Base"
+    assert settings.normalized_tts_default_provider == "local_qwen3_tts"
+    get_settings.cache_clear()
