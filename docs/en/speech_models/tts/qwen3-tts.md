@@ -40,6 +40,7 @@ OPENTALKING_LOCAL_QWEN3_TTS_SERVICE_URL=http://127.0.0.1:19091/synthesize
 OPENTALKING_LOCAL_QWEN3_TTS_MODEL_DIR=./avatar_models/local-audio/Qwen__Qwen3-TTS-12Hz-0.6B-Base
 OPENTALKING_LOCAL_QWEN3_TTS_DEVICE=cuda:0
 OPENTALKING_LOCAL_QWEN3_TTS_DTYPE=bfloat16
+OPENTALKING_LOCAL_QWEN3_TTS_PRELOAD=1
 OPENTALKING_LOCAL_QWEN3_TTS_REF_AUDIO=/path/to/reference.wav
 OPENTALKING_LOCAL_QWEN3_TTS_REF_TEXT=Transcript matching the reference audio
 ```
@@ -105,3 +106,5 @@ streaming. Dify sentence scheduling still works, but each sentence waits for its
 synthesis to finish. CosyVoice supports incremental PCM; Edge uses an online
 service. Provide WAV samples for human listening rather than equating latency
 with voice quality. Keep the original default provider during evaluation.
+
+Set `OPENTALKING_LOCAL_QWEN3_TTS_PRELOAD=1` to load and warm the model before accepting requests, keeping cold-start work out of the first visitor request.

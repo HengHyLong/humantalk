@@ -48,3 +48,23 @@ def test_shared_qwen_service_serializes_generation_and_returns_complete_wav():
         assert len(audio) == 2400
         assert np.allclose(audio, 0.25)
         assert elapsed > 0
+
+def test_qwen_preload_finishes_before_serving_health(monkeypatch):
+    from fastapi.testclient import TestClient
+    from scripts.local_qwen3_tts_service import create_app
+    class Service:
+        model_dir = "test-model"
+        device = "cpu"
+        _model = None
+        def model(self):
+            self._model = object()
+        def synthesize_wav(self, request):
+            assert self._model is not None
+            self.warmup_text = request.text
+            return b"", 24000, 0.0
+    service = Service()
+    monkeypatch.setenv("OPENTALKING_LOCAL_QWEN3_TTS_PRELOAD", "1")
+    monkeypatch.setenv("OPENTALKING_LOCAL_QWEN3_TTS_WARMUP_TEXT", "欢迎参观")
+    with TestClient(create_app(service)) as client:
+        assert client.get("/health").json()["loaded"] is True
+        assert service.warmup_text == "欢迎参观"

@@ -40,6 +40,7 @@ OPENTALKING_LOCAL_QWEN3_TTS_SERVICE_URL=http://127.0.0.1:19091/synthesize
 OPENTALKING_LOCAL_QWEN3_TTS_MODEL_DIR=./avatar_models/local-audio/Qwen__Qwen3-TTS-12Hz-0.6B-Base
 OPENTALKING_LOCAL_QWEN3_TTS_DEVICE=cuda:0
 OPENTALKING_LOCAL_QWEN3_TTS_DTYPE=bfloat16
+OPENTALKING_LOCAL_QWEN3_TTS_PRELOAD=1
 OPENTALKING_LOCAL_QWEN3_TTS_REF_AUDIO=/path/to/reference.wav
 OPENTALKING_LOCAL_QWEN3_TTS_REF_TEXT=参考音频对应的文本
 ```
@@ -101,3 +102,5 @@ Qwen3-TTS 的音色 ID 使用 `local-default`，对应 sidecar 中配置的参�
 模型增量输出。Dify 逐句调度仍可用，但每句话须等待该句合成完毕。
 CosyVoice 可增量返回 PCM，Edge 依赖在线服务。试听 WAV 可供人工比较音质，
 时间指标不能代替音质评价。测试完成前保持原有默认 provider，避免影响观众。
+
+设置 `OPENTALKING_LOCAL_QWEN3_TTS_PRELOAD=1` 可在启动时加载并预热，完成后才接受请求，避免首位访客承担冷启动耗时。

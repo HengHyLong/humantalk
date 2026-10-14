@@ -6,6 +6,7 @@ import os
 import sys
 import threading
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -123,7 +124,16 @@ class Qwen3TTSService:
 
 
 def create_app(service: Qwen3TTSService) -> FastAPI:
-    app = FastAPI(title="OpenTalking Local Qwen3-TTS Service")
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        if os.environ.get("OPENTALKING_LOCAL_QWEN3_TTS_PRELOAD", "").lower() in {"1", "true", "yes"}:
+            service.model()
+            service.synthesize_wav(SynthesizeRequest(
+                text=os.environ.get("OPENTALKING_LOCAL_QWEN3_TTS_WARMUP_TEXT", "您好，欢迎参观。"),
+            ))
+        yield
+
+    app = FastAPI(title="OpenTalking Local Qwen3-TTS Service", lifespan=lifespan)
 
     @app.get("/health")
     def health() -> dict[str, Any]:
