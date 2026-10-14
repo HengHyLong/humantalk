@@ -78,3 +78,30 @@ curl -s -X POST http://127.0.0.1:19091/synthesize \
 | `reference audio and reference text` error | The Base model requires reference audio and text; configure `REF_AUDIO` and `REF_TEXT`. |
 | Model directory not found | Check that `OPENTALKING_LOCAL_QWEN3_TTS_MODEL_DIR` points to the downloaded directory. |
 | Dependency conflicts | Use the separate `.venv-qwen3-tts`; do not install sidecar dependencies into the main `.venv`. |
+
+
+## Admin selection and three-provider comparison
+
+Voice configuration and realtime testing support `edge`, `local_cosyvoice`, and
+`local_qwen3_tts`. The Qwen3 voice ID `local-default` uses the reference audio and
+transcript configured in its sidecar. This provider is distinct from the cloud
+DashScope provider.
+
+Select `local_qwen3_tts` in runtime configuration, use the full endpoint
+`http://127.0.0.1:19091/synthesize`, and select `Qwen/Qwen3-TTS-12Hz-0.6B-Base`.
+Saving validates `/health` and persists the endpoint and model. Reference audio
+must be configured in the sidecar environment, not merely named in the UI.
+
+Use separate virtual environments and loopback listeners, with a process manager
+for automatic restart. On multi-GPU hosts, use `CUDA_VISIBLE_DEVICES` to isolate
+TTS from avatar rendering. When physical GPU 1 is exposed alone, use `cuda:0`
+inside that sidecar.
+
+Compare identical short, exhibitor, and navigation texts. Record cold start,
+warm time to first PCM, total synthesis time, audio duration, failures, and actual
+avatar audio/mouth timing separately. The current Qwen3 sidecar returns a WAV
+after synthesizing the whole sentence; StreamingResponse does not imply model
+streaming. Dify sentence scheduling still works, but each sentence waits for its
+synthesis to finish. CosyVoice supports incremental PCM; Edge uses an online
+service. Provide WAV samples for human listening rather than equating latency
+with voice quality. Keep the original default provider during evaluation.

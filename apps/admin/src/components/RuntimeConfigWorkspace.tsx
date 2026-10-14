@@ -72,9 +72,16 @@ const RUNTIME_TTS_PRESETS: Record<TtsProviderExtended, { label: string; baseUrl:
   },
   local_cosyvoice: {
     label: "Local CosyVoice",
-    baseUrl: "http://127.0.0.1:9880",
+    baseUrl: "http://127.0.0.1:19090/synthesize",
     model: "FunAudioLLM/Fun-CosyVoice3-0.5B-2512",
     voice: "",
+    needsKey: false,
+  },
+  local_qwen3_tts: {
+    label: "Local Qwen3-TTS",
+    baseUrl: "http://127.0.0.1:19091/synthesize",
+    model: "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
+    voice: "local-default",
     needsKey: false,
   },
   indextts: {

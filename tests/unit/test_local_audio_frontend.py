@@ -38,7 +38,7 @@ def test_frontend_lists_local_tts_models_and_labels():
     assert "if (p === \"local_f5_tts\") return \"local_f5_tts\"" in app
     assert 'ttsProvider === "local_f5_tts"' in app[app.index("const sharedSystemPrompt"):app.index("targetModel: sharedSystemPrompt")]
     assert "iic/CosyVoice-300M" not in constants
-    assert "local_qwen3_tts" not in settings
+    assert "local_qwen3_tts" in settings
 
 def test_single_model_tts_provider_opens_voice_picker_first():
     settings = (WEB / "components" / "SettingsPanel.tsx").read_text(encoding="utf-8")
@@ -254,7 +254,7 @@ def test_frontend_hides_other_local_audio_experiments():
     assert "iic/CosyVoice-300M" not in constants
     assert "CosyVoice 300M" not in constants
     assert "本地实验" not in constants
-    assert "Qwen3-TTS" not in settings
+    assert "Qwen3-TTS" in settings
     assert "FunASR" not in settings
     assert "sherpa-onnx" not in settings
 

@@ -5,6 +5,7 @@ import {
   COSYVOICE_MODEL_OPTIONS,
   COSYVOICE_VOICE_OPTIONS,
   LOCAL_COSYVOICE_MODEL_OPTIONS,
+  LOCAL_QWEN3_TTS_MODEL_OPTIONS,
   LOCAL_F5_TTS_MODEL_OPTIONS,
   LOCAL_INDEXTTS_MODEL_OPTIONS,
   SAMBERT_MODEL_OPTIONS,
@@ -74,6 +75,7 @@ const PROVIDERS: Array<{ id: TtsProviderExtended; label: string; subtitle: strin
   { id: "cosyvoice", label: "CosyVoice", subtitle: "百炼" },
   { id: "sambert", label: "Sambert", subtitle: "百炼" },
   { id: "local_cosyvoice", label: "Local CosyVoice", subtitle: "本地模型" },
+  { id: "local_qwen3_tts", label: "Local Qwen3-TTS", subtitle: "本地模型" },
   { id: "indextts", label: "Local IndexTTS", subtitle: "本地部署" },
   { id: "local_f5_tts", label: "Local F5-TTS", subtitle: "本地模型" },
   { id: "xiaomi_mimo", label: "小米 MiMo", subtitle: "兼容 API" },
@@ -96,6 +98,7 @@ export function realtimeTtsModels(provider: TtsProviderExtended): Option[] {
   if (provider === "cosyvoice") return COSYVOICE_MODEL_OPTIONS;
   if (provider === "sambert") return SAMBERT_MODEL_OPTIONS;
   if (provider === "local_cosyvoice") return LOCAL_COSYVOICE_MODEL_OPTIONS;
+  if (provider === "local_qwen3_tts") return LOCAL_QWEN3_TTS_MODEL_OPTIONS;
   if (provider === "indextts") return LOCAL_INDEXTTS_MODEL_OPTIONS;
   if (provider === "local_f5_tts") return LOCAL_F5_TTS_MODEL_OPTIONS;
   if (provider === "xiaomi_mimo") return XIAOMI_MIMO_MODEL_OPTIONS;
@@ -104,6 +107,7 @@ export function realtimeTtsModels(provider: TtsProviderExtended): Option[] {
 
 function staticVoicesForProvider(provider: TtsProviderExtended): Option[] {
   if (provider === "edge") return EDGE_ZH_VOICES;
+  if (provider === "local_qwen3_tts") return [{ id: "local-default", label: "部署时配置的参考音色" }];
   if (provider === "dashscope") return QWEN_TTS_VOICE_OPTIONS;
   if (provider === "cosyvoice") return COSYVOICE_VOICE_OPTIONS;
   if (provider === "xiaomi_mimo") return XIAOMI_MIMO_VOICE_OPTIONS;
@@ -111,7 +115,7 @@ function staticVoicesForProvider(provider: TtsProviderExtended): Option[] {
 }
 
 function catalogProvider(provider: TtsProviderExtended): string | null {
-  if (["dashscope", "cosyvoice", "local_cosyvoice", "indextts", "local_f5_tts", "xiaomi_mimo"].includes(provider)) return provider;
+  if (["dashscope", "cosyvoice", "local_cosyvoice", "local_qwen3_tts", "indextts", "local_f5_tts", "xiaomi_mimo"].includes(provider)) return provider;
   return null;
 }
 

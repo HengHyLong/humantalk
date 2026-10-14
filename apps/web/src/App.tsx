@@ -93,6 +93,7 @@ import {
   COSYVOICE_MODEL_OPTIONS,
   COSYVOICE_VOICE_OPTIONS,
   LOCAL_COSYVOICE_MODEL_OPTIONS,
+  LOCAL_QWEN3_TTS_MODEL_OPTIONS,
   LOCAL_F5_TTS_MODEL_OPTIONS,
   LOCAL_INDEXTTS_MODEL_OPTIONS,
   LOCAL_TTS_VOICE_OPTIONS,
@@ -191,6 +192,8 @@ function bailianModelOptions(provider: TtsProviderExtended): { id: string; label
       return SAMBERT_MODEL_OPTIONS;
     case "local_cosyvoice":
       return LOCAL_COSYVOICE_MODEL_OPTIONS;
+    case "local_qwen3_tts":
+      return LOCAL_QWEN3_TTS_MODEL_OPTIONS;
     case "indextts":
       return LOCAL_INDEXTTS_MODEL_OPTIONS;
     case "local_f5_tts":
@@ -210,6 +213,8 @@ function bailianVoiceOptions(provider: TtsProviderExtended): { id: string; label
       return COSYVOICE_VOICE_OPTIONS;
     case "sambert":
       return [];
+    case "local_qwen3_tts":
+      return [{ id: "local-default", label: "部署时配置的参考音色" }];
     case "local_cosyvoice":
     case "indextts":
     case "local_f5_tts":
@@ -225,6 +230,7 @@ function catalogProviderKey(p: TtsProviderExtended): string | null {
   if (p === "dashscope") return "dashscope";
   if (p === "cosyvoice") return "cosyvoice";
   if (p === "local_cosyvoice") return "local_cosyvoice";
+  if (p === "local_qwen3_tts") return "local_qwen3_tts";
   if (p === "indextts") return "indextts";
   if (p === "local_f5_tts") return "local_f5_tts";
   if (p === "xiaomi_mimo") return "xiaomi_mimo";
@@ -604,6 +610,7 @@ function normalizeTtsProvider(value: string | null | undefined, fallback: TtsPro
     normalized === "cosyvoice" ||
     normalized === "sambert" ||
     normalized === "local_cosyvoice" ||
+    normalized === "local_qwen3_tts" ||
     normalized === "indextts" ||
     normalized === "local_f5_tts" ||
     normalized === "xiaomi_mimo" ||
@@ -3569,6 +3576,7 @@ export default function App() {
     runtimeConfig?.tts.api_key_set
       || runtimeConfigTtsProvider === "edge"
       || runtimeConfigTtsProvider === "local_cosyvoice"
+      || runtimeConfigTtsProvider === "local_qwen3_tts"
       || runtimeConfigTtsProvider === "indextts"
       || runtimeConfigTtsProvider === "local_indextts"
       || runtimeConfigTtsProvider === "omnirt_indextts"

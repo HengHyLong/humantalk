@@ -82,6 +82,8 @@ _RUNTIME_ENV_KEYS = {
     "OPENTALKING_TTS_COSYVOICE_MODEL",
     "OPENTALKING_TTS_SAMBERT_MODEL",
     "OPENTALKING_TTS_LOCAL_COSYVOICE_SERVICE_URL",
+    "OPENTALKING_TTS_LOCAL_QWEN3_TTS_SERVICE_URL",
+    "OPENTALKING_TTS_LOCAL_QWEN3_TTS_MODEL",
     "OPENTALKING_TTS_LOCAL_COSYVOICE_MODEL",
     "OPENTALKING_TTS_LOCAL_COSYVOICE_MODEL_DIR",
     "OPENTALKING_TTS_LOCAL_COSYVOICE_RUNTIME_DIR",
@@ -319,6 +321,16 @@ async def _validate_local_provider_switches(updates: dict[str, str], request: Re
         _ensure_sensevoice_available(values, settings)
     if updates.get("OPENTALKING_TTS_DEFAULT_PROVIDER") == "local_cosyvoice":
         await _ensure_local_cosyvoice_available(values, settings)
+    if updates.get("OPENTALKING_TTS_DEFAULT_PROVIDER") == "local_qwen3_tts":
+        service_url = _env_value(values, "OPENTALKING_TTS_LOCAL_QWEN3_TTS_SERVICE_URL", _settings_value(settings, "local_qwen3_tts_service_url"))
+        try:
+            if not service_url:
+                raise ValueError("missing service URL")
+            async with httpx.AsyncClient(timeout=httpx.Timeout(2.0, connect=0.5)) as client:
+                response = await client.get(_local_cosyvoice_health_url(service_url))
+                response.raise_for_status()
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail="本地 Qwen3-TTS 服务未配置或不可用，请先启动服务并检查地址。") from exc
 
 
 def _write_env_updates(path: Path, updates: dict[str, str]) -> None:
@@ -438,6 +450,11 @@ def _current_tts_payload(provider: str, settings: Any, values: dict[str, str]) -
         base_url = _env_value(values, "OPENTALKING_TTS_LOCAL_COSYVOICE_SERVICE_URL", _settings_value(settings, "tts_local_cosyvoice_service_url"))
         model = _env_value(values, "OPENTALKING_TTS_LOCAL_COSYVOICE_MODEL", _settings_value(settings, "tts_local_cosyvoice_model", "FunAudioLLM/Fun-CosyVoice3-0.5B-2512"))
         voice = _normalize_local_cosyvoice_voice(_env_value(values, "OPENTALKING_TTS_VOICE", _settings_value(settings, "tts_voice")))
+        key = ""
+    elif provider == "local_qwen3_tts":
+        base_url = _env_value(values, "OPENTALKING_TTS_LOCAL_QWEN3_TTS_SERVICE_URL", _settings_value(settings, "local_qwen3_tts_service_url"))
+        model = _env_value(values, "OPENTALKING_TTS_LOCAL_QWEN3_TTS_MODEL", _settings_value(settings, "local_qwen3_tts_model", "Qwen/Qwen3-TTS-12Hz-0.6B-Base"))
+        voice = _env_value(values, "OPENTALKING_TTS_VOICE", "local-default")
         key = ""
     elif provider == "indextts":
         base_url = (
@@ -703,6 +720,7 @@ def _build_updates(payload: RuntimeConfigPayload) -> dict[str, str]:
             "dashscope": "OPENTALKING_TTS_DASHSCOPE_SERVICE_URL",
             "cosyvoice": "OPENTALKING_TTS_COSYVOICE_SERVICE_URL",
             "local_cosyvoice": "OPENTALKING_TTS_LOCAL_COSYVOICE_SERVICE_URL",
+            "local_qwen3_tts": "OPENTALKING_TTS_LOCAL_QWEN3_TTS_SERVICE_URL",
             "indextts": "OPENTALKING_TTS_LOCAL_INDEXTTS_SERVICE_URL",
             "openai_compatible": "OPENTALKING_TTS_OPENAI_BASE_URL",
             "xiaomi_mimo": "OPENTALKING_TTS_XIAOMI_BASE_URL",
@@ -715,6 +733,7 @@ def _build_updates(payload: RuntimeConfigPayload) -> dict[str, str]:
             "cosyvoice": "OPENTALKING_TTS_COSYVOICE_MODEL",
             "sambert": "OPENTALKING_TTS_SAMBERT_MODEL",
             "local_cosyvoice": "OPENTALKING_TTS_LOCAL_COSYVOICE_MODEL",
+            "local_qwen3_tts": "OPENTALKING_TTS_LOCAL_QWEN3_TTS_MODEL",
             "indextts": "OPENTALKING_TTS_LOCAL_INDEXTTS_MODEL",
             "openai_compatible": "OPENTALKING_TTS_OPENAI_MODEL",
             "xiaomi_mimo": "OPENTALKING_TTS_XIAOMI_MODEL",

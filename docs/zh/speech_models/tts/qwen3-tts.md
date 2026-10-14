@@ -78,3 +78,26 @@ curl -s -X POST http://127.0.0.1:19091/synthesize \
 | `reference audio and reference text` 报错 | Base 模型需要参考音频和参考文本；配置 `REF_AUDIO` 与 `REF_TEXT`。 |
 | 模型目录找不到 | 检查 `OPENTALKING_LOCAL_QWEN3_TTS_MODEL_DIR` 是否指向下载目录。 |
 | 依赖冲突 | 使用独立 `.venv-qwen3-tts`，不要把 sidecar 依赖装进主 `.venv`。 |
+
+
+## 后台切换与三方案对比
+
+后台“声音配置”和“实时测试”支持 `edge`、`local_cosyvoice`、`local_qwen3_tts`。
+Qwen3-TTS 的音色 ID 使用 `local-default`，对应 sidecar 中配置的参考音频与文本；
+它与百炼云端 `dashscope` 是不同的 provider。
+
+在运行配置中选择 `local_qwen3_tts`，服务地址填写完整的
+`http://127.0.0.1:19091/synthesize`，模型填写 `Qwen/Qwen3-TTS-12Hz-0.6B-Base`。
+保存会校验 sidecar 的 `/health`，并持久化模型与地址。服务端参考音频配置
+保存在 sidecar 环境中，不能只在后台填写音色名称代替部署。
+
+建议将两种本地 TTS 放在独立虚拟环境，监听回环地址，并用进程管理器自动重启。
+多 GPU 环境可通过 sidecar 的 `CUDA_VISIBLE_DEVICES` 隔离 TTS 与口型生成；
+设置为物理 GPU 1 后，sidecar 内部设备应填写 `cuda:0`。
+
+对比时使用相同短句、展商介绍和路线文本，分别记录冷启动、预热后的首个 PCM
+耗时、合成总耗时、音频时长、失败次数，以及数字人实际首声与口型时间。
+当前 Qwen3 sidecar 整句合成 WAV 后返回；HTTP 使用 StreamingResponse 不等于
+模型增量输出。Dify 逐句调度仍可用，但每句话须等待该句合成完毕。
+CosyVoice 可增量返回 PCM，Edge 依赖在线服务。试听 WAV 可供人工比较音质，
+时间指标不能代替音质评价。测试完成前保持原有默认 provider，避免影响观众。

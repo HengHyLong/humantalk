@@ -58,6 +58,7 @@ const TTS_PROVIDER_LABELS: Record<TtsProviderExtended, string> = {
   cosyvoice: "Cosy",
   sambert: "Sambert",
   local_cosyvoice: "Local CosyVoice",
+  local_qwen3_tts: "Local Qwen3-TTS",
   indextts: "Local IndexTTS",
   local_f5_tts: "Local F5-TTS",
   xiaomi_mimo: "小米 MiMo",
@@ -70,6 +71,7 @@ const TTS_PROVIDER_SUBTITLES: Record<TtsProviderExtended, string> = {
   cosyvoice: "Bailian",
   sambert: "Bailian",
   local_cosyvoice: "本地模型",
+  local_qwen3_tts: "本地模型",
   indextts: "本地部署",
   local_f5_tts: "本地模型",
   xiaomi_mimo: "OpenAI 兼容",
@@ -489,7 +491,7 @@ export function SettingsPanel({
     subtitle: option.id,
     hasChildren: true,
   }));
-  const providerOptions: ColumnOption[] = (["edge", "dashscope", "cosyvoice", "sambert", "local_cosyvoice", "indextts", "local_f5_tts", "xiaomi_mimo", "openai_compatible"] as TtsProviderExtended[]).map((p) => ({
+  const providerOptions: ColumnOption[] = (["edge", "dashscope", "cosyvoice", "sambert", "local_cosyvoice", "local_qwen3_tts", "indextts", "local_f5_tts", "xiaomi_mimo", "openai_compatible"] as TtsProviderExtended[]).map((p) => ({
     id: p,
     label: TTS_PROVIDER_LABELS[p],
     subtitle: TTS_PROVIDER_SUBTITLES[p],
@@ -515,7 +517,7 @@ export function SettingsPanel({
   }));
   const providerHasSingleModel = (provider: TtsProviderExtended) => {
     if (provider === "edge" || provider === "openai_compatible") return true;
-    if (provider === "local_cosyvoice" || provider === "indextts" || provider === "local_f5_tts") return true;
+    if (provider === "local_cosyvoice" || provider === "local_qwen3_tts" || provider === "indextts" || provider === "local_f5_tts") return true;
     if (provider !== ttsProvider) return false;
     return qwenModelColumnOptions.length <= 1;
   };

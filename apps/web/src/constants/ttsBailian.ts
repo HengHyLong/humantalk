@@ -24,6 +24,10 @@ export const LOCAL_COSYVOICE_MODEL_OPTIONS: { id: string; label: string }[] = [
   { id: "FunAudioLLM/Fun-CosyVoice3-0.5B-2512", label: "CosyVoice3-0.5B-2512（本地模型）" },
 ];
 
+export const LOCAL_QWEN3_TTS_MODEL_OPTIONS: { id: string; label: string }[] = [
+  { id: "Qwen/Qwen3-TTS-12Hz-0.6B-Base", label: "Qwen3-TTS 0.6B Base（本地模型）" },
+];
+
 export const LOCAL_INDEXTTS_MODEL_OPTIONS: { id: string; label: string }[] = [
   { id: "IndexTeam/IndexTTS-2", label: "IndexTTS-2（本地模型）" },
 ];
@@ -57,6 +61,7 @@ export type TtsProviderExtended =
   | "cosyvoice"
   | "sambert"
   | "local_cosyvoice"
+  | "local_qwen3_tts"
   | "indextts"
   | "local_f5_tts"
   | "xiaomi_mimo"

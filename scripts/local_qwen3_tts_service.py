@@ -4,6 +4,7 @@ import argparse
 import io
 import os
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -57,6 +58,7 @@ class Qwen3TTSService:
         self.language = language
         self.max_new_tokens = max_new_tokens
         self._model: Any | None = None
+        self._synthesis_lock = threading.Lock()
 
     def _torch_dtype(self) -> torch.dtype:
         if self.dtype == "float16":
@@ -88,6 +90,12 @@ class Qwen3TTSService:
         return self._model
 
     def synthesize_wav(self, req: SynthesizeRequest) -> tuple[bytes, int, float]:
+        # FastAPI runs sync routes in a thread pool. Serialize access to the
+        # shared generation model to avoid concurrent loading/inference spikes.
+        with self._synthesis_lock:
+            return self._synthesize_wav(req)
+
+    def _synthesize_wav(self, req: SynthesizeRequest) -> tuple[bytes, int, float]:
         text = req.text.strip()
         if not text:
             raise HTTPException(status_code=400, detail="text is required")

@@ -321,3 +321,49 @@ async def test_runtime_config_apply_rejects_unknown_provider(monkeypatch, tmp_pa
         )
 
     assert exc_info.value.status_code == 400
+
+def test_local_qwen_runtime_roundtrip_preserves_endpoint_and_model(monkeypatch):
+    _clear_runtime_env(monkeypatch)
+    updates = runtime_config._build_updates(runtime_config.RuntimeConfigPayload(
+        tts_provider="local_qwen3_tts",
+        tts_base_url="http://127.0.0.1:19091/synthesize",
+        tts_model="Qwen/Qwen3-TTS-12Hz-0.6B-Base",
+        tts_voice="local-default",
+    ))
+    assert updates["OPENTALKING_TTS_LOCAL_QWEN3_TTS_SERVICE_URL"] == "http://127.0.0.1:19091/synthesize"
+    assert updates["OPENTALKING_TTS_LOCAL_QWEN3_TTS_MODEL"] == "Qwen/Qwen3-TTS-12Hz-0.6B-Base"
+    assert "OPENTALKING_TTS_LOCAL_QWEN3_TTS_SERVICE_URL" in runtime_config._RUNTIME_ENV_KEYS
+    payload = runtime_config._current_tts_payload("local_qwen3_tts", SimpleNamespace(), updates)
+    assert payload["base_url"] == updates["OPENTALKING_TTS_LOCAL_QWEN3_TTS_SERVICE_URL"]
+    assert payload["model"] == updates["OPENTALKING_TTS_LOCAL_QWEN3_TTS_MODEL"]
+    assert payload["voice"] == "local-default"
+    assert payload["api_key_set"] is False
+
+
+async def test_switch_to_unconfigured_local_qwen_is_rejected(monkeypatch, tmp_path):
+    request = _request(monkeypatch, tmp_path)
+    with pytest.raises(HTTPException) as error:
+        await runtime_config._validate_local_provider_switches(
+            {"OPENTALKING_TTS_DEFAULT_PROVIDER": "local_qwen3_tts"}, request,
+        )
+    assert error.value.status_code == 400
+
+async def test_switch_to_healthy_local_qwen_checks_synthesize_health(monkeypatch, tmp_path):
+    request = _request(monkeypatch, tmp_path)
+    urls = []
+    class Client:
+        def __init__(self, **kwargs):
+            pass
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *args):
+            pass
+        async def get(self, url):
+            urls.append(url)
+            return SimpleNamespace(raise_for_status=lambda: None)
+    monkeypatch.setattr(runtime_config.httpx, "AsyncClient", Client)
+    await runtime_config._validate_local_provider_switches({
+        "OPENTALKING_TTS_DEFAULT_PROVIDER": "local_qwen3_tts",
+        "OPENTALKING_TTS_LOCAL_QWEN3_TTS_SERVICE_URL": "http://127.0.0.1:19091/synthesize",
+    }, request)
+    assert urls == ["http://127.0.0.1:19091/health"]

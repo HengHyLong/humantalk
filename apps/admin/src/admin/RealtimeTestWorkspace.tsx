@@ -38,7 +38,7 @@ const ASR_MODELS: Record<string, string> = {
   sensevoice: "iic/SenseVoiceSmall",
 };
 
-const SUPPORTED_TTS_PROVIDERS: TtsProviderExtended[] = ["edge", "dashscope", "cosyvoice", "sambert", "local_cosyvoice", "indextts", "local_f5_tts", "xiaomi_mimo", "openai_compatible"];
+const SUPPORTED_TTS_PROVIDERS: TtsProviderExtended[] = ["edge", "dashscope", "cosyvoice", "sambert", "local_cosyvoice", "local_qwen3_tts", "indextts", "local_f5_tts", "xiaomi_mimo", "openai_compatible"];
 
 function audioProviderConfigError({
   asrProvider,
