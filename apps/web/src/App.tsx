@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { completedQaSpeech, generatedQaText, newQaSpeechPresentation, spokenQaText } from "./lib/qaSpeechPresentation";
+import { sessionFailure } from "./lib/sessionFailure";
 import { AvatarSelectionStage, type AgentConfig } from "./components/AvatarSelectionStage";
 import { ExhibitionSelectionStage } from "./components/ExhibitionSelectionStage";
 import { BailianVoiceClone } from "./components/BailianVoiceClone";
@@ -2396,10 +2397,20 @@ export default function App() {
       }
       if (ev === "error") {
         console.warn("Session event error", data);
-        const detail = "对话暂时中断，请稍后重试。";
+        const failure = sessionFailure(data, qaStreamRef.current.turnId, englishConversation);
+        if (!failure) return;
         setVoiceTurnActive(false);
-        appendAssistantError(detail);
-        notify(`对话失败：${detail}`, "error");
+        if (failure.speech) {
+          const state = qaStreamRef.current;
+          const msgId = streamingAssistantMsgIdRef.current ?? pendingAssistantMsgIdRef.current ?? state.messageId;
+          const answer = msgId === state.messageId
+            ? completedQaSpeech(state, subtitleAccRef.current.trim()) : subtitleAccRef.current.trim();
+          clearSubtitleState();
+          if (msgId && answer) setMessages((prev) => prev.map((m) => m.id === msgId ? { ...m, text: answer } : m));
+        } else {
+          appendAssistantError(failure.message);
+        }
+        notify(`${failure.title}：${failure.message}`, "error");
       }
       if (["qa.delta", "qa.completed", "qa.replace", "qa.error"].includes(ev) && data && typeof data === "object") {
         const update = data as { turn_id?: string; text?: string; message?: string; incomplete?: boolean };

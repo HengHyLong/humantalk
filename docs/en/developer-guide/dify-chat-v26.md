@@ -24,6 +24,8 @@ Knowledge-hit records include `difyAttemptCount` and `difyAttempts`: per-attempt
 
 ## Complete-sentence streaming speech
 
+`pyproject.toml` requires `edge-tts>=7.3.1,<8`. Deployments retaining a local `uv.lock` should run `uv lock --upgrade-package edge-tts` before syncing; this repository does not version that lock file. Version 7.2.8 lacks upstream Sec-MS-GEC v2 authentication support and may receive HTTP 403 during synthesis. Restarting the old package or retrying Dify does not add protocol support. Confirm recovery with actual synthesized audio and WebRTC voice/lip movement, rather than health checks or voice listings alone. The UI reports `SPEAK_FAILED` separately as playback failure, retaining generated text and accepting late answer completion. Stale turn errors cannot replace a new answer.
+
 The Dify configuration panel selects complete-sentence streaming or complete-answer speech as the rollback mode. Changes apply to the next turn. `OPENTALKING_DIFY_CHAT_SPEECH_MODE` accepts `sentences` or `complete`; the code defaults to `complete`, and deployments can explicitly enable `sentences`.
 
 Streaming applies only to Dify answers and capable direct-speech renderers. Database answers remain direct; Vidu and unsupported renderers automatically use complete answers. Requests may set `speech_mode=complete` for one turn, but cannot enable streaming when the global switch is off.
