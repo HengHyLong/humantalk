@@ -236,3 +236,32 @@ WebRTC, or browser playback latency.
 | `transformers` version conflict | Keep CosyVoice in a separate sidecar venv; do not install it into the main OpenTalking `.venv`. |
 | High first-chunk latency | First chunk depends on model inference and voice loading; prewarm in production. |
 | OpenTalking cannot reach the service | Check `OPENTALKING_TTS_LOCAL_COSYVOICE_SERVICE_URL` and the sidecar port. |
+
+
+## Same-host comparison (2026-10-15)
+
+This deployment uses two RTX 4090 GPUs with 24GB each. After warmup, three texts
+(welcome, exhibitor introduction, navigation) were each synthesized three times
+per provider, rotating providers serially. First PCM measures the first 16kHz
+PCM chunk returned by the adapter. It excludes Dify, avatar rendering, WebRTC,
+and browser playback.
+
+| Provider | Successful requests | Median first PCM | Median total synthesis | Median RTF |
+|---|---:|---:|---:|---:|
+| Edge | 9/9 | 2.102 s | 3.271 s | 0.374 |
+| Local CosyVoice 3 | 9/9 | 2.133 s | 5.877 s | 0.727 |
+| Local Qwen3-TTS | 9/9 | 12.733 s | 12.898 s | 1.381 |
+
+CosyVoice uses `FunAudioLLM/Fun-CosyVoice3-0.5B-2512`, FP16 and PyTorch 2.3.1,
+without TensorRT or vLLM, unlike the optimized TensorRT baseline above.
+Qwen uses `Qwen/Qwen3-TTS-12Hz-0.6B-Base`, bfloat16, PyTorch 2.10.0 and SDPA.
+The current Qwen HTTP sidecar returns a WAV after whole-sentence synthesis;
+it does not expose incremental model audio. Both local models use the same
+official female reference sample; Edge uses `zh-CN-XiaoxiaoNeural`.
+
+These measurements favor CosyVoice as the first local realtime candidate.
+They do not rate every voice's naturalness or establish concurrency capacity
+or long-term availability. TTS runs on GPU 1, while the existing avatar process
+allocates memory on both GPUs, so resource isolation is incomplete. Admin voice
+configuration supports previews and realtime testing supports explicit provider,
+model and voice selection without changing the production default.

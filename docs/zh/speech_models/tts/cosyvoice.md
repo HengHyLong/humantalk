@@ -228,3 +228,28 @@ curl -s -X POST "http://127.0.0.1:8210/sessions/$SID/speak" \
 | `transformers` 版本冲突 | CosyVoice 必须使用独立 sidecar venv，不要装进 OpenTalking 主 `.venv`。 |
 | 首包延迟高 | 首包取决于模型推理和音色加载；生产环境建议预热。 |
 | OpenTalking 调不到服务 | 检查 `OPENTALKING_TTS_LOCAL_COSYVOICE_SERVICE_URL` 和 sidecar 端口。 |
+
+
+## 同机三方案实测（2026-10-15）
+
+本轮使用双 RTX 4090（每张 24GB）服务器，比较当前部署的 Edge、CosyVoice 3 和
+Qwen3-TTS。欢迎语、展商介绍、路线说明各测试三次，每种 provider 共九次；先预热，
+然后轮换 provider 串行调用。下表首包指适配器返回第一个 16kHz PCM 片段，
+不包含 Dify、口型渲染、WebRTC 和浏览器播放。
+
+| Provider | 成功次数 | 首 PCM 中位数 | 合成总耗时中位数 | RTF 中位数 |
+|---|---:|---:|---:|---:|
+| Edge | 9/9 | 2.102 秒 | 3.271 秒 | 0.374 |
+| 本地 CosyVoice 3 | 9/9 | 2.133 秒 | 5.877 秒 | 0.727 |
+| 本地 Qwen3-TTS | 9/9 | 12.733 秒 | 12.898 秒 | 1.381 |
+
+CosyVoice 使用 `FunAudioLLM/Fun-CosyVoice3-0.5B-2512`、FP16、PyTorch 2.3.1，
+未启用 TensorRT 或 vLLM；这与上文 TensorRT 优化基线不同。
+Qwen 使用 `Qwen/Qwen3-TTS-12Hz-0.6B-Base`、bfloat16、PyTorch 2.10.0、SDPA，
+当前 HTTP sidecar 完成整句 WAV 后才返回，并非模型增量音频输出。
+两种本地模型使用同一段官方示例女声参考音频；Edge 使用 `zh-CN-XiaoxiaoNeural`。
+
+这组结果支持优先选择 CosyVoice 作为本地实时播报候选；不能据此评价所有音色的
+自然度，或承诺并发容量与长期可用性。TTS 绑定 GPU 1，但原数字人进程在两张卡上
+均有显存分配，未做到完全资源隔离。后台“声音配置”可分别试听三种 provider，
+“实时测试”可显式选择模型与音色；切换测试 provider 不必修改线上默认值。
